@@ -51,6 +51,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
+# 后端 i18n 语言包（config 挂载卷不覆盖它）
+COPY --from=builder /app/locales ./locales
+
+# 配置模板：config 挂载为空卷时首启自动初始化（default_settings/language/version）
+COPY --from=builder /app/config/ ./config_templates/
+
 COPY --from=builder /app/ ./
 
 # 禁用 NNPACK，避免部分硬件上刷 "Could not initialize NNPACK" 警告

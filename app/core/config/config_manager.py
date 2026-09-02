@@ -12,6 +12,10 @@ T = TypeVar("T")
 
 
 class ConfigManager:
+    # 镜像内置的配置模板目录（打包在 /app/config_templates）。
+    # 容器把 config/ 挂载为空卷时，首启从模板初始化。
+    TEMPLATE_DIR_NAME = "config_templates"
+
     def __init__(self, run_path):
         self.config_path = os.path.join(run_path, "config")
         self.language_config_path = os.path.join(self.config_path, "language.json")
@@ -22,6 +26,15 @@ class ConfigManager:
         self.recordings_config_path = os.path.join(self.config_path, "recordings.json")
         self.accounts_config_path = os.path.join(self.config_path, "accounts.json")
         self.web_auth_config_path = os.path.join(self.config_path, "web_auth.json")
+
+        template_dir = os.path.join(run_path, self.TEMPLATE_DIR_NAME)
+        if os.path.isdir(template_dir):
+            for name in ("default_settings.json", "language.json", "version.json"):
+                src = os.path.join(template_dir, name)
+                dst = os.path.join(self.config_path, name)
+                if os.path.isfile(src) and (not os.path.exists(dst) or os.path.getsize(dst) == 0):
+                    shutil.copy(src, dst)
+                    logger.info(f"Initialized {dst} from image template")
 
         os.makedirs(os.path.dirname(self.default_config_path), exist_ok=True)
         self.init()
