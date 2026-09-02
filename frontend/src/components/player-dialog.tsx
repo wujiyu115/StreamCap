@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Maximize, RotateCcw, Smartphone, Trash2, X } from "lucide-react"
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Maximize, Minimize, RotateCcw, Smartphone, Trash2 } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
 
 import type { MediaItem } from "@/api/types"
@@ -20,7 +20,12 @@ interface PlayerDialogProps {
     resolution?: string
 }
 
-/** 媒体预览弹窗：视频/图片 + 工具栏（上一个/下一个/横屏/删除/关闭，←/→ 键盘导航）。 */
+/** 媒体预览弹窗（Frostcast 布局）：
+ * - 工具栏悬浮在视频顶部（渐变黑底，不占布局、避开原生 controls）
+ * - 可折叠：收起后只留展开小按钮
+ * - 全屏按钮：整个舞台进 Fullscreen API，工具栏仍可操作
+ * - 强制横屏：竖屏视频 CSS 旋转 90°；全屏内尝试系统 orientation lock
+ * - ←/→ 键切换上一个/下一个，Esc 关闭 */
 export function PlayerDialog({
     item,
     streamUrl,
@@ -35,18 +40,30 @@ export function PlayerDialog({
 }: PlayerDialogProps) {
     const { t } = useI18n()
     const videoRef = useRef<HTMLVideoElement | null>(null)
+    const stageRef = useRef<HTMLDivElement | null>(null)
     const [rotate, setRotate] = useState(false)
+    const [barOpen, setBarOpen] = useState(true)
+    const [isFullscreen, setIsFullscreen] = useState(false)
 
     // 键盘导航与 Esc 关闭
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
-            if (e.key === "Escape") onClose()
-            else if (e.key === "ArrowLeft" && hasPrev) onPrev()
+            if (e.key === "Escape") {
+                // 全屏态下 Esc 先退全屏（浏览器默认行为），非全屏关弹窗
+                if (!document.fullscreenElement) onClose()
+            } else if (e.key === "ArrowLeft" && hasPrev) onPrev()
             else if (e.key === "ArrowRight" && hasNext) onNext()
         }
         document.addEventListener("keydown", onKey)
         return () => document.removeEventListener("keydown", onKey)
     }, [onClose, onPrev, onNext, hasPrev, hasNext])
+
+    // fullscreenchange 同步状态（Esc 退出全屏时收通知）
+    useEffect(() => {
+        const onFs = () => setIsFullscreen(Boolean(document.fullscreenElement))
+        document.addEventListener("fullscreenchange", onFs)
+        return () => document.removeEventListener("fullscreenchange", onFs)
+    }, [])
 
     // 切换媒体时复位旋转
     useEffect(() => {
@@ -113,86 +130,201 @@ export function PlayerDialog({
         }
     }, [item.rel_path, item.name, item.type, streamUrl])
 
+    const toggleFullscreen = useCallback(async () => {
+        try {
+            if (document.fullscreenElement) {
+                await document.exitFullscreen()
+            } else if (stageRef.current) {
+                await stageRef.current.requestFullscreen()
+            }
+        } catch {
+            /* 浏览器限制（如非用户手势）时静默 */
+        }
+    }, [])
+
+    // 强制横屏：CSS 旋转；全屏内尝试系统 orientation lock
+    const toggleRotate = useCallback(async () => {
+        const next = !rotate
+        setRotate(next)
+        try {
+            const orientation = screen.orientation as ScreenOrientation & {
+                lock?: (o: string) => Promise<void>
+            }
+            if (orientation?.lock && document.fullscreenElement) {
+                await orientation.lock(next ? "landscape" : "portrait")
+            }
+        } catch {
+            /* 仅全屏内可锁，失败走纯 CSS 旋转 */
+        }
+    }, [rotate])
+
+    // 退出全屏（关闭弹窗/切媒体时避免残留全屏）
+    const exitFullscreen = useCallback(() => {
+        if (document.fullscreenElement) document.exitFullscreen().catch(() => undefined)
+    }, [])
+    useEffect(() => {
+        return exitFullscreen
+    }, [exitFullscreen])
+
     const isImage = item.type === "image"
     const metaParts = [item.ext, resolution, duration].filter(Boolean).join(" · ")
 
+    const iconBtn =
+        "h-10 w-10 shrink-0 border-white/20 bg-white/15 text-white hover:bg-white/30 hover:text-white disabled:opacity-30"
+
     return (
         <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-2 sm:p-6"
+            className="fixed inset-0 z-50 grid place-items-center bg-black/90 p-2 backdrop-blur-sm sm:p-6"
             role="dialog"
             aria-modal="true"
             onClick={(e) => {
                 if (e.target === e.currentTarget) onClose()
             }}
         >
-            <div className="flex max-h-full w-full max-w-4xl flex-col gap-3">
-                {/* 舞台 */}
-                <div className="flex min-h-0 flex-1 items-center justify-center">
-                    {isImage ? (
-                        <img
-                            src={streamUrl(item.rel_path)}
-                            alt={item.name}
-                            className="max-h-[70dvh] max-w-full rounded-md object-contain"
-                        />
-                    ) : (
-                        <video
-                            ref={videoRef}
-                            controls
-                            playsInline
-                            className={
-                                rotate
-                                    ? "max-h-none w-[85dvh] rotate-90 rounded-md bg-black"
-                                    : "max-h-[62dvh] w-full rounded-md bg-black"
-                            }
-                        />
-                    )}
-                </div>
+            {/* 舞台：全屏与旋转都作用于它（工具栏随之） */}
+            <div
+                ref={stageRef}
+                className="player-stage relative w-full max-w-4xl overflow-hidden rounded-lg border border-white/10 bg-black shadow-2xl"
+            >
+                {isImage ? (
+                    <img
+                        src={streamUrl(item.rel_path)}
+                        alt={item.name}
+                        className={
+                            rotate
+                                ? "h-[100vw] w-[100dvh] -rotate-90 object-contain"
+                                : "max-h-[70dvh] w-full object-contain"
+                        }
+                        onClick={toggleRotate}
+                    />
+                ) : (
+                    <video
+                        ref={videoRef}
+                        controls
+                        playsInline
+                        className={
+                            rotate
+                                ? "w-[100dvh] max-w-none rotate-90 bg-black"
+                                : "max-h-[64dvh] w-full bg-black"
+                        }
+                    />
+                )}
 
-                {/* 工具栏 */}
-                <div className="flex items-center gap-2 rounded-lg bg-background/95 p-2 shadow-lg">
-                    <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm font-medium">{item.name}</div>
-                        <div className="truncate text-xs text-muted-foreground">
-                            {metaParts || "—"}
-                            {item.size ? ` · ${item.size}` : ""}
-                        </div>
-                    </div>
-                    <Button variant="outline" size="icon" title={t("media.prev")} disabled={!hasPrev} onClick={onPrev}>
-                        <ChevronLeft className="h-4 w-4" />
-                    </Button>
-                    <Button variant="outline" size="icon" title={t("media.next")} disabled={!hasNext} onClick={onNext}>
-                        <ChevronRight className="h-4 w-4" />
-                    </Button>
-                    {!isImage && (
-                        <Button
-                            variant="outline"
-                            size="icon"
-                            title={rotate ? t("media.rotateBack") : t("media.rotate")}
-                            onClick={() => setRotate((r) => !r)}
-                        >
-                            {rotate ? <Smartphone className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
-                        </Button>
-                    )}
-                    {isImage && (
-                        <Button
-                            variant="outline"
-                            size="icon"
-                            title={t("media.rotate")}
-                            onClick={() => setRotate((r) => !r)}
-                        >
-                            <RotateCcw className="h-4 w-4" />
-                        </Button>
+                {/* 悬浮工具栏：顶部渐变，收起后只留展开按钮 */}
+                <div
+                    className={
+                        barOpen
+                            ? "absolute inset-x-0 top-0 z-10 flex items-center gap-2 bg-gradient-to-b from-black/70 to-transparent p-3"
+                            : "absolute inset-x-0 top-0 z-10 flex justify-end p-2"
+                    }
+                >
+                    {barOpen && (
+                        <>
+                            <div className="min-w-0 flex-1" onClick={(e) => e.stopPropagation()}>
+                                <div className="truncate text-sm font-semibold text-white drop-shadow">
+                                    {item.name}
+                                </div>
+                                <div className="truncate text-xs text-white/70">
+                                    {metaParts || "—"}
+                                    {item.size ? ` · ${item.size}` : ""}
+                                </div>
+                            </div>
+                            <Button
+                                variant="outline"
+                                size="icon"
+                                className={iconBtn}
+                                title={t("media.prev")}
+                                disabled={!hasPrev}
+                                onClick={onPrev}
+                            >
+                                <ChevronLeft className="h-5 w-5" />
+                            </Button>
+                            <Button
+                                variant="outline"
+                                size="icon"
+                                className={iconBtn}
+                                title={t("media.next")}
+                                disabled={!hasNext}
+                                onClick={onNext}
+                            >
+                                <ChevronRight className="h-5 w-5" />
+                            </Button>
+                            {!isImage && (
+                                <Button
+                                    variant="outline"
+                                    size="icon"
+                                    className={iconBtn}
+                                    title={rotate ? t("media.rotateBack") : t("media.rotate")}
+                                    onClick={toggleRotate}
+                                >
+                                    {rotate ? (
+                                        <Smartphone className="h-5 w-5" />
+                                    ) : (
+                                        <Maximize className="h-5 w-5 rotate-90" />
+                                    )}
+                                </Button>
+                            )}
+                            {isImage && (
+                                <Button
+                                    variant="outline"
+                                    size="icon"
+                                    className={iconBtn}
+                                    title={t("media.rotate")}
+                                    onClick={toggleRotate}
+                                >
+                                    <RotateCcw className="h-5 w-5" />
+                                </Button>
+                            )}
+                            {!isImage && (
+                                <Button
+                                    variant="outline"
+                                    size="icon"
+                                    className={iconBtn}
+                                    title={isFullscreen ? t("media.exitFullscreen") : t("media.fullscreen")}
+                                    onClick={toggleFullscreen}
+                                >
+                                    {isFullscreen ? (
+                                        <Minimize className="h-5 w-5" />
+                                    ) : (
+                                        <Maximize className="h-5 w-5" />
+                                    )}
+                                </Button>
+                            )}
+                            <Button
+                                variant="outline"
+                                size="icon"
+                                className={`${iconBtn} border-red-400/40 bg-red-500/30 hover:bg-red-500/50`}
+                                title={t("common.delete")}
+                                onClick={() => onDelete(item.rel_path)}
+                            >
+                                <Trash2 className="h-5 w-5" />
+                            </Button>
+                            <Button
+                                variant="outline"
+                                size="icon"
+                                className={iconBtn}
+                                title={t("common.close")}
+                                onClick={() => {
+                                    exitFullscreen()
+                                    onClose()
+                                }}
+                            >
+                                <ChevronDown className="h-5 w-5" />
+                            </Button>
+                        </>
                     )}
                     <Button
-                        variant="destructive"
+                        variant="outline"
                         size="icon"
-                        title={t("common.delete")}
-                        onClick={() => onDelete(item.rel_path)}
+                        className={
+                            barOpen
+                                ? `${iconBtn} h-8 w-8`
+                                : "h-8 w-8 border-white/20 bg-black/40 text-white hover:bg-black/60"
+                        }
+                        title={barOpen ? t("media.collapseBar") : t("media.expandBar")}
+                        onClick={() => setBarOpen((o) => !o)}
                     >
-                        <Trash2 className="h-4 w-4" />
-                    </Button>
-                    <Button variant="outline" size="icon" title={t("common.close")} onClick={onClose}>
-                        <X className="h-4 w-4" />
+                        {barOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                     </Button>
                 </div>
             </div>

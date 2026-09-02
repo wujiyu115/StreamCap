@@ -174,7 +174,11 @@
     "prev": "Previous (←)",
     "next": "Next (→)",
     "rotate": "Force landscape",
-    "rotateBack": "Restore portrait"
+    "rotateBack": "Restore portrait",
+    "fullscreen": "Fullscreen",
+    "exitFullscreen": "Exit fullscreen",
+    "collapseBar": "Collapse toolbar",
+    "expandBar": "Expand toolbar"
   },
   "pose": {
     "title": "Pose processing",

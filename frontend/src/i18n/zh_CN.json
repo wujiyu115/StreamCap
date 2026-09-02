@@ -174,7 +174,11 @@
     "prev": "上一个 (←)",
     "next": "下一个 (→)",
     "rotate": "强制横屏",
-    "rotateBack": "恢复竖屏"
+    "rotateBack": "恢复竖屏",
+    "fullscreen": "全屏播放",
+    "exitFullscreen": "退出全屏",
+    "collapseBar": "收起工具栏",
+    "expandBar": "展开工具栏"
   },
   "pose": {
     "title": "人体识别处理",

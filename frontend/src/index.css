@@ -101,3 +101,31 @@ body {
 [data-state="previewing"] td .font-medium {
     @apply text-primary;
 }
+
+/* 播放器舞台进入全屏：铺满屏幕（含悬浮工具栏），视频占满高度 */
+.player-stage:fullscreen {
+    width: 100vw;
+    height: 100vh;
+    max-width: none;
+    max-height: none;
+    border-radius: 0;
+    border: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #000;
+}
+.player-stage:fullscreen video,
+.player-stage:fullscreen img {
+    max-height: none;
+    width: auto;
+    height: 100%;
+    max-width: 100%;
+    object-fit: contain;
+}
+.player-stage:-webkit-full-screen {
+    width: 100vw;
+    height: 100vh;
+    border-radius: 0;
+    background: #000;
+}
