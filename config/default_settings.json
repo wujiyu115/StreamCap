@@ -77,14 +77,15 @@
         "enable_pose_detection": true,
         "pose_filter": "none",
         "standing_angle": 45.0,
-        "person_min_ratio": 0.1,
+        "person_min_ratio": 0.2,
         "merge_threshold_seconds": 12.0,
         "min_segment_seconds": 30.0,
         "merge_clips": true,
-        "delete_original_video": false,
+        "delete_original_video": true,
+        "move_output_to_input": true,
         "video_output_dir": "pose_output",
         "merged_suffix": "_merged",
-        "min_file_age_minutes": 2,
+        "min_file_age_minutes": 60,
         "wait_file_timeout_minutes": 15
     }
 }

@@ -303,6 +303,7 @@
     "clipOptions": "Clipping options",
     "mergeClips": "Merge into single video",
     "deleteOriginal": "Delete original after processing",
+    "moveToOriginal": "Move output next to original video",
     "outputDir": "Output directory name",
     "minFileAge": "File settle wait (minutes)",
     "waitFileTimeout": "Wait timeout (minutes)"

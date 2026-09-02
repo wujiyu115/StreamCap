@@ -395,6 +395,7 @@ function PoseSettings() {
         { key: "min_segment_seconds", label: t("settings.minSegment"), type: "number" },
         { key: "merge_clips", label: t("settings.mergeClips"), type: "switch" },
         { key: "delete_original_video", label: t("settings.deleteOriginal"), type: "switch" },
+        { key: "move_output_to_input", label: t("settings.moveToOriginal"), type: "switch" },
         { key: "video_output_dir", label: t("settings.outputDir"), type: "text" },
         { key: "min_file_age_minutes", label: t("settings.minFileAge"), type: "number" },
         { key: "wait_file_timeout_minutes", label: t("settings.waitFileTimeout"), type: "number" },

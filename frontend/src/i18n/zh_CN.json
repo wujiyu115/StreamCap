@@ -303,6 +303,7 @@
     "clipOptions": "剪辑选项",
     "mergeClips": "合并为单个视频",
     "deleteOriginal": "处理后删除原视频",
+    "moveToOriginal": "产物移回原视频目录",
     "outputDir": "输出目录名",
     "minFileAge": "文件稳定等待（分钟）",
     "waitFileTimeout": "等待超时（分钟）"

@@ -85,6 +85,7 @@ class VideoProcessor:
         self.min_segment_seconds = float(params.min_segment_seconds)
         self.merge_clips = bool(params.merge_clips)
         self.delete_original_video = bool(params.delete_original_video)
+        self.move_output_to_input = bool(params.move_output_to_input)
         self.merged_suffix = params.merged_suffix or "_merged"
         self.decode_backend = params.decode_backend
 
@@ -115,10 +116,49 @@ class VideoProcessor:
         if merged_segments:
             clip_paths = self.clip_video(video_path, merged_segments)
 
+        moved_paths = []
+        if self.move_output_to_input and clip_paths:
+            moved_paths = self._move_output_to_input(video_path)
+
         if self.delete_original_video:
             safe_remove_file(video_path)
 
         return frames, saved, len(person_segments), len(merged_segments), len(clip_paths)
+
+    def _move_output_to_input(self, video_path: str) -> list[str]:
+        """把当前视频的剪辑产物按原目录结构移回视频所在目录。
+
+        与 delete_original_video 配合：原视频删除、产物与录制文件同目录，
+        便于媒体库直接浏览。
+        """
+        moved_paths = []
+        output_dir = self.output_dir_for(video_path)
+        video_src = get_output_subdir(video_path, self.media_root, output_dir)
+        if not os.path.isdir(video_src) or not self.media_root:
+            return moved_paths
+
+        abs_media_root = os.path.abspath(self.media_root)
+        rel_dir = os.path.dirname(os.path.relpath(os.path.abspath(video_path), abs_media_root))
+        video_dst = os.path.join(abs_media_root, rel_dir) if rel_dir else abs_media_root
+
+        for item in os.listdir(video_src):
+            src = os.path.join(video_src, item)
+            dst = os.path.join(video_dst, item)
+            if os.path.isfile(src):
+                shutil.move(src, dst)
+                moved_paths.append(os.path.abspath(dst))
+                logger.info(f"移动剪辑产物到视频目录: {dst}")
+
+        # 产物全部移走后清理空的输出目录树
+        try:
+            for root, dirs, files in os.walk(video_src, topdown=False):
+                if not os.listdir(root):
+                    os.rmdir(root)
+            os.rmdir(output_dir)
+        except OSError:
+            pass
+
+        return moved_paths
 
     def output_dir_for(self, video_path: str) -> str:
         root = self.media_root or os.path.dirname(os.path.dirname(os.path.abspath(video_path)))

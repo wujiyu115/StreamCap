@@ -28,14 +28,15 @@ DEFAULTS: dict[str, Any] = {
     "enable_pose_detection": True,
     "pose_filter": "none",
     "standing_angle": 45.0,
-    "person_min_ratio": 0.1,
+    "person_min_ratio": 0.2,
     "merge_threshold_seconds": 12.0,
     "min_segment_seconds": 30.0,
     "merge_clips": True,
-    "delete_original_video": False,
+    "delete_original_video": True,
+    "move_output_to_input": True,
     "video_output_dir": "pose_output",
     "merged_suffix": "_merged",
-    "min_file_age_minutes": 2,
+    "min_file_age_minutes": 60,
     "wait_file_timeout_minutes": 15,
     "model_path": DEFAULT_DETECTION_MODEL,
     "pose_model_path": DEFAULT_POSE_MODEL,
@@ -52,14 +53,15 @@ class PoseParams:
     enable_pose_detection: bool = True
     pose_filter: str = "none"
     standing_angle: float = 45.0
-    person_min_ratio: float = 0.1
+    person_min_ratio: float = 0.2
     merge_threshold_seconds: float = 12.0
     min_segment_seconds: float = 30.0
     merge_clips: bool = True
-    delete_original_video: bool = False
+    delete_original_video: bool = True
+    move_output_to_input: bool = True
     video_output_dir: str = "pose_output"
     merged_suffix: str = "_merged"
-    min_file_age_minutes: float = 2
+    min_file_age_minutes: float = 60
     wait_file_timeout_minutes: float = 15
     model_path: str = field(default_factory=lambda: DEFAULT_DETECTION_MODEL)
     pose_model_path: str = field(default_factory=lambda: DEFAULT_POSE_MODEL)
