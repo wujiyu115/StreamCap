@@ -4,6 +4,7 @@ import {
     EyeOff,
     LayoutGrid,
     Loader2,
+    MoreVertical,
     Pencil,
     Play,
     Plus,
@@ -195,12 +196,12 @@ export default function RecordingsPage() {
 
             {/* 工具栏 */}
             <div className="flex flex-wrap items-center gap-2">
-                <div className="flex gap-1 rounded-md border p-0.5">
+                <div className="flex gap-1 overflow-x-auto rounded-md border p-0.5">
                     {FILTERS.map((f) => (
                         <button
                             key={f}
                             onClick={() => setFilter(f)}
-                            className={`rounded px-2.5 py-1 text-sm transition-colors ${
+                            className={`whitespace-nowrap rounded px-2.5 py-1 text-sm transition-colors ${
                                 filter === f
                                     ? "bg-primary text-primary-foreground"
                                     : "text-muted-foreground hover:bg-accent"
@@ -211,32 +212,33 @@ export default function RecordingsPage() {
                     ))}
                 </div>
 
-                <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                        <Button variant="outline" size="sm">
-                            {t("recordings.platformFilter")}: {platform === "all" ? t("common.all") : platform}
-                        </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent>
-                        <DropdownMenuItem onClick={() => setPlatform("all")}>
-                            {t("common.all")}
-                        </DropdownMenuItem>
-                        {platforms.map((p) => (
-                            <DropdownMenuItem key={p} onClick={() => setPlatform(p)}>
-                                {p}
-                            </DropdownMenuItem>
-                        ))}
-                    </DropdownMenuContent>
-                </DropdownMenu>
-
                 <Input
                     placeholder={t("common.search")}
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
-                    className="w-56"
+                    className="w-full sm:w-56"
                 />
 
-                <div className="ml-auto flex items-center gap-2">
+                <div className="ml-auto flex items-center gap-1.5">
+                    <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                            <Button variant="outline" size="sm">
+                                <span className="max-w-24 truncate">
+                                    {platform === "all" ? t("common.all") : platform}
+                                </span>
+                            </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => setPlatform("all")}>
+                                {t("common.all")}
+                            </DropdownMenuItem>
+                            {platforms.map((p) => (
+                                <DropdownMenuItem key={p} onClick={() => setPlatform(p)}>
+                                    {p}
+                                </DropdownMenuItem>
+                            ))}
+                        </DropdownMenuContent>
+                    </DropdownMenu>
                     <Button
                         size="sm"
                         onClick={() => {
@@ -245,35 +247,45 @@ export default function RecordingsPage() {
                         }}
                     >
                         <Plus className="h-4 w-4" />
-                        {t("recordings.add")}
+                        <span className="hidden sm:inline">{t("recordings.add")}</span>
                     </Button>
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={selected.size === 0}
-                        onClick={() => batchMonitor.mutate({ ids: Array.from(selected), enabled: true })}
-                    >
-                        <Eye className="h-4 w-4" />
-                        {t("recordings.batchStart")}
-                    </Button>
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={selected.size === 0}
-                        onClick={() => batchMonitor.mutate({ ids: Array.from(selected), enabled: false })}
-                    >
-                        <EyeOff className="h-4 w-4" />
-                        {t("recordings.batchStop")}
-                    </Button>
-                    <Button
-                        variant="destructive"
-                        size="sm"
-                        disabled={selected.size === 0}
-                        onClick={handleBatchDelete}
-                    >
-                        <Trash2 className="h-4 w-4" />
-                        {t("recordings.batchDelete")}
-                    </Button>
+                    <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                            <Button variant="outline" size="sm" disabled={selected.size === 0}>
+                                <MoreVertical className="h-4 w-4" />
+                                {selected.size > 0 && (
+                                    <span className="ml-1 rounded-full bg-primary px-1.5 text-xs text-primary-foreground">
+                                        {selected.size}
+                                    </span>
+                                )}
+                            </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                            <DropdownMenuItem
+                                onClick={() =>
+                                    batchMonitor.mutate({ ids: Array.from(selected), enabled: true })
+                                }
+                            >
+                                <Eye className="mr-2 h-4 w-4" />
+                                {t("recordings.batchStart")}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                                onClick={() =>
+                                    batchMonitor.mutate({ ids: Array.from(selected), enabled: false })
+                                }
+                            >
+                                <EyeOff className="mr-2 h-4 w-4" />
+                                {t("recordings.batchStop")}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                                className="text-red-600"
+                                onClick={handleBatchDelete}
+                            >
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                {t("recordings.batchDelete")}
+                            </DropdownMenuItem>
+                        </DropdownMenuContent>
+                    </DropdownMenu>
                     <Button variant="outline" size="sm" onClick={() => refetch()}>
                         <RefreshCw className="h-4 w-4" />
                     </Button>
@@ -318,10 +330,16 @@ export default function RecordingsPage() {
                                     />
                                 </TableHead>
                                 <TableHead>{t("recordings.columnStreamer")}</TableHead>
-                                <TableHead>{t("recordings.columnPlatform")}</TableHead>
+                                <TableHead className="hidden md:table-cell">
+                                    {t("recordings.columnPlatform")}
+                                </TableHead>
                                 <TableHead>{t("recordings.columnStatus")}</TableHead>
-                                <TableHead>{t("recordings.columnQuality")}</TableHead>
-                                <TableHead>{t("recordings.columnDuration")}</TableHead>
+                                <TableHead className="hidden md:table-cell">
+                                    {t("recordings.columnQuality")}
+                                </TableHead>
+                                <TableHead className="hidden sm:table-cell">
+                                    {t("recordings.columnDuration")}
+                                </TableHead>
                                 <TableHead className="text-right">{t("common.operations")}</TableHead>
                             </TableRow>
                         </TableHeader>
@@ -336,18 +354,20 @@ export default function RecordingsPage() {
                                     </TableCell>
                                     <TableCell>
                                         <div className="font-medium">{r.streamer_name || "-"}</div>
-                                        <div className="max-w-64 truncate text-xs text-muted-foreground">
+                                        <div className="max-w-48 truncate text-xs text-muted-foreground sm:max-w-64">
                                             {r.live_title || r.url}
                                         </div>
                                     </TableCell>
-                                    <TableCell className="text-sm text-muted-foreground">
+                                    <TableCell className="hidden text-sm text-muted-foreground md:table-cell">
                                         {r.platform || "-"}
                                     </TableCell>
                                     <TableCell>
                                         <StatusBadge state={r.state} label={t(stateLabelKey(r.state))} />
                                     </TableCell>
-                                    <TableCell>{t(`quality.${r.quality}`)}</TableCell>
-                                    <TableCell className="font-mono text-sm tabular-nums">
+                                    <TableCell className="hidden md:table-cell">
+                                        {t(`quality.${r.quality}`)}
+                                    </TableCell>
+                                    <TableCell className="hidden font-mono text-sm tabular-nums sm:table-cell">
                                         <LiveDuration rec={r} />
                                     </TableCell>
                                     <TableCell className="text-right">

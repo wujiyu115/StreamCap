@@ -22,7 +22,7 @@ import { toast } from "sonner"
 export default function SettingsPage() {
     return (
         <Tabs defaultValue="recording" className="space-y-4">
-            <TabsList>
+            <TabsList className="w-full overflow-x-auto whitespace-nowrap sm:w-auto">
                 <TabsTrigger value="recording">录制设置</TabsTrigger>
                 <TabsTrigger value="pose">人体识别</TabsTrigger>
                 <TabsTrigger value="push">推送设置</TabsTrigger>

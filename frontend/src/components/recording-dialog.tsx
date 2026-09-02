@@ -224,7 +224,7 @@ export function RecordingDialog({
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
+            <DialogContent className="max-h-[92dvh] overflow-y-auto p-4 sm:max-w-2xl sm:p-6">
                 <DialogHeader>
                     <DialogTitle>
                         {recording ? t("recordingDialog.editTitle") : t("recordingDialog.addTitle")}

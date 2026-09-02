@@ -159,7 +159,7 @@ export default function MediaPage() {
                         {tf("media.stats", { files: stats.video_files, size: stats.total_size })}
                     </Badge>
                 )}
-                <div className="ml-auto flex gap-2">
+                <div className="ml-auto flex gap-1.5">
                     <Button
                         variant="outline"
                         size="sm"
@@ -167,11 +167,11 @@ export default function MediaPage() {
                         onClick={submitPose}
                     >
                         <Sparkles className="h-4 w-4 text-purple-500" />
-                        {t("media.poseSubmit")}
+                        <span className="hidden sm:inline">{t("media.poseSubmit")}</span>
                     </Button>
                     <Button variant="outline" size="sm" onClick={() => setCleanOpen(true)}>
                         <Trash2 className="h-4 w-4" />
-                        {t("media.cleanSmall")}
+                        <span className="hidden sm:inline">{t("media.cleanSmall")}</span>
                     </Button>
                     <Button
                         variant="destructive"
@@ -180,25 +180,32 @@ export default function MediaPage() {
                         onClick={handleBatchDelete}
                     >
                         <Trash2 className="h-4 w-4" />
-                        {t("media.batchDelete")} ({selected.size})
+                        <span className="hidden sm:inline">
+                            {t("media.batchDelete")} ({selected.size})
+                        </span>
+                        <span className="sm:hidden">{selected.size}</span>
                     </Button>
                 </div>
             </div>
 
             {/* 面包屑 */}
-            <div className="flex items-center gap-1 text-sm">
+            <div className="flex items-center gap-1 overflow-x-auto text-sm">
                 <button
-                    className="flex items-center gap-1 text-muted-foreground hover:text-foreground"
+                    className="flex shrink-0 items-center gap-1 text-muted-foreground hover:text-foreground"
                     onClick={() => navigate("")}
                 >
                     <FolderOpen className="h-4 w-4" />
                     {t("media.breadcrumbRoot")}
                 </button>
                 {segments.map((seg, i) => (
-                    <span key={i} className="flex items-center gap-1">
+                    <span key={i} className="flex shrink-0 items-center gap-1">
                         <ChevronRight className="h-3 w-3 text-muted-foreground" />
                         <button
-                            className={i === segments.length - 1 ? "font-medium" : "text-muted-foreground hover:text-foreground"}
+                            className={`whitespace-nowrap ${
+                                i === segments.length - 1
+                                    ? "font-medium"
+                                    : "text-muted-foreground hover:text-foreground"
+                            }`}
                             onClick={() => navigate(segments.slice(0, i + 1).join("/"))}
                         >
                             {seg}
@@ -234,9 +241,9 @@ export default function MediaPage() {
                                     />
                                 </TableHead>
                                 <TableHead>{t("media.columnName")}</TableHead>
-                                <TableHead className="w-24">{t("media.columnSize")}</TableHead>
-                                <TableHead className="w-40">{t("media.columnModified")}</TableHead>
-                                <TableHead className="w-48 text-right">{t("common.operations")}</TableHead>
+                                <TableHead className="hidden w-24 sm:table-cell">{t("media.columnSize")}</TableHead>
+                                <TableHead className="hidden w-40 md:table-cell">{t("media.columnModified")}</TableHead>
+                                <TableHead className="w-24 text-right">{t("common.operations")}</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -280,10 +287,10 @@ export default function MediaPage() {
                                             )}
                                         </span>
                                     </TableCell>
-                                    <TableCell className="text-sm text-muted-foreground">
+                                    <TableCell className="hidden text-sm text-muted-foreground sm:table-cell">
                                         {item.size ?? "-"}
                                     </TableCell>
-                                    <TableCell className="text-sm text-muted-foreground">
+                                    <TableCell className="hidden text-sm text-muted-foreground md:table-cell">
                                         {formatTimestamp(item.mtime)}
                                     </TableCell>
                                     <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
@@ -345,7 +352,7 @@ export default function MediaPage() {
 
             {/* 预览对话框 */}
             <Dialog open={previewItem !== null} onOpenChange={(v) => !v && setPreviewItem(null)}>
-                <DialogContent className="max-w-4xl">
+                <DialogContent className="max-w-4xl p-4 sm:p-6">
                     <DialogHeader>
                         <DialogTitle className="truncate">{previewItem?.name}</DialogTitle>
                     </DialogHeader>
@@ -368,7 +375,7 @@ function VideoPreview({ src, ext }: { src: string; ext: string }) {
     const { t } = useI18n()
 
     if (["mp4", "webm", "m4v", "mov", "ogv"].includes(ext)) {
-        return <video src={src} controls autoPlay className="max-h-[70vh] w-full rounded-md bg-black" />
+        return <video src={src} controls autoPlay className="max-h-[62dvh] w-full rounded-md bg-black" />
     }
 
     if (["ts", "m2ts", "mts", "flv"].includes(ext)) {
@@ -376,7 +383,7 @@ function VideoPreview({ src, ext }: { src: string; ext: string }) {
     }
 
     if (["jpg", "jpeg", "png", "gif", "webp", "avif", "bmp"].includes(ext)) {
-        return <img src={src} alt="preview" className="max-h-[70vh] w-full rounded-md object-contain" />
+        return <img src={src} alt="preview" className="max-h-[62dvh] w-full rounded-md object-contain" />
     }
 
     return <div className="py-10 text-center text-muted-foreground">{t("media.preview")}: .{ext}</div>

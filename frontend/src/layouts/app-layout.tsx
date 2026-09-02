@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { Home, Info, Radio, Settings, Video } from "lucide-react"
+import { Home, Info, LogOut, Menu, Moon, Radio, Settings, Sun, Video } from "lucide-react"
 import { useEffect, useState } from "react"
 import { NavLink } from "react-router-dom"
 import { authApi } from "@/api"
@@ -36,15 +36,28 @@ function useI18nState() {
     }
 }
 
-export function AppLayout({ children }: { children: React.ReactNode }) {
-    const i18n = useI18nState()
+function useTheme() {
     const [dark, setDark] = useState(() => localStorage.getItem(THEME_KEY) === "dark")
-    const queryClient = useQueryClient()
-    const { t } = i18n
-
     useEffect(() => {
         document.documentElement.classList.toggle("dark", dark)
     }, [dark])
+    return { dark, toggle: () => setDark((d) => !d) }
+}
+
+const NAV_ITEMS = [
+    { to: "/home", icon: Home, labelKey: "nav.home" },
+    { to: "/recordings", icon: Radio, labelKey: "nav.recordings" },
+    { to: "/media", icon: Video, labelKey: "nav.media" },
+    { to: "/settings", icon: Settings, labelKey: "nav.settings" },
+    { to: "/about", icon: Info, labelKey: "nav.about" },
+]
+
+/** 桌面：固定左侧边栏；移动（<md）：顶栏 + 底部 Tab 导航 */
+export function AppLayout({ children }: { children: React.ReactNode }) {
+    const i18n = useI18nState()
+    const theme = useTheme()
+    const queryClient = useQueryClient()
+    const { t } = i18n
 
     const logout = useMutation({
         mutationFn: authApi.logout,
@@ -54,24 +67,52 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         },
     })
 
-    const navItems = [
-        { to: "/home", icon: Home, label: t("nav.home") },
-        { to: "/recordings", icon: Radio, label: t("nav.recordings") },
-        { to: "/media", icon: Video, label: t("nav.media") },
-        { to: "/settings", icon: Settings, label: t("nav.settings") },
-        { to: "/about", icon: Info, label: t("nav.about") },
-    ]
-
     return (
         <I18nContext.Provider value={i18n}>
-            <div className="flex h-screen overflow-hidden bg-background">
-                <aside className="flex w-56 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground">
+            <div className="flex h-dvh flex-col overflow-hidden bg-background md:flex-row">
+                {/* 移动端顶栏 */}
+                <header className="flex h-12 shrink-0 items-center justify-between border-b bg-sidebar px-3 md:hidden">
+                    <div className="flex items-center gap-2">
+                        <Radio className="h-5 w-5 text-primary" />
+                        <span className="font-bold">StreamCap</span>
+                    </div>
+                    <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-8 w-8">
+                                <Menu className="h-5 w-5" />
+                            </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => i18n.setLang("zh_CN")}>
+                                简体中文 {i18n.lang === "zh_CN" && "✓"}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => i18n.setLang("en")}>
+                                English {i18n.lang === "en" && "✓"}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={theme.toggle}>
+                                {theme.dark ? (
+                                    <Sun className="mr-2 h-4 w-4" />
+                                ) : (
+                                    <Moon className="mr-2 h-4 w-4" />
+                                )}
+                                {t("common.theme")}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => logout.mutate()}>
+                                <LogOut className="mr-2 h-4 w-4" />
+                                {t("common.logout")}
+                            </DropdownMenuItem>
+                        </DropdownMenuContent>
+                    </DropdownMenu>
+                </header>
+
+                {/* 桌面侧边栏 */}
+                <aside className="hidden w-56 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground md:flex">
                     <div className="flex h-14 items-center gap-2 border-b px-4">
                         <Radio className="h-6 w-6 text-primary" />
                         <span className="text-lg font-bold">StreamCap</span>
                     </div>
                     <nav className="flex-1 space-y-1 p-2">
-                        {navItems.map((item) => (
+                        {NAV_ITEMS.map((item) => (
                             <NavLink
                                 key={item.to}
                                 to={item.to}
@@ -84,7 +125,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                                 }
                             >
                                 <item.icon className="h-4 w-4" />
-                                {item.label}
+                                {t(item.labelKey)}
                             </NavLink>
                         ))}
                     </nav>
@@ -108,9 +149,9 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                             variant="ghost"
                             size="sm"
                             className="w-full justify-start gap-2 text-muted-foreground"
-                            onClick={() => setDark((d) => !d)}
+                            onClick={theme.toggle}
                         >
-                            {dark ? "☀️" : "🌙"} {t("common.theme")}
+                            {theme.dark ? "☀️" : "🌙"} {t("common.theme")}
                         </Button>
                         <Button
                             variant="ghost"
@@ -122,9 +163,29 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                         </Button>
                     </div>
                 </aside>
-                <main className="flex-1 overflow-auto">
-                    <div className="mx-auto max-w-7xl p-6">{children}</div>
+
+                {/* 主内容区：移动端留出底部导航高度 */}
+                <main className="min-w-0 flex-1 overflow-auto pb-16 md:pb-0">
+                    <div className="mx-auto max-w-7xl p-4 md:p-6">{children}</div>
                 </main>
+
+                {/* 移动端底部导航 */}
+                <nav className="fixed inset-x-0 bottom-0 z-10 flex h-16 items-stretch border-t bg-sidebar md:hidden">
+                    {NAV_ITEMS.map((item) => (
+                        <NavLink
+                            key={item.to}
+                            to={item.to}
+                            className={({ isActive }) =>
+                                `flex flex-1 flex-col items-center justify-center gap-1 text-[11px] transition-colors ${
+                                    isActive ? "text-primary" : "text-muted-foreground"
+                                }`
+                            }
+                        >
+                            <item.icon className="h-5 w-5" />
+                            <span className="truncate">{t(item.labelKey)}</span>
+                        </NavLink>
+                    ))}
+                </nav>
             </div>
         </I18nContext.Provider>
     )
