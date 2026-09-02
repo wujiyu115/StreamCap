@@ -169,7 +169,12 @@
     "items": "items",
     "preview": "Preview",
     "poseSubmit": "Pose",
-    "protected": "Recording, cannot delete"
+    "protected": "Recording, cannot delete",
+    "columnDuration": "Duration",
+    "prev": "Previous (←)",
+    "next": "Next (→)",
+    "rotate": "Force landscape",
+    "rotateBack": "Restore portrait"
   },
   "pose": {
     "title": "Pose processing",
@@ -230,7 +235,7 @@
     "flvDirect": "FLV direct download",
     "spaceThreshold": "Disk space threshold (GB)",
     "convertMp4": "Convert to MP4 after recording",
-    "deleteOriginal": "Delete original after conversion",
+    "deleteOriginal": "Delete original after processing",
     "timeSubtitle": "Generate time subtitles",
     "customScript": "Run custom script",
     "customScriptCommand": "Script command",
@@ -302,7 +307,6 @@
     "minSegment": "Min segment (seconds)",
     "clipOptions": "Clipping options",
     "mergeClips": "Merge into single video",
-    "deleteOriginal": "Delete original after processing",
     "moveToOriginal": "Move output next to original video",
     "outputDir": "Output directory name",
     "minFileAge": "File settle wait (minutes)",

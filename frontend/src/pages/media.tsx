@@ -9,7 +9,7 @@ import {
     Sparkles,
     Trash2,
 } from "lucide-react"
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useState } from "react"
 import { mediaApi, poseApi } from "@/api"
 import type { MediaItem } from "@/api/types"
 import { Badge } from "@/components/ui/badge"
@@ -23,7 +23,9 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { formatTimestamp } from "@/components/status"
+import { PlayerDialog } from "@/components/player-dialog"
 import { PoseTaskPanel } from "@/components/pose-task-panel"
+import { useVideoMeta } from "@/hooks/use-video-meta"
 import {
     Table,
     TableBody,
@@ -97,6 +99,9 @@ export default function MediaPage() {
     const items = tree?.items ?? []
     const protectedFiles = new Set((stats?.protected_files ?? []).map((p) => p))
     const segments = path ? path.split("/") : []
+
+    // 预览队列：当前目录的媒体文件按显示顺序，供播放器上一个/下一个切换
+    const previewQueue = items.filter((i) => i.type !== "folder")
 
     const poseMutation = useMutation({
         mutationFn: (paths: string[]) => poseApi.submit(paths),
@@ -241,6 +246,7 @@ export default function MediaPage() {
                                     />
                                 </TableHead>
                                 <TableHead>{t("media.columnName")}</TableHead>
+                                <TableHead className="hidden w-20 sm:table-cell">{t("media.columnDuration")}</TableHead>
                                 <TableHead className="hidden w-24 sm:table-cell">{t("media.columnSize")}</TableHead>
                                 <TableHead className="hidden w-40 md:table-cell">{t("media.columnModified")}</TableHead>
                                 <TableHead className="w-24 text-right">{t("common.operations")}</TableHead>
@@ -260,9 +266,17 @@ export default function MediaPage() {
                             {items.map((item) => (
                                 <TableRow
                                     key={item.rel_path}
-                                    className={item.type === "folder" ? "cursor-pointer" : undefined}
+                                    className={
+                                        item.type === "folder" ? "cursor-pointer" : undefined
+                                    }
                                     onClick={() => item.type === "folder" && navigate(item.rel_path)}
-                                    data-state={selected.has(item.rel_path) ? "selected" : undefined}
+                                    data-state={
+                                        previewItem?.rel_path === item.rel_path
+                                            ? "previewing"
+                                            : selected.has(item.rel_path)
+                                              ? "selected"
+                                              : undefined
+                                    }
                                 >
                                     <TableCell onClick={(e) => e.stopPropagation()}>
                                         {item.type !== "folder" && (
@@ -286,6 +300,9 @@ export default function MediaPage() {
                                                 </span>
                                             )}
                                         </span>
+                                    </TableCell>
+                                    <TableCell className="hidden font-mono text-xs text-muted-foreground tabular-nums sm:table-cell">
+                                        <DurationCell item={item} />
                                     </TableCell>
                                     <TableCell className="hidden text-sm text-muted-foreground sm:table-cell">
                                         {item.size ?? "-"}
@@ -350,20 +367,36 @@ export default function MediaPage() {
                 </DialogContent>
             </Dialog>
 
-            {/* 预览对话框 */}
-            <Dialog open={previewItem !== null} onOpenChange={(v) => !v && setPreviewItem(null)}>
-                <DialogContent className="max-w-4xl p-4 sm:p-6">
-                    <DialogHeader>
-                        <DialogTitle className="truncate">{previewItem?.name}</DialogTitle>
-                    </DialogHeader>
-                    {previewItem && (
-                        <VideoPreview
-                            src={mediaApi.streamUrl(previewItem.rel_path)}
-                            ext={(previewItem.ext ?? "").toLowerCase()}
-                        />
-                    )}
-                </DialogContent>
-            </Dialog>
+            {/* 预览弹窗：工具栏（上一个/下一个/删除/关闭） */}
+            {previewItem && (
+                <PlayerDialog
+                    item={previewItem}
+                    streamUrl={mediaApi.streamUrl}
+                    hasPrev={previewQueue.indexOf(previewItem) > 0}
+                    hasNext={previewQueue.indexOf(previewItem) < previewQueue.length - 1}
+                    onPrev={() => {
+                        const idx = previewQueue.indexOf(previewItem)
+                        if (idx > 0) setPreviewItem(previewQueue[idx - 1])
+                    }}
+                    onNext={() => {
+                        const idx = previewQueue.indexOf(previewItem)
+                        if (idx < previewQueue.length - 1) setPreviewItem(previewQueue[idx + 1])
+                    }}
+                    onClose={() => setPreviewItem(null)}
+                    onDelete={(rel) => {
+                        if (confirm(tf("media.deleteFileConfirm", { name: rel.split("/").pop() ?? rel }))) {
+                            deleteMutation.mutate(rel, {
+                                onSettled: () => {
+                                    const idx = previewQueue.findIndex((i) => i.rel_path === rel)
+                                    const next =
+                                        previewQueue[idx + 1] ?? previewQueue[idx - 1] ?? null
+                                    setPreviewItem(next)
+                                },
+                            })
+                        }
+                    }}
+                />
+            )}
 
             {/* 人体识别任务进度 */}
             <PoseTaskPanel />
@@ -371,64 +404,18 @@ export default function MediaPage() {
     )
 }
 
-function VideoPreview({ src, ext }: { src: string; ext: string }) {
-    const { t } = useI18n()
-
-    if (["mp4", "webm", "m4v", "mov", "ogv"].includes(ext)) {
-        return <video src={src} controls autoPlay className="max-h-[62dvh] w-full rounded-md bg-black" />
-    }
-
-    if (["ts", "m2ts", "mts", "flv"].includes(ext)) {
-        return <MpegTsPlayer src={src} />
-    }
-
-    if (["jpg", "jpeg", "png", "gif", "webp", "avif", "bmp"].includes(ext)) {
-        return <img src={src} alt="preview" className="max-h-[62dvh] w-full rounded-md object-contain" />
-    }
-
-    return <div className="py-10 text-center text-muted-foreground">{t("media.preview")}: .{ext}</div>
-}
-
-function MpegTsPlayer({ src }: { src: string }) {
-    const { t } = useI18n()
-    const containerRef = useRef<HTMLDivElement | null>(null)
-    const [failed, setFailed] = useState(false)
-
-    useEffect(() => {
-        let player: { destroy?: () => void } | null = null
-        let cancelled = false
-
-        import("mpegts.js")
-            .then(({ default: mpegts }) => {
-                if (cancelled || !containerRef.current || !mpegts.isSupported()) {
-                    if (!mpegts.isSupported()) setFailed(true)
-                    return
-                }
-                const video = document.createElement("video")
-                video.controls = true
-                video.autoplay = true
-                video.style.width = "100%"
-                video.style.maxHeight = "70vh"
-                video.style.background = "#000"
-                video.style.borderRadius = "6px"
-                containerRef.current.appendChild(video)
-
-                const p = mpegts.createPlayer({ type: "mpegts", url: src, isLive: false })
-                p.attachMediaElement(video)
-                p.load()
-                void p.play()?.catch(() => undefined)
-                player = p
-            })
-            .catch(() => setFailed(true))
-
-        return () => {
-            cancelled = true
-            player?.destroy?.()
-        }
-    }, [src])
-
-    if (failed) {
-        return <div className="py-10 text-center text-muted-foreground">{t("media.preview")}</div>
-    }
-    return <div ref={containerRef} />
+function DurationCell({ item }: { item: MediaItem }) {
+    const meta = useVideoMeta(item.type === "video" ? item.rel_path : null, item.type)
+    if (item.type !== "video") return <span className="text-muted-foreground/40">—</span>
+    if (!meta) return <span className="text-muted-foreground/40">…</span>
+    return (
+        <span title={meta.resolution}>
+            {meta.duration}
+            {meta.resolution ? (
+                <span className="ml-1 hidden text-[10px] text-muted-foreground/60 xl:inline">
+                    {meta.resolution}
+                </span>
+            ) : null}
+        </span>
+    )
 }

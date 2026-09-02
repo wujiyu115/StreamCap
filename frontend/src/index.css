@@ -94,3 +94,10 @@ body {
         @apply bg-background text-foreground;
     }
 }
+/* 媒体表格：当前正在预览的行突出显示 */
+[data-state="previewing"] td {
+    @apply bg-primary/10;
+}
+[data-state="previewing"] td .font-medium {
+    @apply text-primary;
+}
