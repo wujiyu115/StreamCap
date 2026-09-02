@@ -1,0 +1,5 @@
+ultralytics>=8.3.0
+opencv-python-headless
+numpy>=1.26.4,<2.3
+ffmpeg-python
+av

@@ -1,7 +1,7 @@
-
 services:
   streamcap:
-    image: ihmily/streamcap
+    build: .
+    image: streamcap:latest
     tty: true
     ports:
       - "${PORT:-6006}:${PORT:-6006}"
@@ -14,29 +14,8 @@ services:
       - ./downloads:/app/downloads
       - ./.env:/app/.env
     healthcheck:
-      test: ["CMD", "sh", "-c", "curl -f http://localhost:${PORT:-6006}/about"]
+      test: ["CMD", "sh", "-c", "curl -sf http://localhost:${PORT:-6006}/api/system/info || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
-    networks:
-      - streamcap-network
-
-  video_api:
-      image: ihmily/streamcap
-      command: python -m app.api.video_stream_service
-      ports:
-        - "${VIDEO_API_PORT:-6007}:${VIDEO_API_PORT:-6007}"
-      environment:
-        - TZ=${TZ:-Asia/Shanghai}
-        - CUSTOM_VIDEO_ROOT_DIR=${CUSTOM_VIDEO_ROOT_DIR:-./downloads}
-      volumes:
-        - ./downloads:/app/downloads
-        - ./.env:/app/.env
-      depends_on:
-        - streamcap
-      networks:
-        - streamcap-network
-
-networks:
-  streamcap-network:
-    driver: bridge
+    restart: unless-stopped

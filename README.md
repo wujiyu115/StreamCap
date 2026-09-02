@@ -4,7 +4,7 @@
 <p align="center">
   <img alt="Python version" src="https://img.shields.io/badge/python-3.10%2B-blue.svg">
   <a href="https://github.com/ihmily/StreamCap">
-      <img alt="Supported Platforms" src="https://img.shields.io/badge/Platforms-Win%20%7C%20Mac%20%7C%20Linux-6B5BFF.svg"></a>
+      <img alt="Supported Platforms" src="https://img.shields.io/badge/Platforms-Docker%20%7C%20Web-6B5BFF.svg"></a>
     <a href="https://hub.docker.com/r/ihmily/streamcap/tags">
       <img alt="Docker Pulls" src="https://img.shields.io/docker/pulls/ihmily/streamcap?label=Docker%20Pulls&color=2496ED&logo=docker&v=0"></a>
   <a href="https://github.com/ihmily/StreamCap/releases/latest">
@@ -19,15 +19,17 @@
 
 
 
-StreamCap 是一个基于FFmpeg和StreamGet的多平台直播流录制客户端，覆盖 40+ 国内外主流直播平台，支持批量录制、循环监控、定时监控和自动转码等功能。
+StreamCap 是一个基于 FFmpeg 和 StreamGet 的多平台直播流录制与媒体管理平台，覆盖 40+ 国内外主流直播平台，支持批量录制、循环监控、定时监控、自动转码、视频库管理与基于 YOLOv8 人体识别的自动剪辑等功能。采用 React + FastAPI 前后端分离架构，Docker 一键部署。
 
 ## ✨功能特性
 
-- **多端支持**：支持Windows/MacOS/Web运行
+- **Web 管理**：React + FastAPI 前后端分离，Docker 单容器部署
 - **循环监控**：实时监控直播间状态，开播即录。
 - **定时任务**：根据设定时间范围检查直播间状态。
 - **多种输出格式**：支持 ts、flv、mkv、mov、mp4、mp3、m4a 等格式。
 - **自动转码**：录制完成后自动转码为 mp4 格式。
+- **视频管理**：录制视频在线浏览、流式播放、删除、批量清理。
+- **人体识别剪辑**：基于 YOLOv8 检测+姿态识别，自动剪辑出仅含人物的片段（可录制后自动处理）。
 - **消息推送**：支持直播状态推送，及时获取开播通知。
 
 ## 📸录制界面
@@ -36,92 +38,50 @@ StreamCap 是一个基于FFmpeg和StreamGet的多平台直播流录制客户端�
 
 ## 🛠️快速开始
 
-### 1.**运行预构建的程序**：
+### 1.**Docker 运行（推荐）**
 
-访问 [StreamCap Releases](https://github.com/ihmily/StreamCap/releases/latest) 页面，根据自身系统下载对应的最新版本压缩包。
+本机无需 Python 环境运行，在运行命令之前，请确保您的机器上安装了 [Docker](https://docs.docker.com/get-docker/) 和 [Docker Compose](https://docs.docker.com/compose/install/)
 
-- **Windows 用户**：下载 `StreamCap.zip` 文件，解压后运行 `StreamCap.exe`。
-- **macOS 用户**：下载 `StreamCap.dmg` 文件，按照提示完成安装，即可在启动台找到应用并运行。
-
-### 2.从源代码运行
-
-确保已安装 **Python 3.10** 或更高版本。💥
-
-1.**克隆项目代码**：
+进入项目根目录后执行（确保已经存在 `.env` 文件）：
 
 ```bash
-git clone https://github.com/ihmily/StreamCap.git
-cd StreamCap
+cp .env.example .env   # 首次运行
+docker compose up -d
 ```
 
-2.**安装依赖**：
+启动成功后，通过 `http://127.0.0.1:6006` 访问。
 
-```bash
-# 安装核心依赖
-pip install -i https://pypi.org/simple streamget 
-
-# 桌面端
-pip install -r requirements.txt
-
-# Web端
-pip install -r requirements-web.txt
-```
-
-3.**配置运行环境**：
-
-将.env.example示例配置文件复制一份并将文件重命名为.env
-
-```bash
-cp .env.example .env
-```
-
-4.**运行程序**：
-
-在Windows和macOS上默认以桌面程序的方式运行，使用以下命令启动程序：
-
-```bash
-python main.py
-```
-
-Linux请使用web方式运行，修改 `.env` 文件，将 `PLATFORM` 的值改为 `web`，即可以Web方式运行。
-
-或者无需修改配置文件，直接使用以下命令启动
-
-```bash
-python main.py --web
-```
-
-启动成功后，通过 `http://127.0.0.1:6006` 访问。更多配置请参考 [Web运行指南](https://github.com/ihmily/StreamCap/wiki/安装指南#web-端运行)
-
-如果程序提示缺少 FFmpeg，请访问 FFmpeg 官方下载页面[Download FFmpeg](https://ffmpeg.org/download.html)，下载预编译的 FFmpeg 可执行文件，并配置环境变量。
-
-## 🐋容器运行
-
-本机无需Python环境运行，在运行命令之前，请确保您的机器上安装了 [Docker](https://docs.docker.com/get-docker/) 和 [Docker Compose](https://docs.docker.com/compose/install/) 
-
-1.**快速启动**
-
-最简单方法是使用`docker compose`运行，进入项目根目录后，只需简单执行以下命令(确保已经存在`.env`文件)：
-
-```bash
-docker compose up
-```
-
-可选 `-d` 在后台运行。注意容器内时区问题，默认使用的是 `Asia/Shanghai` ，如需修改可以在.env文件配置。
-
-2.**停止容器实例**
+停止容器实例：
 
 ```bash
 docker compose stop
 ```
 
-3.**构建镜像(可选)**
+数据持久化：`./config`（配置）、`./downloads`（录制视频）、`./logs`（日志）通过卷挂载到宿主机。
 
-Docker仓库中的镜像的代码版本不一定是最新的，如有需要运行本仓库主分支最新代码，可以本地自定义构建
+### 2.从源代码运行
+
+确保已安装 **Python 3.10+**、**FFmpeg** 和 **bun/node**（构建前端）。
 
 ```bash
-docker build -t streamcap .
+# 克隆项目
+git clone https://github.com/ihmily/StreamCap.git
+cd StreamCap
+
+# 安装后端依赖
+pip install -r requirements.txt
+pip install -r requirements-pose.txt   # 人体识别功能（可选）
+
+# 构建前端
+cd frontend && bun install && bun run build && cd ..
+
+# 启动
+python main.py --host 0.0.0.0 --port 6006
 ```
+
+通过 `http://127.0.0.1:6006` 访问。
+
+如果程序提示缺少 FFmpeg，请访问 FFmpeg 官方下载页面 [Download FFmpeg](https://ffmpeg.org/download.html)，下载预编译的 FFmpeg 可执行文件，并配置环境变量。
 
 ## 😺已支持平台
 

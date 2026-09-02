@@ -3,7 +3,7 @@ import threading
 from collections import defaultdict
 from datetime import datetime, timedelta
 
-from ...messages import desktop_notify, message_pusher
+from ...messages import message_pusher
 from ...models.recording.recording_model import Recording
 from ...models.recording.recording_status_model import RecordingStatus
 from ...utils import utils
@@ -24,7 +24,6 @@ class RecordingManager:
         self.settings = services.settings_config
         self.periodic_task_started = False
         self.loop_time_seconds = None
-        self.services.language_manager.add_observer(self)
         self.load_recordings()
         self._ = {}
         self.load()
@@ -32,11 +31,6 @@ class RecordingManager:
         max_concurrent = int(self.settings.user_config.get("platform_max_concurrent_requests", 3))
         self.platform_semaphores = defaultdict(lambda: asyncio.Semaphore(max_concurrent))
         self.active_recorders = {}
-
-    @property
-    def app(self):
-        bridges = self.services.snapshot_bridges()
-        return bridges[0] if bridges else None
 
     @property
     def recordings(self):
@@ -154,10 +148,8 @@ class RecordingManager:
         """
         selected_recordings = await self.get_selected_recordings()
         pre_start_monitor_recordings = selected_recordings or self.recordings
-        cards_obj = self._get_visible_cards_obj()
         for recording in pre_start_monitor_recordings:
-            if self._is_card_visible(cards_obj, recording):
-                self.services.run_coro(self.start_monitor_recording(recording, auto_save=False))
+            self.services.run_coro(self.start_monitor_recording(recording, auto_save=False))
         self.services.run_coro(self.persist_recordings())
         logger.info(f"Batch Start Monitor Recordings: {[i.rec_id for i in pre_start_monitor_recordings]}")
 
@@ -168,32 +160,14 @@ class RecordingManager:
         if not selected_recordings:
             selected_recordings = await self.get_selected_recordings()
         pre_stop_monitor_recordings = selected_recordings or self.recordings
-        cards_obj = self._get_visible_cards_obj()
         for recording in pre_stop_monitor_recordings:
             if recording is None:
                 continue
-            if self._is_card_visible(cards_obj, recording):
-                self.services.run_coro(self.stop_monitor_recording(recording, auto_save=False))
+            self.services.run_coro(self.stop_monitor_recording(recording, auto_save=False))
         self.services.run_coro(self.persist_recordings())
-        logger.info(f"Batch Stop Monitor Recordings:{[i.rec_id for i in pre_stop_monitor_recordings if i is not None]}")
-
-    def _get_visible_cards_obj(self):
-        app = self.app
-        if app is None:
-            return None
-        return getattr(getattr(app, "record_card_manager", None), "cards_obj", None)
-
-    @staticmethod
-    def _is_card_visible(cards_obj, recording) -> bool:
-        """When no UI session is available, treat all cards as "visible" so
-        batch operations still affect the whole list."""
-        if cards_obj is None:
-            return True
-        entry = cards_obj.get(recording.rec_id)
-        if entry is None:
-            return False
-        card = entry.get("card")
-        return getattr(card, "visible", True)
+        logger.info(
+            f"Batch Stop Monitor Recordings: {[i.rec_id for i in pre_stop_monitor_recordings if i is not None]}"
+        )
 
     async def get_selected_recordings(self):
         return [recording for recording in self.recordings if recording.selected]
@@ -357,14 +331,6 @@ class RecordingManager:
                 recording.is_live = stream_info.is_live
                 recording.notified_live_start = False
                 recording.notified_live_end = False
-
-                tray_icon_path = self.services.tray_manager.icon_path if self.services.tray_manager is not None else ""
-                if desktop_notify.should_push_notification(self.app):
-                    desktop_notify.send_notification(
-                        title=self._["notify"],
-                        message=recording.streamer_name + " | " + self._["live_recording_started_message"],
-                        app_icon=tray_icon_path,
-                    )
 
             msg_manager = message_pusher.MessagePusher(self.settings)
             user_config = self.settings.user_config

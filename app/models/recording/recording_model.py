@@ -20,6 +20,7 @@ class Recording:
         only_notify_no_record,
         flv_use_direct_download,
         video_bitrate=None,
+        pose_enabled=None,
     ):
         """
         Initialize a recording object.
@@ -40,6 +41,7 @@ class Recording:
         :param only_notify_no_record: Whether to only notify when no record is made.
         :param flv_use_direct_download: Whether to use direct downloader to cache FLV stream.
         :param video_bitrate: Custom output video bitrate in kbps, or None to copy the source video stream.
+        :param pose_enabled: Override for pose processing after recording (None follows the global setting).
         """
 
         self.rec_id = rec_id
@@ -58,6 +60,8 @@ class Recording:
         self.only_notify_no_record = only_notify_no_record
         self.flv_use_direct_download = flv_use_direct_download
         self.video_bitrate = video_bitrate
+        self.pose_enabled = pose_enabled
+        self.current_output_file = None
         self.scheduled_time_range = None
         self.title = f"{streamer_name} - {self.quality}"
         self.speed = "X KB/s"
@@ -108,6 +112,7 @@ class Recording:
             "only_notify_no_record": self.only_notify_no_record,
             "flv_use_direct_download": self.flv_use_direct_download,
             "video_bitrate": self.video_bitrate,
+            "pose_enabled": self.pose_enabled,
         }
 
     @classmethod
@@ -130,6 +135,7 @@ class Recording:
             data.get("only_notify_no_record"),
             data.get("flv_use_direct_download"),
             data.get("video_bitrate"),
+            data.get("pose_enabled"),
         )
         recording.title = data.get("title", recording.title)
         recording.display_title = data.get("display_title", recording.title)

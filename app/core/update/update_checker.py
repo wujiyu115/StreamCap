@@ -3,7 +3,6 @@ import json
 import os
 from typing import Any, Literal, TypedDict
 
-import flet as ft
 import httpx
 
 from ...utils.logger import logger
@@ -45,14 +44,14 @@ class UpdateConfig(TypedDict):
 
 
 class UpdateChecker:
-    def __init__(self, app):
-        self.app = app
+    def __init__(self, run_path: str):
+        self.run_path = run_path
         self.current_version = self._get_current_version()
         self.update_config = self._load_update_config()
 
     def _get_current_version(self) -> str:
         try:
-            config_path = os.path.join(self.app.run_path, "config", "version.json")
+            config_path = os.path.join(self.run_path, "config", "version.json")
             with open(config_path, encoding="utf-8") as f:
                 version_data = json.load(f)
                 return version_data["version_updates"][0]["version"]
@@ -250,51 +249,3 @@ class UpdateChecker:
             return -1
 
         return 0
-
-    async def show_update_dialog(self, update_info: dict[str, Any]) -> None:
-        _ = self.app.language_manager.language.get("update", {})
-
-        dialog = ft.AlertDialog(
-            title=ft.Text(_["new_version"].format(version=update_info.get("latest_version"))),
-            content=ft.Column(
-                [
-                    ft.Text(_["current_version"].format(version=update_info.get("current_version"))),
-                    ft.Text(_["latest_version"].format(version=update_info.get("latest_version"))),
-                    ft.Text(_["update_source"].format(source=update_info.get("source", _["unknown"]))),
-                ],
-                spacing=10,
-                width=400,
-                height=300,
-            ),
-            actions=[
-                ft.TextButton(_["later"], on_click=lambda _: self.close_dialog()),
-                ft.TextButton(_["download"], on_click=lambda _: self.open_download_page(update_info)),
-            ],
-        )
-
-        self.app.dialog_area.content = dialog
-        self.app.dialog_area.content.open = True
-        self.app.dialog_area.update()
-
-    def close_dialog(self) -> None:
-        if self.app.dialog_area.content:
-            self.app.dialog_area.content.open = False
-            self.app.dialog_area.update()
-
-    def open_download_page(self, update_info: dict[str, Any]) -> None:
-        import platform
-
-        url = update_info.get("download_url", "https://github.com/ihmily/StreamCap/releases/latest")
-
-        download_urls = update_info.get("download_urls", {})
-        if download_urls:
-            system = platform.system().lower()
-            if system == "windows" and "windows" in download_urls:
-                url = download_urls["windows"]
-            elif system == "darwin" and "macos" in download_urls:
-                url = download_urls["macos"]
-            elif system == "linux" and "linux" in download_urls:
-                url = download_urls["linux"]
-
-        self.app.page.launch_url(url)
-        self.close_dialog()

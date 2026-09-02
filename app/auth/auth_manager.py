@@ -6,9 +6,8 @@ from ..utils.logger import logger
 
 
 class AuthManager:
-    def __init__(self, app):
-        self.app = app
-        self.config_manager = app.config_manager
+    def __init__(self, config_manager):
+        self.config_manager = config_manager
         self.is_authenticated = False
         self.session_token = None
         self.active_sessions = {}
@@ -62,6 +61,12 @@ class AuthManager:
     def validate_session(self, session_token: str) -> bool:
         """Validate session token"""
         return session_token in self.active_sessions
+
+    def get_session(self, session_token: str) -> Optional[dict]:
+        """Return session info for a valid token, else None."""
+        if session_token is None:
+            return None
+        return self.active_sessions.get(session_token)
 
     def logout(self, session_token: str) -> bool:
         if session_token in self.active_sessions:

@@ -1,0 +1,533 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import {
+    Eye,
+    EyeOff,
+    LayoutGrid,
+    Loader2,
+    Pencil,
+    Play,
+    Plus,
+    RefreshCw,
+    Square,
+    Table2,
+    Trash2,
+} from "lucide-react"
+import { useMemo, useState } from "react"
+import { recordingsApi } from "@/api"
+import type { Recording } from "@/api/types"
+import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { Input } from "@/components/ui/input"
+import { Badge } from "@/components/ui/badge"
+import {
+    Table,
+    TableBody,
+    TableCell,
+    TableHead,
+    TableHeader,
+    TableRow,
+} from "@/components/ui/table"
+import { displayDuration, formatDuration, StatusBadge, stateLabelKey } from "@/components/status"
+import { useI18n } from "@/i18n"
+import { toast } from "sonner"
+import { RecordingDialog } from "@/components/recording-dialog"
+
+type StatusFilter = "all" | "recording" | "live" | "offline" | "error" | "stopped"
+
+const FILTERS: StatusFilter[] = ["all", "recording", "live", "offline", "error", "stopped"]
+const FILTER_LABEL_KEY: Record<StatusFilter, string> = {
+    all: "recordings.statusAll",
+    recording: "recordings.statusRecording",
+    live: "recordings.statusLive",
+    offline: "recordings.statusOffline",
+    error: "recordings.statusError",
+    stopped: "recordings.statusStopped",
+}
+
+export default function RecordingsPage() {
+    const { t, tf } = useI18n()
+    const queryClient = useQueryClient()
+    const [filter, setFilter] = useState<StatusFilter>("all")
+    const [platform, setPlatform] = useState<string>("all")
+    const [search, setSearch] = useState("")
+    const [viewMode, setViewMode] = useState<"table" | "card">("table")
+    const [selected, setSelected] = useState<Set<string>>(new Set())
+    const [dialogOpen, setDialogOpen] = useState(false)
+    const [editing, setEditing] = useState<Recording | null>(null)
+
+    const { data, isLoading, refetch } = useQuery({
+        queryKey: ["recordings"],
+        queryFn: recordingsApi.list,
+        refetchInterval: 5000,
+    })
+
+    const recordings = data?.recordings ?? []
+
+    const platforms = useMemo(
+        () => Array.from(new Set(recordings.map((r) => r.platform).filter(Boolean))) as string[],
+        [recordings],
+    )
+
+    const filtered = useMemo(() => {
+        return recordings.filter((r) => {
+            if (filter === "recording" && !(r.is_recording || r.state === "live")) return false
+            if (filter === "live" && r.state !== "live") return false
+            if (filter === "offline" && r.state !== "offline") return false
+            if (filter === "error" && r.state !== "error") return false
+            if (filter === "stopped" && r.state !== "stopped") return false
+            if (platform !== "all" && r.platform !== platform) return false
+            if (search) {
+                const q = search.toLowerCase()
+                if (
+                    !r.streamer_name?.toLowerCase().includes(q) &&
+                    !r.url.toLowerCase().includes(q) &&
+                    !r.platform?.toLowerCase().includes(q)
+                ) {
+                    return false
+                }
+            }
+            return true
+        })
+    }, [recordings, filter, platform, search])
+
+    const nowRecording = recordings.filter((r) => r.is_recording)
+
+    const invalidate = () => queryClient.invalidateQueries({ queryKey: ["recordings"] })
+
+    const monitorMutation = useMutation({
+        mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
+            recordingsApi.setMonitor(id, enabled),
+        onSuccess: (_d, vars) =>
+            toast.success(vars.enabled ? t("recordings.startMonitorTip") : t("recordings.stopMonitorTip")),
+        onSettled: invalidate,
+    })
+
+    const stopMutation = useMutation({
+        mutationFn: recordingsApi.stop,
+        onSuccess: () => toast.success(t("recordings.stopRecordingTip")),
+        onSettled: invalidate,
+    })
+
+    const deleteMutation = useMutation({
+        mutationFn: recordingsApi.remove,
+        onSuccess: () => toast.success(t("recordings.deleteSuccess")),
+        onSettled: invalidate,
+    })
+
+    const batchMonitor = useMutation({
+        mutationFn: ({ ids, enabled }: { ids: string[]; enabled: boolean }) =>
+            recordingsApi.batchMonitor(ids, enabled),
+        onSettled: () => {
+            setSelected(new Set())
+            invalidate()
+        },
+    })
+
+    const batchDelete = useMutation({
+        mutationFn: (ids: string[]) => recordingsApi.batchDelete(ids),
+        onSuccess: () => toast.success(t("recordings.deleteSuccess")),
+        onSettled: () => {
+            setSelected(new Set())
+            invalidate()
+        },
+    })
+
+    const toggleSelect = (id: string) => {
+        setSelected((prev) => {
+            const next = new Set(prev)
+            if (next.has(id)) next.delete(id)
+            else next.add(id)
+            return next
+        })
+    }
+
+    const allSelected = filtered.length > 0 && filtered.every((r) => selected.has(r.rec_id))
+
+    const handleDelete = (rec: Recording) => {
+        if (confirm(tf("recordings.deleteOneConfirm", { name: rec.streamer_name || rec.url }))) {
+            deleteMutation.mutate(rec.rec_id)
+        }
+    }
+
+    const handleBatchDelete = () => {
+        if (selected.size === 0) return
+        if (confirm(tf("recordings.deleteConfirm", { count: selected.size }))) {
+            batchDelete.mutate(Array.from(selected))
+        }
+    }
+
+    return (
+        <div className="space-y-4">
+            {/* 正在录制实时面板 */}
+            <div className="rounded-lg border bg-card p-3">
+                <div className="mb-2 text-sm font-medium text-muted-foreground">
+                    {t("recordings.nowRecording")}
+                </div>
+                {nowRecording.length === 0 ? (
+                    <div className="text-sm text-muted-foreground">{t("recordings.noRecording")}</div>
+                ) : (
+                    <div className="flex flex-wrap gap-2">
+                        {nowRecording.map((r) => (
+                            <div
+                                key={r.rec_id}
+                                className="flex items-center gap-2 rounded-full border bg-green-500/10 px-3 py-1 text-sm"
+                            >
+                                <span className="h-2 w-2 animate-pulse rounded-full bg-green-500" />
+                                <span className="font-medium">{r.streamer_name}</span>
+                                <span className="text-muted-foreground">{t(`quality.${r.quality}`)}</span>
+                                <span className="font-mono tabular-nums">
+                                    <LiveDuration rec={r} />
+                                </span>
+                                {r.speed && r.speed !== "X KB/s" && (
+                                    <span className="text-xs text-muted-foreground">{r.speed}</span>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
+
+            {/* 工具栏 */}
+            <div className="flex flex-wrap items-center gap-2">
+                <div className="flex gap-1 rounded-md border p-0.5">
+                    {FILTERS.map((f) => (
+                        <button
+                            key={f}
+                            onClick={() => setFilter(f)}
+                            className={`rounded px-2.5 py-1 text-sm transition-colors ${
+                                filter === f
+                                    ? "bg-primary text-primary-foreground"
+                                    : "text-muted-foreground hover:bg-accent"
+                            }`}
+                        >
+                            {t(FILTER_LABEL_KEY[f])}
+                        </button>
+                    ))}
+                </div>
+
+                <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                        <Button variant="outline" size="sm">
+                            {t("recordings.platformFilter")}: {platform === "all" ? t("common.all") : platform}
+                        </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent>
+                        <DropdownMenuItem onClick={() => setPlatform("all")}>
+                            {t("common.all")}
+                        </DropdownMenuItem>
+                        {platforms.map((p) => (
+                            <DropdownMenuItem key={p} onClick={() => setPlatform(p)}>
+                                {p}
+                            </DropdownMenuItem>
+                        ))}
+                    </DropdownMenuContent>
+                </DropdownMenu>
+
+                <Input
+                    placeholder={t("common.search")}
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    className="w-56"
+                />
+
+                <div className="ml-auto flex items-center gap-2">
+                    <Button
+                        size="sm"
+                        onClick={() => {
+                            setEditing(null)
+                            setDialogOpen(true)
+                        }}
+                    >
+                        <Plus className="h-4 w-4" />
+                        {t("recordings.add")}
+                    </Button>
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={selected.size === 0}
+                        onClick={() => batchMonitor.mutate({ ids: Array.from(selected), enabled: true })}
+                    >
+                        <Eye className="h-4 w-4" />
+                        {t("recordings.batchStart")}
+                    </Button>
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={selected.size === 0}
+                        onClick={() => batchMonitor.mutate({ ids: Array.from(selected), enabled: false })}
+                    >
+                        <EyeOff className="h-4 w-4" />
+                        {t("recordings.batchStop")}
+                    </Button>
+                    <Button
+                        variant="destructive"
+                        size="sm"
+                        disabled={selected.size === 0}
+                        onClick={handleBatchDelete}
+                    >
+                        <Trash2 className="h-4 w-4" />
+                        {t("recordings.batchDelete")}
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => refetch()}>
+                        <RefreshCw className="h-4 w-4" />
+                    </Button>
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setViewMode((m) => (m === "table" ? "card" : "table"))}
+                    >
+                        {viewMode === "table" ? (
+                            <LayoutGrid className="h-4 w-4" />
+                        ) : (
+                            <Table2 className="h-4 w-4" />
+                        )}
+                    </Button>
+                </div>
+            </div>
+
+            {/* 内容区 */}
+            {isLoading ? (
+                <div className="flex justify-center py-20">
+                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                </div>
+            ) : filtered.length === 0 ? (
+                <div className="rounded-lg border border-dashed py-20 text-center text-muted-foreground">
+                    {recordings.length === 0 ? t("recordings.empty") : t("recordings.noResults")}
+                </div>
+            ) : viewMode === "table" ? (
+                <div className="rounded-lg border bg-card">
+                    <Table>
+                        <TableHeader>
+                            <TableRow>
+                                <TableHead className="w-10">
+                                    <Checkbox
+                                        checked={allSelected}
+                                        onCheckedChange={(v) =>
+                                            setSelected(
+                                                v
+                                                    ? new Set(filtered.map((r) => r.rec_id))
+                                                    : new Set(),
+                                            )
+                                        }
+                                    />
+                                </TableHead>
+                                <TableHead>{t("recordings.columnStreamer")}</TableHead>
+                                <TableHead>{t("recordings.columnPlatform")}</TableHead>
+                                <TableHead>{t("recordings.columnStatus")}</TableHead>
+                                <TableHead>{t("recordings.columnQuality")}</TableHead>
+                                <TableHead>{t("recordings.columnDuration")}</TableHead>
+                                <TableHead className="text-right">{t("common.operations")}</TableHead>
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                            {filtered.map((r) => (
+                                <TableRow key={r.rec_id} data-state={selected.has(r.rec_id) ? "selected" : undefined}>
+                                    <TableCell>
+                                        <Checkbox
+                                            checked={selected.has(r.rec_id)}
+                                            onCheckedChange={() => toggleSelect(r.rec_id)}
+                                        />
+                                    </TableCell>
+                                    <TableCell>
+                                        <div className="font-medium">{r.streamer_name || "-"}</div>
+                                        <div className="max-w-64 truncate text-xs text-muted-foreground">
+                                            {r.live_title || r.url}
+                                        </div>
+                                    </TableCell>
+                                    <TableCell className="text-sm text-muted-foreground">
+                                        {r.platform || "-"}
+                                    </TableCell>
+                                    <TableCell>
+                                        <StatusBadge state={r.state} label={t(stateLabelKey(r.state))} />
+                                    </TableCell>
+                                    <TableCell>{t(`quality.${r.quality}`)}</TableCell>
+                                    <TableCell className="font-mono text-sm tabular-nums">
+                                        <LiveDuration rec={r} />
+                                    </TableCell>
+                                    <TableCell className="text-right">
+                                        <div className="flex justify-end gap-1">
+                                            {r.is_recording ? (
+                                                <Button
+                                                    variant="ghost"
+                                                    size="icon"
+                                                    title={t("recordings.stopRecord")}
+                                                    onClick={() => stopMutation.mutate(r.rec_id)}
+                                                >
+                                                    <Square className="h-4 w-4 text-red-500" />
+                                                </Button>
+                                            ) : (
+                                                <Button
+                                                    variant="ghost"
+                                                    size="icon"
+                                                    title={t("recordings.startRecord")}
+                                                    disabled={!r.monitor_status}
+                                                    onClick={() => monitorMutation.mutate({ id: r.rec_id, enabled: true })}
+                                                >
+                                                    <Play className="h-4 w-4 text-green-600" />
+                                                </Button>
+                                            )}
+                                            <Button
+                                                variant="ghost"
+                                                size="icon"
+                                                title={
+                                                    r.monitor_status
+                                                        ? t("recordings.stopMonitor")
+                                                        : t("recordings.startMonitor")
+                                                }
+                                                onClick={() =>
+                                                    monitorMutation.mutate({
+                                                        id: r.rec_id,
+                                                        enabled: !r.monitor_status,
+                                                    })
+                                                }
+                                            >
+                                                {r.monitor_status ? (
+                                                    <Eye className="h-4 w-4" />
+                                                ) : (
+                                                    <EyeOff className="h-4 w-4 text-muted-foreground" />
+                                                )}
+                                            </Button>
+                                            <Button
+                                                variant="ghost"
+                                                size="icon"
+                                                title={t("common.edit")}
+                                                onClick={() => {
+                                                    setEditing(r)
+                                                    setDialogOpen(true)
+                                                }}
+                                            >
+                                                <Pencil className="h-4 w-4" />
+                                            </Button>
+                                            <Button
+                                                variant="ghost"
+                                                size="icon"
+                                                title={t("common.delete")}
+                                                onClick={() => handleDelete(r)}
+                                            >
+                                                <Trash2 className="h-4 w-4 text-red-500" />
+                                            </Button>
+                                        </div>
+                                    </TableCell>
+                                </TableRow>
+                            ))}
+                        </TableBody>
+                    </Table>
+                </div>
+            ) : (
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    {filtered.map((r) => (
+                        <RecordingCardView
+                            key={r.rec_id}
+                            rec={r}
+                            selected={selected.has(r.rec_id)}
+                            onToggleSelect={() => toggleSelect(r.rec_id)}
+                            onEdit={() => {
+                                setEditing(r)
+                                setDialogOpen(true)
+                            }}
+                            onDelete={() => handleDelete(r)}
+                            onMonitor={(enabled) => monitorMutation.mutate({ id: r.rec_id, enabled })}
+                            onStop={() => stopMutation.mutate(r.rec_id)}
+                        />
+                    ))}
+                </div>
+            )}
+
+            <RecordingDialog
+                open={dialogOpen}
+                recording={editing}
+                onOpenChange={(open) => {
+                    setDialogOpen(open)
+                    if (!open) setEditing(null)
+                }}
+                onSaved={invalidate}
+            />
+        </div>
+    )
+}
+
+function LiveDuration({ rec }: { rec: Recording }) {
+    const seconds = displayDuration(rec)
+    return <span>{formatDuration(seconds)}</span>
+}
+
+function RecordingCardView({
+    rec,
+    selected,
+    onToggleSelect,
+    onEdit,
+    onDelete,
+    onMonitor,
+    onStop,
+}: {
+    rec: Recording
+    selected: boolean
+    onToggleSelect: () => void
+    onEdit: () => void
+    onDelete: () => void
+    onMonitor: (enabled: boolean) => void
+    onStop: () => void
+}) {
+    const { t } = useI18n()
+    return (
+        <div
+            className={`cursor-pointer rounded-lg border bg-card p-4 transition-shadow hover:shadow-md ${
+                selected ? "ring-2 ring-primary" : ""
+            }`}
+            onClick={onToggleSelect}
+        >
+            <div className="mb-2 flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                    <div className="truncate font-medium">{rec.streamer_name || rec.url}</div>
+                    <div className="text-xs text-muted-foreground">{rec.platform}</div>
+                </div>
+                <StatusBadge state={rec.state} label={t(stateLabelKey(rec.state))} />
+            </div>
+            <div className="mb-3 space-y-1 text-sm text-muted-foreground">
+                <div className="truncate text-xs">{rec.live_title || rec.url}</div>
+                <div className="flex items-center gap-3">
+                    <span>{t(`quality.${rec.quality}`)}</span>
+                    {rec.is_recording && (
+                        <>
+                            <span className="font-mono tabular-nums">
+                                <LiveDuration rec={rec} />
+                            </span>
+                            <span className="text-xs">{rec.speed}</span>
+                        </>
+                    )}
+                </div>
+            </div>
+            <div className="flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+                {rec.is_recording ? (
+                    <Button variant="outline" size="sm" onClick={onStop}>
+                        <Square className="h-3.5 w-3.5" />
+                    </Button>
+                ) : (
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={!rec.monitor_status}
+                        onClick={() => onMonitor(true)}
+                    >
+                        <Play className="h-3.5 w-3.5" />
+                    </Button>
+                )}
+                <Button variant="outline" size="sm" onClick={() => onMonitor(!rec.monitor_status)}>
+                    {rec.monitor_status ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+                </Button>
+                <Button variant="outline" size="sm" onClick={onEdit}>
+                    <Pencil className="h-3.5 w-3.5" />
+                </Button>
+                <Button variant="outline" size="sm" onClick={onDelete}>
+                    <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                </Button>
+            </div>
+        </div>
+    )
+}

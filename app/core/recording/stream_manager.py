@@ -7,7 +7,7 @@ import time
 from datetime import datetime
 from typing import TypeVar
 
-from ...messages import desktop_notify, message_pusher
+from ...messages import message_pusher
 from ...models.media.video_quality_model import VideoQuality
 from ...models.recording.recording_status_model import RecordingStatus
 from ...utils import utils
@@ -52,14 +52,8 @@ class LiveStreamRecorder:
         self.min_valid_recording_duration = 25
         self.recording_start_time = 0
         os.makedirs(self.output_dir, exist_ok=True)
-        self.services.language_manager.add_observer(self)
         self._ = {}
         self.load()
-
-    @property
-    def app(self):
-        bridges = self.services.snapshot_bridges()
-        return bridges[0] if bridges else None
 
     def load(self):
         language = self.services.language_manager.language
@@ -265,6 +259,7 @@ class LiveStreamRecorder:
         self.output_dir = self._get_output_dir(stream_info)
         save_path = self._get_save_path(filename, use_direct_download)
         logger.info(f"Save Path: {save_path}")
+        self.recording.current_output_file = save_path
         self.recording.recording_dir = os.path.dirname(save_path)
         os.makedirs(self.recording.recording_dir, exist_ok=True)
         record_url = self._get_record_url(stream_info)
@@ -508,6 +503,8 @@ class LiveStreamRecorder:
                             self.user_config.get("convert_to_mp4"),
                         )
 
+                self._submit_pose_task(save_file_path)
+
         except Exception as e:
             logger.error(f"An error occurred during the subprocess execution: {e}")
             self._handle_recording_error(record_name, self._["no_ffmpeg_tip"], duration=4000)
@@ -640,6 +637,51 @@ class LiveStreamRecorder:
             self.services.run_coro(self.run_script_async(script_command))
 
         logger.success("Script command execution initiated!")
+
+    def _submit_pose_task(self, save_file_path: str) -> None:
+        """录制结束后按需提交人体识别任务。
+
+        收集本次录制的全部分段文件（转码开启且为 ts 时映射到转码后的 .mp4
+        路径），任务子进程以 wait_file 模式等待文件就绪后再处理。
+        """
+        try:
+            from ..pose.pose_params import is_pose_enabled
+
+            if not is_pose_enabled(self.user_config, getattr(self.recording, "pose_enabled", None)):
+                return
+
+            manager = getattr(self.services, "pose_task_manager", None)
+            if manager is None:
+                return
+
+            convert_to_mp4 = self.user_config.get("convert_to_mp4") and self.save_format == "ts"
+
+            if self.segment_record:
+                file_paths = utils.get_file_paths(os.path.dirname(save_file_path))
+                prefix = os.path.basename(save_file_path).rsplit("_", maxsplit=1)[0]
+                candidates = [p for p in file_paths if prefix in os.path.basename(p)]
+            else:
+                candidates = [save_file_path]
+
+            if convert_to_mp4:
+                candidates = [
+                    (p[:-3] + ".mp4") if p.lower().endswith(".ts") else p for p in candidates
+                ]
+
+            if not candidates:
+                return
+
+            params = self.user_config.get("pose_detection") or {}
+            result = manager.submit(
+                videos=candidates,
+                media_root=self.settings.get_video_save_path(),
+                params=params,
+                trigger="auto",
+                wait_file=True,
+            )
+            logger.info(f"Pose task submitted after recording: {result.get('status')} ({len(candidates)} files)")
+        except Exception as e:
+            logger.error(f"Failed to submit pose task: {e}")
 
     def run_script_sync(self, command: str) -> None:
         """Synchronous version of the script execution method, used for background service"""
@@ -782,13 +824,7 @@ class LiveStreamRecorder:
             self.recording.record_url = None
 
     async def stop_recording_notify(self):
-        if desktop_notify.should_push_notification(self.app):
-            tray_icon_path = self.services.tray_manager.icon_path if self.services.tray_manager is not None else ""
-            desktop_notify.send_notification(
-                title=self._["notify"],
-                message=self.recording.streamer_name + " | " + self._["live_recording_stopped_message"],
-                app_icon=tray_icon_path,
-            )
+        pass
 
     async def end_message_push(self):
         msg_manager = message_pusher.MessagePusher(self.settings)

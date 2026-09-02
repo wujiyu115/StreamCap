@@ -7,9 +7,6 @@
     "folder_name_author": true,
     "folder_name_time": false,
     "folder_name_title": false,
-    "scheduled_shutdown_enabled": false,
-    "scheduled_shutdown_time": "23:00",
-    "quick_shutdown_hours": "3",
     "enable_proxy": true,
     "proxy_address": "",
     "video_format": "TS",
@@ -70,5 +67,24 @@
     "theme_mode": "light",
     "platform_max_concurrent_requests": "3",
     "last_route": "/home",
-    "check_live_on_browser_refresh": false
+    "check_live_on_browser_refresh": false,
+    "pose_detection": {
+        "enabled": false,
+        "frame_seconds": 10.0,
+        "imgsz": 416,
+        "batch_size": 8,
+        "confidence_threshold": 0.5,
+        "enable_pose_detection": true,
+        "pose_filter": "none",
+        "standing_angle": 45.0,
+        "person_min_ratio": 0.1,
+        "merge_threshold_seconds": 12.0,
+        "min_segment_seconds": 30.0,
+        "merge_clips": true,
+        "delete_original_video": false,
+        "video_output_dir": "pose_output",
+        "merged_suffix": "_merged",
+        "min_file_age_minutes": 2,
+        "wait_file_timeout_minutes": 15
+    }
 }
