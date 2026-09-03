@@ -1,10 +1,17 @@
 export class ApiError extends Error {
     status: number
+    /** 后端错误码（如 err.poseNoVideos）；非码化 detail 为 null */
+    code: string | null
+    /** 错误码后的附加信息（如文件名列表） */
+    params: string | null
 
     constructor(status: number, message: string) {
         super(message)
         this.status = status
         this.name = "ApiError"
+        const m = message.match(/^(err\.[a-zA-Z]+)\|(.*)$/s)
+        this.code = m ? m[1] : /^err\.[a-zA-Z]+$/.test(message) ? message : null
+        this.params = m ? m[2] : null
     }
 }
 

@@ -31,7 +31,7 @@ async def login(
 ):
     ok, token = await auth_manager.authenticate(body.username, body.password)
     if not ok:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid credentials")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="err.invalidCredentials")
     response.set_cookie(
         SESSION_COOKIE,
         token,
@@ -64,4 +64,4 @@ async def change_password(
 ):
     if await auth_manager.change_password(username, body.old_password, body.new_password):
         return {"ok": True}
-    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="wrong old password")
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="err.wrongOldPassword")

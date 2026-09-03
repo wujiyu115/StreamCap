@@ -15,8 +15,24 @@ export const SUPPORTED_LANGUAGES: Array<{ code: LangCode; label: string }> = [
     { code: "en", label: "English" },
 ]
 
+/** 当前语言（模块级，供非 hook 场景如 toast 错误翻译使用） */
+let currentLang: LangCode = "zh_CN"
+
 export function getDict(lang: LangCode): Dict {
     return DICTS[lang] ?? DICTS.zh_CN
+}
+
+export function setCurrentLang(lang: LangCode): void {
+    currentLang = lang
+}
+
+/** 翻译 "err.xxx|附加信息" 格式的 API 错误：码查 i18n，附加信息原样拼回 */
+export function translateError(message: string): string {
+    const m = message.match(/^(err\.[a-zA-Z]+)(?:\|(.*))?$/s)
+    if (!m) return message
+    const template = resolveDictValue(DICTS[currentLang] ?? DICTS.zh_CN, m[1])
+    const text = template === m[1] ? m[1] : template
+    return m[2] ? `${text}：${m[2]}` : text
 }
 
 export function format(template: string, params: Record<string, string | number>): string {

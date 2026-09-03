@@ -10,7 +10,7 @@ import {
     DropdownMenuItem,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { I18nContext, format, getDict, resolveDictValue, type LangCode } from "@/i18n"
+import { I18nContext, format, getDict, resolveDictValue, setCurrentLang, type LangCode } from "@/i18n"
 
 const LANG_KEY = "streamcap.lang"
 const THEME_KEY = "streamcap.theme"
@@ -24,6 +24,11 @@ function useI18nState() {
         setLangState(next)
         localStorage.setItem(LANG_KEY, next)
     }
+
+    // 同步模块级语言，供非 hook 场景（toast 错误翻译）使用
+    useEffect(() => {
+        setCurrentLang(lang)
+    }, [lang])
 
     const dict = getDict(lang)
 

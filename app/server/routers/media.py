@@ -8,7 +8,7 @@ import aiofiles
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
-from .. import media_service
+from .. import error_codes as errors, media_service
 from ..deps import get_current_user, get_services
 from ..schemas import MediaBatchDeleteRequest, MediaCleanRequest
 
@@ -81,9 +81,9 @@ async def tree(path: str = Query(""), user: str = Depends(get_current_user), ser
     try:
         return media_service.list_dir(path, _root(services))
     except PermissionError:
-        raise HTTPException(status_code=403, detail="access denied")
+        raise HTTPException(status_code=403, detail=errors.ACCESS_DENIED)
     except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="not found")
+        raise HTTPException(status_code=404, detail=errors.NOT_FOUND)
 
 
 @router.get("/stats")
@@ -91,9 +91,9 @@ async def stats(path: str = Query(""), user: str = Depends(get_current_user), se
     try:
         result = media_service.stats(path, _root(services))
     except PermissionError:
-        raise HTTPException(status_code=403, detail="access denied")
+        raise HTTPException(status_code=403, detail=errors.ACCESS_DENIED)
     except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="not found")
+        raise HTTPException(status_code=404, detail=errors.NOT_FOUND)
 
     protected: list[str] = []
     rm = services.recording_manager
@@ -108,9 +108,9 @@ async def stream(request: Request, path: str = Query(...), user: str = Depends(g
     try:
         full = media_service.resolve_safe(_root(services), path)
     except PermissionError:
-        raise HTTPException(status_code=403, detail="access denied")
+        raise HTTPException(status_code=403, detail=errors.ACCESS_DENIED)
     if not os.path.isfile(full):
-        raise HTTPException(status_code=404, detail="file not found")
+        raise HTTPException(status_code=404, detail=errors.FILE_NOT_FOUND)
 
     size = os.path.getsize(full)
     ctype = _guess_type(full)
@@ -125,7 +125,7 @@ async def stream(request: Request, path: str = Query(...), user: str = Depends(g
     try:
         start, end = _parse_range(range_header, size)
     except ValueError:
-        raise HTTPException(status_code=400, detail="bad range")
+        raise HTTPException(status_code=400, detail=errors.BAD_RANGE)
 
     headers = {
         "Content-Range": f"bytes {start}-{end}/{size}",
@@ -141,9 +141,9 @@ async def delete_media(path: str = Query(...), user: str = Depends(get_current_u
     try:
         media_service.delete_one(path, root)
     except PermissionError:
-        raise HTTPException(status_code=403, detail="access denied")
+        raise HTTPException(status_code=403, detail=errors.ACCESS_DENIED)
     except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="not found")
+        raise HTTPException(status_code=404, detail=errors.NOT_FOUND)
     return {"ok": True}
 
 
@@ -165,6 +165,6 @@ async def clean(
     try:
         return media_service.clean_small(body.path, body.max_bytes, _root(services))
     except PermissionError:
-        raise HTTPException(status_code=403, detail="access denied")
+        raise HTTPException(status_code=403, detail=errors.ACCESS_DENIED)
     except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="not found")
+        raise HTTPException(status_code=404, detail=errors.NOT_FOUND)

@@ -28,7 +28,7 @@ MAX_QUEUE = 20
 
 
 class TaskBusyError(Exception):
-    """已有任务在运行"""
+    """已有任务在运行。message 为 "错误码|附加信息" 格式（见 app/server/error_codes.py）"""
 
 
 def _pid_alive(pid: int) -> bool:
@@ -184,10 +184,10 @@ class PoseTaskManager:
         with self._lock:
             if self._is_running_locked():
                 if trigger == "manual":
-                    raise TaskBusyError("已有任务在运行，请先停止或等待完成")
+                    raise TaskBusyError("err.poseTaskRunning")
                 if len(self._queue) >= MAX_QUEUE:
                     logger.warning("人体识别等待队列已满，丢弃任务")
-                    raise TaskBusyError("等待队列已满")
+                    raise TaskBusyError("err.poseQueueFull")
                 self._queue.append(spec)
                 return {"task_id": None, "status": "queued"}
 
@@ -244,7 +244,7 @@ class PoseTaskManager:
     def stop(self) -> dict[str, Any]:
         snap = self.snapshot()
         if snap is None or snap.get("status") != "running":
-            raise TaskBusyError("没有正在运行的任务")
+            raise TaskBusyError("err.poseNoRunningTask")
 
         with self._lock:
             pid = self._orphan_pid if self._proc is None else self._proc.pid

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from ...core.pose.pose_params import PoseParams
 from ...core.pose.pose_task_manager import TaskBusyError
-from .. import media_service
+from .. import error_codes as errors, media_service
 from ..deps import get_current_user, get_services
 from ..schemas import PoseTaskSubmitRequest
 
@@ -16,7 +16,7 @@ router = APIRouter(prefix="/api/pose", tags=["pose"])
 def _task_manager(request: Request):
     manager = getattr(request.app.state, "pose_task_manager", None)
     if manager is None:
-        raise HTTPException(status_code=503, detail="pose task manager unavailable")
+        raise HTTPException(status_code=503, detail=errors.POSE_MANAGER_UNAVAILABLE)
     return manager
 
 
@@ -59,7 +59,7 @@ async def submit_task(
     try:
         paths = [media_service.resolve_safe(media_root, p) for p in body.paths]
     except PermissionError:
-        raise HTTPException(status_code=403, detail="access denied")
+        raise HTTPException(status_code=403, detail=errors.ACCESS_DENIED)
 
     params = PoseParams.from_user_config(
         {**(services.settings_config.user_config.get("pose_detection") or {}), **(body.overrides or {})}
@@ -68,7 +68,7 @@ async def submit_task(
     merged_suffix = params.merged_suffix or "_merged"
     videos = _expand_videos(paths, merged_suffix, params.video_output_dir or "pose_output")
     if not videos:
-        raise HTTPException(status_code=400, detail="no video files found (clip products are skipped)")
+        raise HTTPException(status_code=400, detail=errors.POSE_NO_VIDEOS)
 
     if body.trigger != "auto":
         from ...core.pose.file_watch import is_file_ready
@@ -80,7 +80,7 @@ async def submit_task(
                 shown += f" (+{len(not_ready) - 5})"
             raise HTTPException(
                 status_code=400,
-                detail=f"files still being written (recording in progress?): {shown}",
+                detail=f"{errors.POSE_FILES_WRITING}|{shown}",
             )
 
     try:

@@ -205,7 +205,6 @@
     "submitConfirm": "确定对选中的 {count} 项（视频/目录，目录会递归处理）进行人体识别处理吗？",
     "submitted": "识别任务已提交",
     "busy": "已有任务在处理中，请稍后再试",
-    "notReadyError": "以下文件仍在写入（可能录制中），无法提交：{files}",
     "waitingFiles": "等待 {count} 个文件写入完成",
     "log": "日志",
     "output": "输出目录",
@@ -355,5 +354,24 @@
     "noUpdate": "当前已是最新版本",
     "updateFailed": "检查更新失败",
     "download": "下载"
+  },
+  "err": {
+    "accessDenied": "没有访问权限",
+    "notFound": "资源不存在",
+    "authRequired": "请先登录",
+    "invalidCredentials": "用户名或密码错误",
+    "wrongOldPassword": "旧密码不正确",
+    "fileNotFound": "文件不存在",
+    "badRange": "无效的播放区间请求",
+    "recordingNotFound": "录制任务不存在",
+    "urlRequired": "请填写直播地址",
+    "unsupportedUrl": "不支持的平台地址",
+    "noFieldsToUpdate": "没有需要更新的字段",
+    "poseUnavailable": "人体识别服务未就绪",
+    "poseNoVideos": "没有可处理的视频（识别产物会被跳过）",
+    "poseFilesWriting": "以下文件仍在写入（可能录制中）",
+    "poseTaskRunning": "已有任务在运行，请先停止或等待完成",
+    "poseQueueFull": "等待队列已满",
+    "poseNoRunningTask": "没有正在运行的任务"
   }
 }

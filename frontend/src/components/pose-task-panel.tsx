@@ -5,7 +5,7 @@ import { poseApi } from "@/api"
 import type { PoseTaskState } from "@/api/types"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
-import { useI18n } from "@/i18n"
+import { useI18n , translateError } from "@/i18n"
 import { toast } from "sonner"
 
 const STATUS_KEY: Record<string, string> = {
@@ -92,7 +92,7 @@ export function PoseTaskPanel() {
     const stopMutation = useMutation({
         mutationFn: () => poseApi.stop(latest!.task_id!),
         onSuccess: () => toast.success(t("pose.stopped")),
-        onError: (e: Error) => toast.error(e.message),
+        onError: (e: Error) => toast.error(translateError(e.message)),
         onSettled: () => queryClient.invalidateQueries({ queryKey: ["pose-tasks"] }),
     })
 

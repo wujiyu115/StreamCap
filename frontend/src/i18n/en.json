@@ -205,7 +205,6 @@
     "submitConfirm": "Run pose processing on {count} selected item(s) (folders are processed recursively)?",
     "submitted": "Pose task submitted",
     "busy": "A task is already running, please retry later",
-    "notReadyError": "These files are still being written (recording in progress?): {files}",
     "waitingFiles": "Waiting for {count} file(s) to finish writing",
     "log": "Log",
     "output": "Output directory",
@@ -355,5 +354,24 @@
     "noUpdate": "You are on the latest version",
     "updateFailed": "Update check failed",
     "download": "Download"
+  },
+  "err": {
+    "accessDenied": "Access denied",
+    "notFound": "Not found",
+    "authRequired": "Authentication required",
+    "invalidCredentials": "Invalid username or password",
+    "wrongOldPassword": "Wrong old password",
+    "fileNotFound": "File not found",
+    "badRange": "Bad playback range request",
+    "recordingNotFound": "Recording not found",
+    "urlRequired": "URL is required",
+    "unsupportedUrl": "Unsupported URL",
+    "noFieldsToUpdate": "No fields to update",
+    "poseUnavailable": "Pose task manager unavailable",
+    "poseNoVideos": "No video files found (clip products are skipped)",
+    "poseFilesWriting": "Files still being written (recording in progress?)",
+    "poseTaskRunning": "A task is already running, stop it or wait",
+    "poseQueueFull": "Wait queue is full",
+    "poseNoRunningTask": "No running task"
   }
 }

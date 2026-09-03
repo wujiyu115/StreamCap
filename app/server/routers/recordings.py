@@ -10,6 +10,7 @@ from ...core.platforms.platform_handlers import get_platform_info
 from ...models.recording.recording_model import Recording
 from ...models.recording.recording_status_model import RecordingStatus
 from ...utils.logger import logger
+from .. import error_codes as errors
 from ..deps import get_current_user, get_services
 from ..schemas import (
     BatchCreateRequest,
@@ -123,7 +124,7 @@ def _build_recording(services, body: RecordingCreate) -> Recording:
 def _get_recording_or_404(rm, rec_id: str) -> Recording:
     recording = rm.find_recording_by_id(rec_id)
     if recording is None:
-        raise HTTPException(status_code=404, detail="recording not found")
+        raise HTTPException(status_code=404, detail=errors.RECORDING_NOT_FOUND)
     return recording
 
 
@@ -141,11 +142,11 @@ async def create_recording(
 ):
     rm = services.recording_manager
     if not body.url.strip():
-        raise HTTPException(status_code=400, detail="url is required")
+        raise HTTPException(status_code=400, detail=errors.URL_REQUIRED)
 
     platform, _ = get_platform_info(body.url.strip())
     if not platform:
-        raise HTTPException(status_code=400, detail="unsupported url")
+        raise HTTPException(status_code=400, detail=errors.UNSUPPORTED_URL)
 
     recording = _build_recording(services, body)
     recording.update_title(rm._.get(recording.quality, recording.quality))
@@ -236,12 +237,12 @@ async def update_recording(
     raw = body.model_dump(exclude_unset=True)
     updates = {k: v for k, v in raw.items() if v is not None or k == "pose_enabled"}
     if not updates:
-        raise HTTPException(status_code=400, detail="no fields to update")
+        raise HTTPException(status_code=400, detail=errors.NO_FIELDS_TO_UPDATE)
 
     if "url" in updates:
         platform, platform_key = get_platform_info(updates["url"])
         if not platform:
-            raise HTTPException(status_code=400, detail="unsupported url")
+            raise HTTPException(status_code=400, detail=errors.UNSUPPORTED_URL)
         recording.platform = platform
         recording.platform_key = platform_key
 

@@ -29,4 +29,4 @@ def get_current_user(request: Request) -> str:
     if session is not None:
         return session["username"]
 
-    raise HTTPException(status_code=401, detail="authentication required")
+    raise HTTPException(status_code=401, detail="err.authRequired")

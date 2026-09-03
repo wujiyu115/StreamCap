@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
-import { useI18n } from "@/i18n"
+import { useI18n , translateError } from "@/i18n"
 import { toast } from "sonner"
 
 const VIDEO_FORMATS = ["TS", "MP4", "FLV", "MKV", "MOV", "NUT"]
@@ -143,7 +143,7 @@ export function RecordingDialog({
             onOpenChange(false)
             onSaved()
         },
-        onError: (e: Error) => toast.error(e.message),
+        onError: (e: Error) => toast.error(translateError(e.message)),
     })
 
     const batchMutation = useMutation({
@@ -153,7 +153,7 @@ export function RecordingDialog({
             onOpenChange(false)
             onSaved()
         },
-        onError: (e: Error) => toast.error(e.message),
+        onError: (e: Error) => toast.error(translateError(e.message)),
     })
 
     const updateMutation = useMutation({
@@ -164,7 +164,7 @@ export function RecordingDialog({
             onOpenChange(false)
             onSaved()
         },
-        onError: (e: Error) => toast.error(e.message),
+        onError: (e: Error) => toast.error(translateError(e.message)),
     })
 
     const submitSingle = () => {

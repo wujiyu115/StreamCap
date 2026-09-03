@@ -31,7 +31,7 @@ import { formatTimestamp } from "@/components/status"
 import { PlayerDialog } from "@/components/player-dialog"
 import { PoseTaskPanel } from "@/components/pose-task-panel"
 import { useVideoMeta } from "@/hooks/use-video-meta"
-import { useI18n } from "@/i18n"
+import { useI18n , translateError } from "@/i18n"
 import { toast } from "sonner"
 import { useSearchParams } from "react-router-dom"
 
@@ -94,7 +94,7 @@ export default function MediaPage() {
             toast.success(t("common.success"))
             invalidate()
         },
-        onError: (e: Error) => toast.error(e.message),
+        onError: (e: Error) => toast.error(translateError(e.message)),
     })
 
     const batchDeleteMutation = useMutation({
@@ -105,7 +105,7 @@ export default function MediaPage() {
             setSelected(new Set())
             invalidate()
         },
-        onError: (e: Error) => toast.error(e.message),
+        onError: (e: Error) => toast.error(translateError(e.message)),
     })
 
     const cleanMutation = useMutation({
@@ -121,7 +121,7 @@ export default function MediaPage() {
             setCleanOpen(false)
             invalidate()
         },
-        onError: (e: Error) => toast.error(e.message),
+        onError: (e: Error) => toast.error(translateError(e.message)),
     })
 
     const allItems = tree?.items ?? []
@@ -141,14 +141,7 @@ export default function MediaPage() {
             toast.success(t("pose.submitted"))
             queryClient.invalidateQueries({ queryKey: ["pose-tasks"] })
         },
-        onError: (e: Error) => {
-            if (e.message.includes("still being written")) {
-                const m = e.message.match(/: (.+)$/)
-                toast.error(tf("pose.notReadyError", { files: m?.[1] ?? "" }))
-            } else {
-                toast.error(e.message)
-            }
-        },
+        onError: (e: Error) => toast.error(translateError(e.message)),
     })
 
     const submitPose = () => {
