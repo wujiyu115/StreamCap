@@ -91,7 +91,7 @@ class LiveStreamRecorder:
             filename = filename.replace("{anchor_name}", stream_info.anchor_name or "")
             filename = filename.replace("{title}", live_title or "")
             filename = filename.replace("{time}", now)
-            filename = filename.replace("{platform}", stream_info.platform or "")
+            filename = filename.replace("{platform}", self.platform or stream_info.platform or "")
 
             while "__" in filename:
                 filename = filename.replace("__", "_")
@@ -119,7 +119,8 @@ class LiveStreamRecorder:
         now = datetime.today().strftime("%Y-%m-%d_%H-%M-%S")
         output_dir = self.output_dir.rstrip("/").rstrip("\\")
         if self.user_config.get("folder_name_platform"):
-            output_dir = os.path.join(output_dir, stream_info.platform)
+            # streamget 返回的平台名与 UI/旧版目录名不一致（如抖音返回"抖音"），统一用任务级显示名
+            output_dir = os.path.join(output_dir, self.platform or stream_info.platform or "未知平台")
         if self.user_config.get("folder_name_author"):
             output_dir = os.path.join(output_dir, stream_info.anchor_name)
         if self.user_config.get("folder_name_time"):
