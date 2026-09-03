@@ -78,7 +78,8 @@ class LiveStreamRecorder:
             stream_info.title = self._clean_and_truncate_title(stream_info.title) or stream_info.title
             live_title = stream_info.title
 
-        if self.recording.streamer_name and self.recording.streamer_name != self._["live_room"]:
+        # 空名（只填房间号创建）或占位名时用接口返回的主播名，避免空目录/空文件名
+        if self.recording.streamer_name.strip() and self.recording.streamer_name != self._["live_room"]:
             stream_info.anchor_name = utils.clean_name(self.recording.streamer_name)
         else:
             stream_info.anchor_name = utils.clean_name(stream_info.anchor_name, self._["live_room"])

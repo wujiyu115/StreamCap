@@ -488,8 +488,10 @@ class RecordingManager:
 
         if stream_info.is_live:
             recording.live_title = stream_info.title
-            if recording.streamer_name.strip() == self._["live_room"]:
+            # 空名（只填房间号新建的任务）或默认占位名都回填真实主播名
+            if not recording.streamer_name.strip() or recording.streamer_name.strip() == self._["live_room"]:
                 recording.streamer_name = stream_info.anchor_name
+                self.services.run_coro(self.persist_recordings())
             recording.title = f"{recording.streamer_name} - {self._[recording.quality]}"
             recording.display_title = f"[{self._['is_live']}] {recording.title}"
 
@@ -545,7 +547,11 @@ class RecordingManager:
 
             recording.status_info = RecordingStatus.MONITORING
             title = f"{stream_info.anchor_name or recording.streamer_name} - {self._[recording.quality]}"
-            if recording.streamer_name == self._["live_room"] or f"[{self._['is_live']}]" in recording.display_title:
+            if (
+                not recording.streamer_name.strip()
+                or recording.streamer_name == self._["live_room"]
+                or f"[{self._['is_live']}]" in recording.display_title
+            ):
                 recording.update(
                     {
                         "streamer_name": stream_info.anchor_name,
