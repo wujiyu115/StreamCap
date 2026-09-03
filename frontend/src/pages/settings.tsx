@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { Loader2 } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { settingsApi } from "@/api"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -490,9 +490,16 @@ function useDebouncedSave(
 ) {
     const save = useSettingsMutation()
     const [initial, setInitial] = useState(true)
+    const loadedSnapshot = useRef<Record<string, unknown> | null>(null)
+
+    if (ready && loadedSnapshot.current === null) {
+        loadedSnapshot.current = values
+    }
 
     useEffect(() => {
         if (!ready || initial) return
+        // 页面加载后未做任何编辑（values 仍是加载时的同一对象引用）不触发保存
+        if (loadedSnapshot.current === values) return
         const timer = setTimeout(() => save.mutate(values), delay)
         return () => clearTimeout(timer)
     }, [values, ready, initial, delay]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -500,7 +507,10 @@ function useDebouncedSave(
     return {
         markReady: () => setInitial(false),
         saving: save.isPending,
-        saveNow: () => save.mutate(values),
+        saveNow: () => {
+            loadedSnapshot.current = values
+            save.mutate(values)
+        },
     }
 }
 
