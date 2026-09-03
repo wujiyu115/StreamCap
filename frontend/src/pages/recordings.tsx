@@ -78,6 +78,26 @@ export default function RecordingsPage() {
         [recordings],
     )
 
+    // 各状态总数（只按状态维度统计，不受平台/搜索筛选影响）
+    const stateCounts = useMemo(() => {
+        const counts: Record<StatusFilter, number> = {
+            all: recordings.length,
+            recording: 0,
+            live: 0,
+            offline: 0,
+            error: 0,
+            stopped: 0,
+        }
+        for (const r of recordings) {
+            if (r.is_recording || r.state === "live") counts.recording += 1
+            if (r.state === "live") counts.live += 1
+            else if (r.state === "offline") counts.offline += 1
+            else if (r.state === "error") counts.error += 1
+            else if (r.state === "stopped") counts.stopped += 1
+        }
+        return counts
+    }, [recordings])
+
     const filtered = useMemo(() => {
         return recordings.filter((r) => {
             if (filter === "recording" && !(r.is_recording || r.state === "live")) return false
@@ -210,13 +230,22 @@ export default function RecordingsPage() {
                         <button
                             key={f}
                             onClick={() => setFilter(f)}
-                            className={`whitespace-nowrap rounded px-2.5 py-1 text-sm transition-colors ${
+                            className={`flex items-center gap-1.5 whitespace-nowrap rounded px-2.5 py-1 text-sm transition-colors ${
                                 filter === f
                                     ? "bg-primary text-primary-foreground"
                                     : "text-muted-foreground hover:bg-accent"
                             }`}
                         >
                             {t(FILTER_LABEL_KEY[f])}
+                            <span
+                                className={`rounded-full px-1.5 text-xs tabular-nums ${
+                                    filter === f
+                                        ? "bg-primary-foreground/20"
+                                        : "bg-muted text-muted-foreground"
+                                }`}
+                            >
+                                {stateCounts[f]}
+                            </span>
                         </button>
                     ))}
                 </div>

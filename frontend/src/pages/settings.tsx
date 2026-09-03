@@ -375,6 +375,7 @@ function PoseSettings() {
         { key: "frame_seconds", label: t("settings.frameSeconds"), type: "number" },
         { key: "imgsz", label: t("settings.imgsz"), type: "number" },
         { key: "batch_size", label: t("settings.batchSize"), type: "number" },
+        { key: "inference_threads", label: t("settings.inferenceThreads"), type: "number", hint: t("settings.inferenceThreadsHint") },
         { key: "confidence_threshold", label: t("settings.confidence"), type: "number" },
         { key: "enable_pose_detection", label: t("settings.poseModel"), type: "switch" },
         {

@@ -310,6 +310,8 @@
     "frameSeconds": "采样间隔（秒）",
     "imgsz": "推理分辨率",
     "batchSize": "推理批大小",
+    "inferenceThreads": "推理线程数",
+    "inferenceThreadsHint": "0 = 不限制；限制后可避免与录制抢 CPU",
     "confidence": "置信度阈值",
     "poseModel": "启用姿态识别",
     "poseFilter": "姿势过滤",

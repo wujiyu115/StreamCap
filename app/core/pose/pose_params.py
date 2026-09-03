@@ -24,6 +24,7 @@ DEFAULTS: dict[str, Any] = {
     "frame_seconds": 10.0,
     "imgsz": 416,
     "batch_size": 8,
+    "inference_threads": 0,
     "confidence_threshold": 0.5,
     "enable_pose_detection": True,
     "pose_filter": "none",
@@ -49,6 +50,7 @@ class PoseParams:
     frame_seconds: float = 10.0
     imgsz: int = 416
     batch_size: int = 8
+    inference_threads: int = 0
     confidence_threshold: float = 0.5
     enable_pose_detection: bool = True
     pose_filter: str = "none"

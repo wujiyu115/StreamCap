@@ -310,6 +310,8 @@
     "frameSeconds": "Sampling interval (seconds)",
     "imgsz": "Inference size",
     "batchSize": "Batch size",
+    "inferenceThreads": "Inference threads",
+    "inferenceThreadsHint": "0 = unlimited; limiting avoids CPU contention with recording",
     "confidence": "Confidence threshold",
     "poseModel": "Enable pose model",
     "poseFilter": "Pose filter",

@@ -110,6 +110,7 @@ class Detector:
         self.pose_model_path = params.pose_model_path
         self.enable_pose_detection = params.enable_pose_detection
         self.batch_size = max(1, int(params.batch_size))
+        self.inference_threads = max(0, int(params.inference_threads))
         self.imgsz = int(params.imgsz)
         self.conf_threshold = float(params.confidence_threshold)
         self.person_min_ratio = float(params.person_min_ratio)
@@ -121,6 +122,14 @@ class Detector:
     def load_models(self):
         """加载检测模型。姿态模型本身同时输出边界框与关键点，启用姿态检测时只加载它。"""
         from ultralytics import YOLO
+
+        # 限制 torch 推理线程数（0=不限制）。CPU 推理默认占满所有核，
+        # 与录制/合并抢 CPU；限制后速度换余量。
+        if self.inference_threads > 0:
+            import torch
+
+            torch.set_num_threads(self.inference_threads)
+            logger.info(f"推理线程数限制为: {self.inference_threads}")
 
         if self.enable_pose_detection:
             logger.info(f"加载姿态模型（单模型模式）: {self.pose_model_path}")
