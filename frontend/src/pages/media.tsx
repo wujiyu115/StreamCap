@@ -26,6 +26,7 @@ import {
     DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { formatTimestamp } from "@/components/status"
 import { PlayerDialog } from "@/components/player-dialog"
 import { PoseTaskPanel } from "@/components/pose-task-panel"
@@ -505,7 +506,7 @@ function MediaCard({
     )
 }
 
-/** 子目录快速跳转下拉（Frostcast crumb-jump 同款交互） */
+/** 子目录快速跳转下拉（Popover 走 Portal 渲染，避免被面包屑 overflow-x-auto 裁剪） */
 function SubdirJump({
     folders,
     onGoto,
@@ -515,45 +516,38 @@ function SubdirJump({
 }) {
     const { t } = useI18n()
     const [open, setOpen] = useState(false)
-    const ref = useRef<HTMLDivElement | null>(null)
-
-    useEffect(() => {
-        if (!open) return
-        const onDoc = (e: MouseEvent) => {
-            if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-        }
-        document.addEventListener("mousedown", onDoc)
-        return () => document.removeEventListener("mousedown", onDoc)
-    }, [open])
 
     if (folders.length === 0) return null
 
     return (
-        <div className="relative shrink-0" ref={ref}>
-            <button
-                className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-                onClick={() => setOpen((o) => !o)}
-            >
-                {t("media.subdirs")} ({folders.length})
-                <ChevronRight className="h-3 w-3 -rotate-90" />
-            </button>
-            {open && (
-                <div className="absolute left-0 top-full z-20 mt-1 max-h-64 w-56 overflow-y-auto rounded-md border bg-popover p-1 shadow-lg">
-                    {folders.map((f) => (
-                        <button
-                            key={f.rel_path}
-                            className="flex w-full items-center gap-2 truncate rounded px-2 py-1.5 text-left text-sm hover:bg-accent"
-                            onClick={() => {
-                                setOpen(false)
-                                onGoto(f.rel_path)
-                            }}
-                        >
-                            <Folder className="h-4 w-4 shrink-0 text-blue-500" />
-                            <span className="truncate">{f.name}</span>
-                        </button>
-                    ))}
-                </div>
-            )}
-        </div>
+        <Popover open={open} onOpenChange={setOpen}>
+            <PopoverTrigger asChild>
+                <button
+                    type="button"
+                    className="flex shrink-0 items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+                >
+                    {t("media.subdirs")} ({folders.length})
+                    <ChevronRight
+                        className={`h-3 w-3 transition-transform ${open ? "rotate-90" : "-rotate-90"}`}
+                    />
+                </button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="max-h-64 w-56 overflow-y-auto p-1">
+                {folders.map((f) => (
+                    <button
+                        key={f.rel_path}
+                        type="button"
+                        className="flex w-full items-center gap-2 truncate rounded px-2 py-1.5 text-left text-sm hover:bg-accent"
+                        onClick={() => {
+                            setOpen(false)
+                            onGoto(f.rel_path)
+                        }}
+                    >
+                        <Folder className="h-4 w-4 shrink-0 text-blue-500" />
+                        <span className="truncate">{f.name}</span>
+                    </button>
+                ))}
+            </PopoverContent>
+        </Popover>
     )
 }
