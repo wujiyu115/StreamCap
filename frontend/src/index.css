@@ -95,13 +95,6 @@ body {
     }
 }
 /* 媒体表格：当前正在预览的行突出显示 */
-[data-state="previewing"] td {
-    @apply bg-primary/10;
-}
-[data-state="previewing"] td .font-medium {
-    @apply text-primary;
-}
-
 /* ── 播放器舞台（Frostcast 布局）──────────────────────
    桌面：居中卡片，媒体自适应高度；移动端（<640px）：全屏沉浸 */
 .player-stage {
@@ -301,6 +294,48 @@ body {
     font-size: 12px;
     color: hsl(var(--muted-foreground));
 }
-[data-state="last-viewed"] td {
-    background: hsl(var(--primary) / 0.05);
+
+/* ── 列表模式（原版 Frostcast 横向卡片行）────────────── */
+.media-grid.list-mode {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+}
+.media-grid.list-mode .media-card {
+    flex-direction: row;
+    align-items: stretch;
+}
+.media-grid.list-mode .media-card:hover {
+    transform: none;
+}
+.media-grid.list-mode .media-thumb {
+    width: clamp(104px, 22vw, 168px);
+    aspect-ratio: 16 / 10;
+    flex: none;
+    border-radius: 0;
+}
+.media-grid.list-mode .media-thumb .play-btn {
+    width: 40px;
+    height: 40px;
+}
+.media-grid.list-mode .media-thumb .play-btn svg {
+    width: 15px;
+    height: 15px;
+}
+.media-grid.list-mode .media-thumb.folder-thumb svg {
+    width: 44px;
+    height: 44px;
+}
+.media-grid.list-mode .meta-row {
+    flex: 1;
+    align-items: center;
+    align-content: center;
+    justify-content: center;
+    padding: 12px 14px;
+    row-gap: 4px;
+}
+.media-grid.list-mode .media-thumb .dur-badge,
+.media-grid.list-mode .media-thumb .count-badge {
+    right: 6px;
+    font-size: 11px;
+    padding: 2px 6px;
 }

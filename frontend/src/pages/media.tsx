@@ -6,11 +6,11 @@ import {
     Folder,
     FolderOpen,
     LayoutGrid,
+    List,
     Loader2,
     Play,
     RefreshCw,
     Sparkles,
-    Table2,
     Trash2,
 } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
@@ -30,14 +30,6 @@ import { formatTimestamp } from "@/components/status"
 import { PlayerDialog } from "@/components/player-dialog"
 import { PoseTaskPanel } from "@/components/pose-task-panel"
 import { useVideoMeta } from "@/hooks/use-video-meta"
-import {
-    Table,
-    TableBody,
-    TableCell,
-    TableHead,
-    TableHeader,
-    TableRow,
-} from "@/components/ui/table"
 import { useI18n } from "@/i18n"
 import { toast } from "sonner"
 
@@ -51,8 +43,8 @@ export default function MediaPage() {
     const [cleanOpen, setCleanOpen] = useState(false)
     const [cleanMb, setCleanMb] = useState("10")
     const [search, setSearch] = useState("")
-    const [viewMode, setViewMode] = useState<"table" | "grid">(
-        () => (localStorage.getItem("media-view") as "table" | "grid") || "table",
+    const [viewMode, setViewMode] = useState<"list" | "grid">(
+        () => (localStorage.getItem("media-view") as "list" | "grid") || "list",
     )
 
     // 各目录滚动位置记忆（Frostcast 同款）：离开时存，回来时恢复。
@@ -210,11 +202,11 @@ export default function MediaPage() {
                     />
                     <div className="flex gap-0.5 rounded-md border p-0.5">
                         <button
-                            className={`rounded px-2 py-1 ${viewMode === "table" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}
-                            title={t("media.tableView")}
-                            onClick={() => setViewMode("table")}
+                            className={`rounded px-2 py-1 ${viewMode === "list" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}
+                            title={t("media.listView")}
+                            onClick={() => setViewMode("list")}
                         >
-                            <Table2 className="h-4 w-4" />
+                            <List className="h-4 w-4" />
                         </button>
                         <button
                             className={`rounded px-2 py-1 ${viewMode === "grid" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}
@@ -308,8 +300,8 @@ export default function MediaPage() {
                 <div className="rounded-lg border border-dashed py-20 text-center text-muted-foreground">
                     {search ? t("media.noResults") : t("media.empty")}
                 </div>
-            ) : viewMode === "grid" ? (
-                <div className="media-grid">
+            ) : (
+                <div className={`media-grid${viewMode === "list" ? " list-mode" : ""}`}>
                     {items.map((item, i) => (
                         <MediaCard
                             key={item.rel_path}
@@ -328,119 +320,7 @@ export default function MediaPage() {
                         />
                     ))}
                 </div>
-            ) : (
-                <div className="rounded-lg border bg-card">
-                    <Table>
-                        <TableHeader>
-                            <TableRow>
-                                <TableHead className="w-10">
-                                    <Checkbox
-                                        checked={allSelected}
-                                        onCheckedChange={(v) =>
-                                            setSelected(
-                                                v
-                                                    ? new Set(selectableFiles.map((f) => f.rel_path))
-                                                    : new Set(),
-                                            )
-                                        }
-                                    />
-                                </TableHead>
-                                <TableHead>{t("media.columnName")}</TableHead>
-                                <TableHead className="hidden w-20 sm:table-cell">{t("media.columnDuration")}</TableHead>
-                                <TableHead className="hidden w-24 sm:table-cell">{t("media.columnSize")}</TableHead>
-                                <TableHead className="hidden w-40 md:table-cell">{t("media.columnModified")}</TableHead>
-                                <TableHead className="w-24 text-right">{t("common.operations")}</TableHead>
-                            </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                            {path && (
-                                <TableRow className="cursor-pointer" onClick={() => navigate(segments.slice(0, -1).join("/"))}>
-                                    <TableCell />
-                                    <TableCell colSpan={4} className="text-sm text-muted-foreground">
-                                        <span className="flex items-center gap-2">
-                                            <FolderOpen className="h-4 w-4" /> {t("media.up")}
-                                        </span>
-                                    </TableCell>
-                                </TableRow>
-                            )}
-                            {items.map((item) => (
-                                <TableRow
-                                    key={item.rel_path}
-                                    className={
-                                        item.type === "folder" ? "cursor-pointer" : undefined
-                                    }
-                                    onClick={() => item.type === "folder" && navigate(item.rel_path)}
-                                    data-state={
-                                        previewItem?.rel_path === item.rel_path
-                                            ? "previewing"
-                                            : selected.has(item.rel_path)
-                                              ? "selected"
-                                              : lastViewed === item.rel_path
-                                                ? "last-viewed"
-                                                : undefined
-                                    }
-                                >
-                                    <TableCell onClick={(e) => e.stopPropagation()}>
-                                        {item.type !== "folder" && (
-                                            <Checkbox
-                                                checked={selected.has(item.rel_path)}
-                                                onCheckedChange={() => toggleSelect(item.rel_path)}
-                                            />
-                                        )}
-                                    </TableCell>
-                                    <TableCell>
-                                        <span className="flex items-center gap-2">
-                                            {item.type === "folder" ? (
-                                                <Folder className="h-4 w-4 text-blue-500" />
-                                            ) : (
-                                                <FileVideo className="h-4 w-4 text-muted-foreground" />
-                                            )}
-                                            <span className="font-medium">{item.name}</span>
-                                            {item.type === "folder" && (
-                                                <span className="text-xs text-muted-foreground">
-                                                    {item.count} {t("media.items")}
-                                                </span>
-                                            )}
-                                        </span>
-                                    </TableCell>
-                                    <TableCell className="hidden font-mono text-xs text-muted-foreground tabular-nums sm:table-cell">
-                                        <DurationCell item={item} />
-                                    </TableCell>
-                                    <TableCell className="hidden text-sm text-muted-foreground sm:table-cell">
-                                        {item.size ?? "-"}
-                                    </TableCell>
-                                    <TableCell className="hidden text-sm text-muted-foreground md:table-cell">
-                                        {formatTimestamp(item.mtime)}
-                                    </TableCell>
-                                    <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-                                        {item.type !== "folder" && (
-                                            <div className="flex justify-end gap-1">
-                                                <Button
-                                                    variant="ghost"
-                                                    size="icon"
-                                                    title={t("media.preview")}
-                                                    onClick={() => setPreviewItem(item)}
-                                                >
-                                                    <Play className="h-4 w-4" />
-                                                </Button>
-                                                <Button
-                                                    variant="ghost"
-                                                    size="icon"
-                                                    title={t("common.delete")}
-                                                    onClick={() => handleDelete(item)}
-                                                >
-                                                    <Trash2 className="h-4 w-4 text-red-500" />
-                                                </Button>
-                                            </div>
-                                        )}
-                                    </TableCell>
-                                </TableRow>
-                            ))}
-                        </TableBody>
-                    </Table>
-                </div>
             )}
-
             {/* 清理对话框 */}
             <Dialog open={cleanOpen} onOpenChange={setCleanOpen}>
                 <DialogContent className="max-w-md">
@@ -506,21 +386,6 @@ export default function MediaPage() {
     )
 }
 
-function DurationCell({ item }: { item: MediaItem }) {
-    const meta = useVideoMeta(item.type === "video" ? item.rel_path : null, item.type)
-    if (item.type !== "video") return <span className="text-muted-foreground/40">—</span>
-    if (!meta) return <span className="text-muted-foreground/40">…</span>
-    return (
-        <span title={meta.resolution}>
-            {meta.duration}
-            {meta.resolution ? (
-                <span className="ml-1 hidden text-[10px] text-muted-foreground/60 xl:inline">
-                    {meta.resolution}
-                </span>
-            ) : null}
-        </span>
-    )
-}
 
 /** 大图标卡片（Frostcast 风格）：16:10 缩略图区 + 居中播放钮 + 时长角标 + 元信息 tags */
 function MediaCard({
@@ -583,7 +448,7 @@ function MediaCard({
                 )}
                 {item.type === "folder" ? (
                     <>
-                        <Folder className="h-14 w-14 text-primary/80" />
+                        <Folder className="h-14 w-14 fill-primary/20 text-primary/80" />
                         <span className="count-badge">
                             {item.count ?? 0} {t("media.items")}
                         </span>
@@ -596,7 +461,8 @@ function MediaCard({
                 ) : (
                     <>
                         <span className="play-btn">
-                            <Play className="ml-0.5 h-5 w-5 fill-white" />
+                            {/* 三角形视觉重心偏左，右移 3px 补偿（原版同款） */}
+                            <Play className="ml-[3px] h-5 w-5 fill-white" />
                         </span>
                         <span className="dur-badge">{meta?.duration ?? "…"}</span>
                     </>

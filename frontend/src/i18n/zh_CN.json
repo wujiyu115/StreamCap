@@ -182,11 +182,11 @@
     "collapseBar": "收起工具栏",
     "expandBar": "展开工具栏",
     "searchDir": "搜索当前目录…",
-    "tableView": "列表模式",
     "gridView": "大图标模式",
     "subdirs": "子目录",
     "select": "选择",
-    "noResults": "没有匹配项"
+    "noResults": "没有匹配项",
+    "listView": "列表模式"
   },
   "pose": {
     "title": "人体识别处理",

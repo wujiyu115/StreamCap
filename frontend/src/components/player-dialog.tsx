@@ -252,11 +252,8 @@ export function PlayerDialog({
                                     title={rotate ? t("media.rotateBack") : t("media.rotate")}
                                     onClick={toggleRotate}
                                 >
-                                    {rotate ? (
-                                        <Smartphone className="h-5 w-5" />
-                                    ) : (
-                                        <Maximize className="h-5 w-5 rotate-90" />
-                                    )}
+                                    {/* 手机旋转图标：与全屏 Maximize 明确区分 */}
+                                    <Smartphone className="h-5 w-5 -rotate-90" />
                                 </Button>
                             )}
                             {isImage && (
