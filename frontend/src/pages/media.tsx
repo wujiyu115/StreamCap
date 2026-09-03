@@ -386,16 +386,15 @@ export default function MediaPage() {
                     }}
                     onClose={() => setPreviewItem(null)}
                     onDelete={(rel) => {
-                        if (confirm(tf("media.deleteFileConfirm", { name: rel.split("/").pop() ?? rel }))) {
-                            deleteMutation.mutate(rel, {
-                                onSettled: () => {
-                                    const idx = previewQueue.findIndex((i) => i.rel_path === rel)
-                                    const next =
-                                        previewQueue[idx + 1] ?? previewQueue[idx - 1] ?? null
-                                    setPreviewItem(next)
-                                },
-                            })
-                        }
+                        // 播放器内删除不弹确认（列表卡片的删除仍保留确认）
+                        deleteMutation.mutate(rel, {
+                            onSettled: () => {
+                                const idx = previewQueue.findIndex((i) => i.rel_path === rel)
+                                const next =
+                                    previewQueue[idx + 1] ?? previewQueue[idx - 1] ?? null
+                                setPreviewItem(next)
+                            },
+                        })
                     }}
                 />
             )}

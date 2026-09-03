@@ -271,7 +271,8 @@ export function PlayerDialog({
                                 <Button
                                     variant="outline"
                                     size="icon"
-                                    className={iconBtn}
+                                    // 移动端不显示全屏按钮：原生 controls 自带、旋转场景下行为冲突
+                                    className={`${iconBtn} hidden md:inline-flex`}
                                     title={isFullscreen ? t("media.exitFullscreen") : t("media.fullscreen")}
                                     onClick={toggleFullscreen}
                                 >
