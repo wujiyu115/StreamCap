@@ -35,6 +35,12 @@ class ConfigManager:
                 if os.path.isfile(src) and (not os.path.exists(dst) or os.path.getsize(dst) == 0):
                     shutil.copy(src, dst)
                     logger.info(f"Initialized {dst} from image template")
+                elif os.path.isfile(src) and name == "default_settings.json":
+                    # 升级部署：已存在的副本补齐镜像模板里的新增键（不覆盖用户已有值）
+                    try:
+                        self._merge_template_defaults(src, dst)
+                    except Exception as e:
+                        logger.warning(f"Failed to merge template defaults into {dst}: {e}")
 
         os.makedirs(os.path.dirname(self.default_config_path), exist_ok=True)
         self.init()
@@ -46,6 +52,34 @@ class ConfigManager:
         self.init_accounts_config()
         self.init_recordings_config()
         self.init_web_auth_config()
+
+    @staticmethod
+    def _merge_template_defaults(src: str, dst: str) -> None:
+        """把镜像模板的默认设置合并进已部署的 config 副本。
+
+        深度合并：仅补齐副本中缺失的键，不覆盖已有值——升级镜像新增
+        默认键（如 pose_detection.inference_threads）才能生效，同时
+        用户对副本的任何修改都保留。
+        """
+        with open(src, encoding="utf-8") as f:
+            template = json.load(f)
+        with open(dst, encoding="utf-8") as f:
+            deployed = json.load(f)
+
+        def merge(base: dict, override: dict) -> bool:
+            changed = False
+            for key, value in override.items():
+                if key not in base:
+                    base[key] = value
+                    changed = True
+                elif isinstance(value, dict) and isinstance(base.get(key), dict):
+                    changed = merge(base[key], value) or changed
+            return changed
+
+        if merge(deployed, template):
+            with open(dst, "w", encoding="utf-8") as f:
+                json.dump(deployed, f, ensure_ascii=False, indent=4)
+            logger.info(f"Merged new template defaults into {dst}")
 
     @staticmethod
     def _init_config(config_path, default_config=None):
