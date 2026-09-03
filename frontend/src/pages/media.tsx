@@ -141,7 +141,14 @@ export default function MediaPage() {
             toast.success(t("pose.submitted"))
             queryClient.invalidateQueries({ queryKey: ["pose-tasks"] })
         },
-        onError: (e: Error) => toast.error(e.message),
+        onError: (e: Error) => {
+            if (e.message.includes("still being written")) {
+                const m = e.message.match(/: (.+)$/)
+                toast.error(tf("pose.notReadyError", { files: m?.[1] ?? "" }))
+            } else {
+                toast.error(e.message)
+            }
+        },
     })
 
     const submitPose = () => {

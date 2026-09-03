@@ -8,7 +8,7 @@ spec 结构：
   "videos": ["绝对路径", ...],
   "media_root": "媒体根目录（决定输出目录结构）",
   "task_dir": "state.json/task.log 所在目录",
-  "wait_file": bool  # true 时等待文件出现且 mtime 稳定（录制后自动触发用）
+  "wait_file": bool  # true 时等待文件写入完成（录制后自动触发用；就绪判定见 file_watch.py）
 }
 
 状态写 <task_dir>/state.json（原子替换），日志走 stderr（父进程重定向到
@@ -24,7 +24,6 @@ import os
 import signal
 import sys
 import threading
-import time
 from datetime import datetime
 
 # SIGTERM 处理器必须在模块导入时就装好（早于重依赖 import），
@@ -60,34 +59,6 @@ def _atomic_write_json(path: str, payload: dict) -> None:
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False)
     os.replace(tmp, path)
-
-
-def _wait_for_files(videos: list[str], min_age_minutes: float, timeout_minutes: float, log, stop_event) -> list[str]:
-    """等待文件就绪：存在且 mtime 距今 >= min_age。返回就绪的文件列表。
-
-    用于录制后自动触发场景——转码是异步的，最终 mp4 可能晚几分钟才出现。
-    """
-    deadline = time.time() + timeout_minutes * 60
-    pending = list(videos)
-    ready: list[str] = []
-
-    while pending and not stop_event.is_set():
-        min_age_seconds = min_age_minutes * 60
-        for path in pending[:]:
-            if not os.path.isfile(path):
-                continue
-            age = time.time() - os.path.getmtime(path)
-            if age >= min_age_seconds:
-                pending.remove(path)
-                ready.append(path)
-        if not pending:
-            break
-        if time.time() > deadline:
-            log.warning(f"等待文件超时（{timeout_minutes}分钟），放弃: {pending}")
-            break
-        time.sleep(5.0)
-
-    return ready
 
 
 def main(argv=None) -> int:
@@ -150,20 +121,29 @@ def main(argv=None) -> int:
             return 0
 
         if wait_file:
-            write_state(status="running", state="waiting", started_at=started_at, message="等待录制文件就绪…")
-            videos = _wait_for_files(
-                videos,
-                params.min_file_age_minutes,
-                spec.get("wait_file_timeout_minutes", 15),
-                log,
-                stop_event,
-            )
+            write_state(status="running", state="waiting", started_at=started_at, message="等待录制文件写入完成…")
+
+            def report_pending(names: list[str]) -> None:
+                write_state(
+                    status="running",
+                    state="waiting",
+                    started_at=started_at,
+                    pending_files=names,
+                    message=f"等待 {len(names)} 个文件写入完成…",
+                )
+
+            from .file_watch import wait_until_ready
+
+            ready, abandoned = wait_until_ready(videos, log, stop_check=stop_event.is_set, on_pending=report_pending)
+            videos = ready
+            if abandoned:
+                log.warning(f"放弃未就绪文件: {[os.path.basename(p) for p in abandoned]}")
             if not videos:
                 write_state(
                     status="completed",
                     started_at=started_at,
                     finished_at=datetime.now().isoformat(timespec="seconds"),
-                    message="文件未就绪或已超时，无视频可处理",
+                    message="文件写入未完成或已放弃，无视频可处理",
                     summary=summary,
                 )
                 return 0

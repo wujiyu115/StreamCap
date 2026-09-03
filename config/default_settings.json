@@ -93,8 +93,6 @@
         "delete_original_video": true,
         "move_output_to_input": true,
         "video_output_dir": "pose_output",
-        "merged_suffix": "_merged",
-        "min_file_age_minutes": 60,
-        "wait_file_timeout_minutes": 15
+        "merged_suffix": "_merged"
     }
 }

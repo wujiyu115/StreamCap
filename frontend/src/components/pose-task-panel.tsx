@@ -107,6 +107,14 @@ export function PoseTaskPanel() {
                         )}
                         {latest.message ?? statusLabel}
                     </span>
+                    {latest.pending_files && latest.pending_files.length > 0 && (
+                        <span
+                            className="shrink-0 text-muted-foreground"
+                            title={latest.pending_files.join("\n")}
+                        >
+                            {tf("pose.waitingFiles", { count: latest.pending_files.length })}
+                        </span>
+                    )}
                     {latest.total_videos != null && latest.total_videos > 0 && (
                         <span className="shrink-0 text-muted-foreground">
                             {tf("pose.videoProgress", {

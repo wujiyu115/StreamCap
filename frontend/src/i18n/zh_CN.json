@@ -205,6 +205,8 @@
     "submitConfirm": "确定对选中的 {count} 个视频进行人体识别处理吗？",
     "submitted": "识别任务已提交",
     "busy": "已有任务在处理中，请稍后再试",
+    "notReadyError": "以下文件仍在写入（可能录制中），无法提交：{files}",
+    "waitingFiles": "等待 {count} 个文件写入完成",
     "log": "日志",
     "output": "输出目录",
     "notEnabled": "人体识别未启用，请先在设置中开启"
@@ -325,8 +327,6 @@
     "mergeClips": "合并为单个视频",
     "moveToOriginal": "产物移回原视频目录",
     "outputDir": "输出目录名",
-    "minFileAge": "文件稳定等待（分钟）",
-    "waitFileTimeout": "等待超时（分钟）",
     "monitorStrategy": "监控策略（限流自保护）",
     "monitorJitter": "轮询随机抖动比例",
     "monitorJitterHint": "0.1 = 间隔 ±10% 随机偏移，打散集中请求",

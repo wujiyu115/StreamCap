@@ -205,6 +205,8 @@
     "submitConfirm": "Run pose processing on {count} selected video(s)?",
     "submitted": "Pose task submitted",
     "busy": "A task is already running, please retry later",
+    "notReadyError": "These files are still being written (recording in progress?): {files}",
+    "waitingFiles": "Waiting for {count} file(s) to finish writing",
     "log": "Log",
     "output": "Output directory",
     "notEnabled": "Pose detection is disabled. Enable it in Settings first"
@@ -325,8 +327,6 @@
     "mergeClips": "Merge into single video",
     "moveToOriginal": "Move output next to original video",
     "outputDir": "Output directory name",
-    "minFileAge": "File settle wait (minutes)",
-    "waitFileTimeout": "Wait timeout (minutes)",
     "monitorStrategy": "Monitor Strategy (rate-limit protection)",
     "monitorJitter": "Polling jitter ratio",
     "monitorJitterHint": "0.1 = ±10% random offset per interval",

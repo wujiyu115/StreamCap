@@ -123,6 +123,7 @@ export interface PoseTaskState {
     video_percent?: number
     total_percent?: number
     message?: string
+    pending_files?: string[]
     summary?: {
         videos: number
         frames: number

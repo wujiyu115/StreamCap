@@ -53,6 +53,19 @@ async def submit_task(
     if not videos:
         raise HTTPException(status_code=400, detail="no video files found (clip products are skipped)")
 
+    if body.trigger != "auto":
+        from ...core.pose.file_watch import is_file_ready
+
+        not_ready = [os.path.basename(p) for p in videos if not is_file_ready(p)]
+        if not_ready:
+            shown = "; ".join(not_ready[:5])
+            if len(not_ready) > 5:
+                shown += f" (+{len(not_ready) - 5})"
+            raise HTTPException(
+                status_code=400,
+                detail=f"files still being written (recording in progress?): {shown}",
+            )
+
     try:
         result = manager.submit(
             videos=videos,

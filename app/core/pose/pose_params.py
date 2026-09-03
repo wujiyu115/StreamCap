@@ -37,8 +37,6 @@ DEFAULTS: dict[str, Any] = {
     "move_output_to_input": True,
     "video_output_dir": "pose_output",
     "merged_suffix": "_merged",
-    "min_file_age_minutes": 60,
-    "wait_file_timeout_minutes": 15,
     "model_path": DEFAULT_DETECTION_MODEL,
     "pose_model_path": DEFAULT_POSE_MODEL,
     "decode_backend": "auto",
@@ -63,8 +61,6 @@ class PoseParams:
     move_output_to_input: bool = True
     video_output_dir: str = "pose_output"
     merged_suffix: str = "_merged"
-    min_file_age_minutes: float = 60
-    wait_file_timeout_minutes: float = 15
     model_path: str = field(default_factory=lambda: DEFAULT_DETECTION_MODEL)
     pose_model_path: str = field(default_factory=lambda: DEFAULT_POSE_MODEL)
     decode_backend: str = "auto"
