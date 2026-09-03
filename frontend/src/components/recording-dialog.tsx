@@ -29,6 +29,15 @@ const VIDEO_FORMATS = ["TS", "MP4", "FLV", "MKV", "MOV", "NUT"]
 const AUDIO_FORMATS = ["WAV", "MP3", "WMA", "M4A", "AAC"]
 const QUALITIES = ["OD", "UHD", "HD", "SD", "LD"]
 
+const URL_PLATFORMS = [
+    { key: "douyin", label: "抖音直播", base: "https://live.douyin.com/" },
+    { key: "huya", label: "虎牙直播", base: "https://www.huya.com/" },
+    { key: "douyu", label: "斗鱼直播", base: "https://www.douyu.com/" },
+    { key: "bilibili", label: "B站直播", base: "https://live.bilibili.com/" },
+    { key: "kuaishou", label: "快手直播", base: "https://live.kuaishou.com/u/" },
+    { key: "yy", label: "YY直播", base: "https://www.yy.com/" },
+]
+
 interface FormState {
     url: string
     streamer_name: string
@@ -60,7 +69,7 @@ function initialState(rec: Recording | null, defaults: Record<string, unknown>):
         url: rec?.url ?? "",
         streamer_name: rec?.streamer_name ?? "",
         media_type: mediaType as "video" | "audio",
-        record_format: rec?.record_format ?? String(defaults.video_format ?? "TS"),
+        record_format: rec?.record_format ?? String(defaults.video_format ?? "MP4"),
         quality: rec?.quality ?? String(defaults.record_quality ?? "OD"),
         video_bitrate: rec?.video_bitrate ? String(rec.video_bitrate) : "",
         flv_use_direct_download: rec
@@ -104,6 +113,7 @@ export function RecordingDialog({
     const { t } = useI18n()
     const [batchText, setBatchText] = useState("")
     const [form, setForm] = useState<FormState | null>(null)
+    const [urlPlatform, setUrlPlatform] = useState(URL_PLATFORMS[0].key)
 
     const { data: settingsData } = useQuery({
         queryKey: ["settings"],
@@ -116,6 +126,7 @@ export function RecordingDialog({
         if (open) {
             setForm(initialState(recording, settingsData?.user_settings ?? {}))
             setBatchText("")
+            setUrlPlatform(URL_PLATFORMS[0].key)
         }
     }, [open, recording]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -158,10 +169,20 @@ export function RecordingDialog({
 
     const submitSingle = () => {
         if (!form) return
-        const url = form.url.trim()
-        if (!url) {
+        const rawUrl = form.url.trim()
+        if (!rawUrl) {
             toast.error(t("recordingDialog.urlRequired"))
             return
+        }
+        // 平台模式下输入的是房间号，拼上所选平台的基础地址
+        let url = rawUrl
+        if (!/^https?:\/\//.test(rawUrl)) {
+            const platform = URL_PLATFORMS.find((p) => p.key === urlPlatform)
+            if (!platform) {
+                toast.error(t("recordingDialog.invalidUrl"))
+                return
+            }
+            url = platform.base + rawUrl.replace(/^\/+/, "")
         }
         if (!/^https?:\/\//.test(url)) {
             toast.error(t("recordingDialog.invalidUrl"))
@@ -242,6 +263,9 @@ export function RecordingDialog({
                                 <SingleForm
                                     form={form}
                                     formats={formats}
+                                    showPlatformSelector
+                                    urlPlatform={urlPlatform}
+                                    onUrlPlatform={setUrlPlatform}
                                     onChange={set}
                                     onSubmit={submitSingle}
                                     pending={pending}
@@ -279,12 +303,18 @@ export function RecordingDialog({
 function SingleForm({
     form,
     formats,
+    showPlatformSelector = false,
+    urlPlatform,
+    onUrlPlatform,
     onChange,
     onSubmit,
     pending,
 }: {
     form: FormState
     formats: string[]
+    showPlatformSelector?: boolean
+    urlPlatform?: string
+    onUrlPlatform?: (key: string) => void
     onChange: <K extends keyof FormState>(key: K, value: FormState[K]) => void
     onSubmit: () => void
     pending: boolean
@@ -300,11 +330,48 @@ function SingleForm({
         >
             <div className="space-y-1.5">
                 <Label>{t("recordingDialog.url")} *</Label>
-                <Input
-                    value={form.url}
-                    onChange={(e) => onChange("url", e.target.value)}
-                    placeholder={t("recordingDialog.urlPlaceholder")}
-                />
+                {showPlatformSelector && (
+                    <Select
+                        value={urlPlatform ?? URL_PLATFORMS[0].key}
+                        onValueChange={(v) => onUrlPlatform?.(v)}
+                    >
+                        <SelectTrigger>
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {URL_PLATFORMS.map((p) => (
+                                <SelectItem key={p.key} value={p.key}>
+                                    {p.label}
+                                </SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                )}
+                {(() => {
+                    const platform = URL_PLATFORMS.find((p) => p.key === urlPlatform)
+                    const isFullUrl = /^https?:\/\//.test(form.url.trim())
+                    const showPrefix =
+                        showPlatformSelector && !!platform && !isFullUrl
+                    return (
+                        <div className="flex">
+                            {showPrefix && (
+                                <span className="inline-flex max-w-[55%] items-center truncate rounded-l-md border border-r-0 border-input bg-muted px-2 text-xs text-muted-foreground">
+                                    {platform!.base}
+                                </span>
+                            )}
+                            <Input
+                                value={form.url}
+                                onChange={(e) => onChange("url", e.target.value)}
+                                placeholder={
+                                    showPrefix
+                                        ? t("recordingDialog.roomIdPlaceholder")
+                                        : t("recordingDialog.urlPlaceholder")
+                                }
+                                className={showPrefix ? "rounded-l-none" : ""}
+                            />
+                        </div>
+                    )
+                })()}
             </div>
 
             <div className="grid grid-cols-2 gap-3">
@@ -341,7 +408,7 @@ function SingleForm({
                         onValueChange={(v) => {
                             const type = v as "video" | "audio"
                             onChange("media_type", type)
-                            onChange("record_format", type === "video" ? "TS" : "WAV")
+                            onChange("record_format", type === "video" ? "MP4" : "WAV")
                         }}
                     >
                         <SelectTrigger>

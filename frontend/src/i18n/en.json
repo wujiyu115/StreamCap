@@ -107,6 +107,7 @@
     "batch": "Batch",
     "url": "Live room URL",
     "urlPlaceholder": "https://www.example.com/xxxxxx",
+    "roomIdPlaceholder": "Room ID or paste full URL",
     "streamerName": "Streamer name",
     "streamerNamePlaceholder": "Optional",
     "mediaType": "Media type",
