@@ -444,7 +444,8 @@ class RecordingManager:
             recording.platform_key = platform_key
             self.services.run_coro(self.persist_recordings())
 
-        if self.settings.user_config.get("language") != "zh_CN":
+        # 设置里存的是 "Chinese"/"English"，与 zh_CN 比较恒不等导致中文用户也被换成英文平台名
+        if self.settings.user_config.get("language") == "English":
             platform = platform_key
 
         output_dir = self.settings.get_video_save_path()
