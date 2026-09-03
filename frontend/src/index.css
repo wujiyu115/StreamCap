@@ -321,7 +321,9 @@ body {
     width: 15px;
     height: 15px;
 }
-.media-grid.list-mode .media-thumb.folder-thumb svg {
+/* 只放大 Folder 图标（.lucide-folder）；勾选框的 svg 不能被放大，
+   否则勾形溢出 24px 的框（列表视图勾选错位的根因） */
+.media-grid.list-mode .media-thumb.folder-thumb > svg.lucide-folder {
     width: 44px;
     height: 44px;
 }

@@ -308,6 +308,9 @@ export default function MediaPage() {
                 />
             </div>
 
+            {/* 人体识别任务进度：放在列表上方，文件多时不用滚到底看进度 */}
+            <PoseTaskPanel />
+
             {/* 文件区 */}
             {isLoading ? (
                 <div className="flex justify-center py-20">
@@ -396,9 +399,6 @@ export default function MediaPage() {
                     }}
                 />
             )}
-
-            {/* 人体识别任务进度 */}
-            <PoseTaskPanel />
         </div>
     )
 }
@@ -450,17 +450,13 @@ function MediaCard({
                     item.type === "folder" ? "folder-thumb" : item.type === "image" ? "" : `g${index % 6}`
                 }`}
             >
-                <label
-                    className="absolute left-2 top-2 z-10 grid h-6 w-6 place-items-center rounded-md bg-black/40"
-                    onClick={(e) => e.stopPropagation()}
+                <Checkbox
+                    className="absolute left-2 top-2 z-10 grid h-6 w-6 place-items-center rounded-md bg-black/40 ring-offset-0 data-[state=checked]:bg-black/60"
+                    checked={selected}
+                    onCheckedChange={() => onToggleSelect(item.rel_path)}
                     title={t("media.select")}
-                >
-                    <Checkbox
-                        className="h-4 w-4"
-                        checked={selected}
-                        onCheckedChange={() => onToggleSelect(item.rel_path)}
-                    />
-                </label>
+                    onClick={(e) => e.stopPropagation()}
+                />
                 {item.type === "folder" ? (
                     <>
                         <Folder className="h-14 w-14 fill-primary/20 text-primary/80" />
