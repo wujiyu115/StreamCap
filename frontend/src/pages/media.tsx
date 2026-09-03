@@ -32,11 +32,19 @@ import { PoseTaskPanel } from "@/components/pose-task-panel"
 import { useVideoMeta } from "@/hooks/use-video-meta"
 import { useI18n } from "@/i18n"
 import { toast } from "sonner"
+import { useSearchParams } from "react-router-dom"
 
 export default function MediaPage() {
     const { t, tf } = useI18n()
     const queryClient = useQueryClient()
-    const [path, setPath] = useState("")
+    // 录制管理「打开目录」跳转带 ?path=；导航内切换时同步更新 URL
+    const [searchParams, setSearchParams] = useSearchParams()
+    const [path, setPathState] = useState(() => searchParams.get("path") ?? "")
+
+    const setPath = (next: string) => {
+        setPathState(next)
+        setSearchParams(next ? { path: next } : {}, { replace: true })
+    }
     const [selected, setSelected] = useState<Set<string>>(new Set())
     const [previewItem, setPreviewItem] = useState<MediaItem | null>(null)
     const [lastViewed, setLastViewed] = useState<string | null>(null)

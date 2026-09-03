@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import uuid
 from datetime import datetime
 
@@ -41,7 +42,21 @@ def compute_card_state(recording: Recording) -> str:
     return "unknown"
 
 
-def serialize_recording(recording: Recording) -> dict:
+def _media_path(recording: Recording, root: str | None) -> str | None:
+    """recording_dir 相对媒体根的路径，供前端跳转视频管理对应目录。"""
+    rd = recording.recording_dir
+    if not rd or not root:
+        return None
+    try:
+        rel = os.path.relpath(os.path.abspath(rd), os.path.abspath(root))
+    except ValueError:
+        return None
+    if rel.startswith(".."):
+        return ""
+    return rel.replace(os.sep, "/")
+
+
+def serialize_recording(recording: Recording, media_root: str | None = None) -> dict:
     data = recording.to_dict()
     data.update(
         {
@@ -64,6 +79,7 @@ def serialize_recording(recording: Recording) -> dict:
             "state": compute_card_state(recording),
             "unsupported": recording.unsupported,
             "consecutive_failures": recording.consecutive_failures,
+            "media_path": _media_path(recording, media_root),
         }
     )
     return data
@@ -114,7 +130,7 @@ def _get_recording_or_404(rm, rec_id: str) -> Recording:
 @router.get("")
 async def list_recordings(user: str = Depends(get_current_user), services=Depends(get_services)):
     rm = services.recording_manager
-    return {"recordings": [serialize_recording(r) for r in rm.recordings]}
+    return {"recordings": [serialize_recording(r, media_root=services.settings_config.get_video_save_path()) for r in rm.recordings]}
 
 
 @router.post("")
@@ -139,7 +155,7 @@ async def create_recording(
     )
     if recording.monitor_status:
         services.run_coro(rm.check_if_live(recording))
-    return serialize_recording(recording)
+    return serialize_recording(recording, media_root=services.settings_config.get_video_save_path())
 
 
 @router.post("/batch")
@@ -202,7 +218,7 @@ async def create_recordings_batch(
             recording.scheduled_start_time, recording.monitor_hours
         )
         services.run_coro(rm.check_if_live(recording))
-        created.append(serialize_recording(recording))
+        created.append(serialize_recording(recording, media_root=services.settings_config.get_video_save_path()))
 
     return {"created": len(created), "recordings": created}
 
@@ -237,7 +253,7 @@ async def update_recording(
     recording.unsupported = False
     recording.next_check_after = 0.0
     services.run_coro(rm.persist_recordings())
-    return serialize_recording(recording)
+    return serialize_recording(recording, media_root=services.settings_config.get_video_save_path())
 
 
 @router.delete("/{rec_id}")
@@ -290,7 +306,7 @@ async def toggle_monitor(
         await rm.start_monitor_recording(recording)
     else:
         await rm.stop_monitor_recording(recording)
-    return serialize_recording(recording)
+    return serialize_recording(recording, media_root=services.settings_config.get_video_save_path())
 
 
 @router.post("/batch-monitor")
@@ -322,7 +338,7 @@ async def stop_recording(
     rm = services.recording_manager
     recording = _get_recording_or_404(rm, rec_id)
     rm.stop_recording(recording, manually_stopped=True)
-    return serialize_recording(recording)
+    return serialize_recording(recording, media_root=services.settings_config.get_video_save_path())
 
 
 @router.get("/statuses")

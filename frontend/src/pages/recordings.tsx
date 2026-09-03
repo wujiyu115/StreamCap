@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
     Eye,
     EyeOff,
+    FolderOpen,
     LayoutGrid,
     Loader2,
     MoreVertical,
@@ -14,6 +15,7 @@ import {
     Trash2,
 } from "lucide-react"
 import { useMemo, useState } from "react"
+import { useNavigate } from "react-router-dom"
 import { recordingsApi } from "@/api"
 import type { Recording } from "@/api/types"
 import { Button } from "@/components/ui/button"
@@ -53,6 +55,7 @@ const FILTER_LABEL_KEY: Record<StatusFilter, string> = {
 
 export default function RecordingsPage() {
     const { t, tf } = useI18n()
+    const navigate = useNavigate()
     const queryClient = useQueryClient()
     const [filter, setFilter] = useState<StatusFilter>("all")
     const [platform, setPlatform] = useState<string>("all")
@@ -154,6 +157,12 @@ export default function RecordingsPage() {
         if (confirm(tf("recordings.deleteOneConfirm", { name: rec.streamer_name || rec.url }))) {
             deleteMutation.mutate(rec.rec_id)
         }
+    }
+
+    // media_path: 任务录制目录相对媒体根的路径；null=从未录制过（跳媒体根）, ""=根目录本身
+    const gotoMedia = (rec: Recording) => {
+        const p = rec.media_path ?? ""
+        navigate(p ? `/media?path=${encodeURIComponent(p)}` : "/media")
     }
 
     const handleBatchDelete = () => {
@@ -426,6 +435,14 @@ export default function RecordingsPage() {
                                             <Button
                                                 variant="ghost"
                                                 size="icon"
+                                                title={t("recordings.openMediaDir")}
+                                                onClick={() => gotoMedia(r)}
+                                            >
+                                                <FolderOpen className="h-4 w-4" />
+                                            </Button>
+                                            <Button
+                                                variant="ghost"
+                                                size="icon"
                                                 title={t("common.edit")}
                                                 onClick={() => {
                                                     setEditing(r)
@@ -464,6 +481,7 @@ export default function RecordingsPage() {
                             onDelete={() => handleDelete(r)}
                             onMonitor={(enabled) => monitorMutation.mutate({ id: r.rec_id, enabled })}
                             onStop={() => stopMutation.mutate(r.rec_id)}
+                            onOpenMedia={() => gotoMedia(r)}
                         />
                     ))}
                 </div>
@@ -495,6 +513,7 @@ function RecordingCardView({
     onDelete,
     onMonitor,
     onStop,
+    onOpenMedia,
 }: {
     rec: Recording
     selected: boolean
@@ -503,6 +522,7 @@ function RecordingCardView({
     onDelete: () => void
     onMonitor: (enabled: boolean) => void
     onStop: () => void
+    onOpenMedia: () => void
 }) {
     const { t } = useI18n()
     return (
@@ -560,6 +580,9 @@ function RecordingCardView({
                 )}
                 <Button variant="outline" size="sm" onClick={() => onMonitor(!rec.monitor_status)}>
                     {rec.monitor_status ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+                </Button>
+                <Button variant="outline" size="sm" title={t("recordings.openMediaDir")} onClick={onOpenMedia}>
+                    <FolderOpen className="h-3.5 w-3.5" />
                 </Button>
                 <Button variant="outline" size="sm" onClick={onEdit}>
                     <Pencil className="h-3.5 w-3.5" />

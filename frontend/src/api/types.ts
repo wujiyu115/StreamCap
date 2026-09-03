@@ -11,6 +11,7 @@ export interface Recording {
     scheduled_start_time: string | null
     monitor_hours: string | null
     recording_dir: string | null
+    media_path: string | null
     enabled_message_push: boolean
     only_notify_no_record: boolean
     flv_use_direct_download: boolean

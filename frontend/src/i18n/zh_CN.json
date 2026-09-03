@@ -93,6 +93,7 @@
     "stopRecordingTip": "已停止录制",
     "startMonitorTip": "已开启监控",
     "stopMonitorTip": "已停止监控",
+    "openMediaDir": "打开视频目录",
     "addSuccess": "任务添加成功",
     "deleteSuccess": "任务已删除",
     "liveTitle": "直播标题",

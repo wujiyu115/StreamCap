@@ -93,6 +93,7 @@
     "stopRecordingTip": "Recording stopped",
     "startMonitorTip": "Monitoring started",
     "stopMonitorTip": "Monitoring stopped",
+    "openMediaDir": "Open media folder",
     "addSuccess": "Task added",
     "deleteSuccess": "Task deleted",
     "liveTitle": "Live title",
