@@ -437,18 +437,19 @@ function MediaCard({
 
     return (
         <article className={cls} onClick={onClick}>
+            {/* 勾选框：网格模式叠在缩略图左上角；列表模式由 CSS 移到卡片左缘独立列 */}
+            <Checkbox
+                className="media-check absolute left-2 top-2 z-10 grid h-6 w-6 place-items-center rounded-md bg-black/40 ring-offset-0 data-[state=checked]:bg-black/60"
+                checked={selected}
+                onCheckedChange={() => onToggleSelect(item.rel_path)}
+                title={t("media.select")}
+                onClick={(e) => e.stopPropagation()}
+            />
             <div
                 className={`media-thumb ${
                     item.type === "folder" ? "folder-thumb" : item.type === "image" ? "" : `g${index % 6}`
                 }`}
             >
-                <Checkbox
-                    className="absolute left-2 top-2 z-10 grid h-6 w-6 place-items-center rounded-md bg-black/40 ring-offset-0 data-[state=checked]:bg-black/60"
-                    checked={selected}
-                    onCheckedChange={() => onToggleSelect(item.rel_path)}
-                    title={t("media.select")}
-                    onClick={(e) => e.stopPropagation()}
-                />
                 {item.type === "folder" ? (
                     <>
                         <Folder className="h-14 w-14 fill-primary/20 text-primary/80" />
@@ -484,7 +485,7 @@ function MediaCard({
                     <span className="tag">{formatTimestamp(item.mtime)}</span>
                     {item.type !== "folder" && (
                         <button
-                            className="ml-auto rounded p-1 text-muted-foreground hover:bg-accent hover:text-red-500"
+                            className="media-del ml-auto rounded p-1 text-muted-foreground hover:bg-accent hover:text-red-500"
                             title={t("common.delete")}
                             onClick={(e) => {
                                 e.stopPropagation()

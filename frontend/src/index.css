@@ -295,45 +295,69 @@ body {
     color: hsl(var(--muted-foreground));
 }
 
-/* ── 列表模式（原版 Frostcast 横向卡片行）────────────── */
+/* ── 列表模式（参考原版布局：勾选列 + 小缩略图 + 两行信息，留白充足）── */
 .media-grid.list-mode {
     grid-template-columns: minmax(0, 1fr);
     gap: 8px;
 }
 .media-grid.list-mode .media-card {
     flex-direction: row;
-    align-items: stretch;
+    align-items: center;
+    padding-left: 10px;
 }
 .media-grid.list-mode .media-card:hover {
     transform: none;
 }
+/* 勾选框从缩略图左上角挪到卡片左缘独立列 */
+.media-grid.list-mode .media-check {
+    position: static;
+    flex: none;
+    margin-right: 10px;
+    background: transparent;
+}
 .media-grid.list-mode .media-thumb {
-    width: clamp(104px, 22vw, 168px);
+    width: 84px;
     aspect-ratio: 16 / 10;
     flex: none;
-    border-radius: 0;
+    border-radius: 8px;
+    overflow: hidden;
 }
 .media-grid.list-mode .media-thumb .play-btn {
-    width: 40px;
-    height: 40px;
+    width: 36px;
+    height: 36px;
 }
 .media-grid.list-mode .media-thumb .play-btn svg {
-    width: 15px;
-    height: 15px;
+    width: 14px;
+    height: 14px;
 }
 /* 只放大 Folder 图标（.lucide-folder）；勾选框的 svg 不能被放大，
    否则勾形溢出 24px 的框（列表视图勾选错位的根因） */
 .media-grid.list-mode .media-thumb.folder-thumb > svg.lucide-folder {
-    width: 44px;
-    height: 44px;
+    width: 40px;
+    height: 40px;
 }
+/* 信息区：名称一行 + 元数据一行，左对齐不换行 */
 .media-grid.list-mode .meta-row {
     flex: 1;
-    align-items: center;
-    align-content: center;
-    justify-content: center;
-    padding: 12px 14px;
-    row-gap: 4px;
+    min-width: 0;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    padding: 10px 12px;
+    row-gap: 6px;
+    text-align: left;
+}
+.media-grid.list-mode .meta-row > div:first-child {
+    width: 100%;
+}
+.media-grid.list-mode .meta-row > div:last-child {
+    flex-wrap: nowrap;
+    overflow: hidden;
+    width: 100%;
+    margin-left: 0;
+}
+.media-grid.list-mode .meta-row .tag {
+    flex: none;
 }
 .media-grid.list-mode .media-thumb .dur-badge,
 .media-grid.list-mode .media-thumb .count-badge {
@@ -341,3 +365,4 @@ body {
     font-size: 11px;
     padding: 2px 6px;
 }
+
