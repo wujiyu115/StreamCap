@@ -658,11 +658,19 @@ class LiveStreamRecorder:
                 return
 
             convert_to_mp4 = self.user_config.get("convert_to_mp4") and self.save_format == "ts"
+            pose_cfg = self.user_config.get("pose_detection") or {}
+            merged_suffix = pose_cfg.get("merged_suffix") or "_merged"
 
             if self.segment_record:
                 file_paths = utils.get_file_paths(os.path.dirname(save_file_path))
                 prefix = os.path.basename(save_file_path).rsplit("_", maxsplit=1)[0]
-                candidates = [p for p in file_paths if prefix in os.path.basename(p)]
+                candidates = [
+                    p
+                    for p in file_paths
+                    if prefix in os.path.basename(p)
+                    # 历史识别产物（_merged）重处理会套娃，跳过
+                    and not os.path.splitext(os.path.basename(p))[0].endswith(merged_suffix)
+                ]
             else:
                 candidates = [save_file_path]
 

@@ -20,6 +20,11 @@ def _task_manager(request: Request):
     return manager
 
 
+def _is_clip_product(path: str, merged_suffix: str) -> bool:
+    """带产物后缀（如 _merged）的文件是识别剪辑产物，重处理会套娃。"""
+    return os.path.splitext(os.path.basename(path))[0].endswith(merged_suffix or "_merged")
+
+
 @router.post("/tasks")
 async def submit_task(
     request: Request,
@@ -42,6 +47,11 @@ async def submit_task(
     params = PoseParams.from_user_config(
         {**(services.settings_config.user_config.get("pose_detection") or {}), **(body.overrides or {})}
     )
+
+    merged_suffix = params.merged_suffix or "_merged"
+    videos = [p for p in videos if not _is_clip_product(p, merged_suffix)]
+    if not videos:
+        raise HTTPException(status_code=400, detail="no video files found (clip products are skipped)")
 
     try:
         result = manager.submit(
