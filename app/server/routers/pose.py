@@ -41,7 +41,7 @@ def _expand_videos(paths: list[str], merged_suffix: str, output_dir: str) -> lis
                     full = os.path.join(walk_root, f)
                     if not _is_clip_product(full, merged_suffix):
                         videos.append(full)
-        elif os.path.isfile(p):
+        elif os.path.isfile(p) and not _is_clip_product(p, merged_suffix):
             videos.append(p)
     return videos
 
