@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -66,6 +67,7 @@ class PoseTaskManager:
         self._worker: Optional[threading.Thread] = None
 
         self._adopt_orphans()
+        self._prune_old_tasks()
         self._start_worker()
 
     # ── 生命周期 ────────────────────────────────────────────
@@ -101,12 +103,17 @@ class PoseTaskManager:
 
     def _start_worker(self):
         def worker():
+            last_prune = 0.0
             while not self._stop_worker:
                 next_spec = None
                 with self._lock:
                     if self._queue and not self._is_running_locked():
                         next_spec = self._queue.pop(0)
                 if next_spec is None:
+                    # 每小时清一次过期任务目录
+                    if time.time() - last_prune > 3600:
+                        last_prune = time.time()
+                        self._prune_old_tasks()
                     time.sleep(2.0)
                     continue
                 try:
@@ -116,6 +123,36 @@ class PoseTaskManager:
 
         self._worker = threading.Thread(target=worker, name="PoseTaskWorker", daemon=True)
         self._worker.start()
+
+    def _prune_old_tasks(self, max_age_days: int = 7, keep_recent: int = 20) -> None:
+        """删除超过 max_age_days 的任务目录；无论多老始终保留最近 keep_recent 个。"""
+        try:
+            names = sorted(
+                n for n in os.listdir(self.tasks_root)
+                if n.startswith("task_") and os.path.isdir(os.path.join(self.tasks_root, n))
+            )
+            cutoff = datetime.now().timestamp() - max_age_days * 86400
+            for name in names[:-keep_recent] if keep_recent else names:
+                state_path = os.path.join(self.tasks_root, name, "state.json")
+                try:
+                    with open(state_path, encoding="utf-8") as f:
+                        state = json.load(f)
+                except (OSError, ValueError):
+                    continue
+                if state.get("status") == "running":
+                    continue
+                finished = state.get("finished_at")
+                if not finished:
+                    continue
+                try:
+                    finished_ts = datetime.fromisoformat(finished).timestamp()
+                except ValueError:
+                    continue
+                if finished_ts < cutoff:
+                    shutil.rmtree(os.path.join(self.tasks_root, name), ignore_errors=True)
+                    logger.info(f"清理过期人体识别任务目录: {name}")
+        except Exception as e:
+            logger.warning(f"清理人体识别任务目录失败: {e}")
 
     def shutdown(self) -> None:
         self._stop_worker = True
