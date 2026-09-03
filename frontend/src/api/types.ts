@@ -35,6 +35,8 @@ export interface Recording {
     record_url: string | null
     current_output_file: string | null
     state: "recording" | "error" | "live" | "offline" | "stopped" | "checking" | "unknown"
+    unsupported?: boolean
+    consecutive_failures?: number
 }
 
 export interface RecordingStatusSnapshot {

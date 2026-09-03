@@ -62,6 +62,16 @@ class Recording:
         self.video_bitrate = video_bitrate
         self.pose_enabled = pose_enabled
         self.current_output_file = None
+        # 监控自保护运行时状态（不持久化）：
+        # consecutive_failures 连续取流失败次数（退避与 unsupported 判定）
+        # backoff_multiplier 失败退避倍数（1=正常，失败翻倍至上限，成功重置）
+        # unsupported 连续失败超限置 True，轮询跳过（编辑任务可重置）
+        # next_check_after 时间戳，抖动/退避后的下次可检时刻
+        self.consecutive_failures = 0
+        self.backoff_multiplier = 1
+        self.unsupported = False
+        self.next_check_after = 0.0
+        self.record_finished_at = None
         self.scheduled_time_range = None
         self.title = f"{streamer_name} - {self.quality}"
         self.speed = "X KB/s"

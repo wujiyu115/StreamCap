@@ -1,6 +1,8 @@
 import asyncio
+import random
 import threading
-from collections import defaultdict
+import time
+from collections import defaultdict, deque
 from datetime import datetime, timedelta
 
 from ...messages import message_pusher
@@ -28,9 +30,77 @@ class RecordingManager:
         self._ = {}
         self.load()
         self.initialize_dynamic_state()
-        max_concurrent = int(self.settings.user_config.get("platform_max_concurrent_requests", 3))
-        self.platform_semaphores = defaultdict(lambda: asyncio.Semaphore(max_concurrent))
+        self.max_concurrent = int(self.settings.user_config.get("platform_max_concurrent_requests", 3))
+        self.preset_concurrent = self.max_concurrent
+        self.platform_semaphores = defaultdict(lambda: asyncio.Semaphore(self.max_concurrent))
         self.active_recorders = {}
+
+        # 监控自保护状态：近期取流成败滑窗（动态并发用）与轮内失败计数（全局延迟用）
+        self._request_results: deque[tuple[bool, float]] = deque(maxlen=100)
+        self._results_lock = threading.Lock()
+        self._round_failures = 0
+        self._last_concurrency_adjust = 0.0
+
+    # ── 监控自保护：配置读取 ──────────────────────────────
+
+    def _monitor_config(self) -> dict:
+        cfg = self.settings.user_config
+        return {
+            "jitter_ratio": float(cfg.get("monitor_jitter_ratio", 0.1) or 0),
+            "backoff_enabled": bool(cfg.get("monitor_failure_backoff_enabled", True)),
+            "backoff_max": max(1, int(cfg.get("monitor_failure_backoff_max_multiplier", 4))),
+            "global_error_delay": max(0, int(cfg.get("monitor_global_error_delay_seconds", 60))),
+            "global_error_threshold": max(1, int(cfg.get("monitor_global_error_threshold", 20))),
+            "post_record_recheck": max(0, int(cfg.get("monitor_post_record_recheck_seconds", 30))),
+            "unsupported_limit": max(0, int(cfg.get("monitor_unsupported_failure_limit", 10))),
+            "dynamic_concurrency": bool(cfg.get("monitor_dynamic_concurrency_enabled", True)),
+        }
+
+    def _record_request_result(self, ok: bool) -> None:
+        with self._results_lock:
+            self._request_results.append((ok, time.time()))
+            if not ok:
+                self._round_failures += 1
+
+    def _reset_round_failures(self) -> None:
+        with self._results_lock:
+            self._round_failures = 0
+
+    def _error_rate(self) -> float:
+        """近 100 次取流请求的错误率（动态并发降级依据）。"""
+        with self._results_lock:
+            if not self._request_results:
+                return 0.0
+            return sum(1 for ok, _ in self._request_results if not ok) / len(self._request_results)
+
+    def _maybe_adjust_concurrency(self) -> None:
+        """错误率驱动动态并发：>50% 降 1、<25% 回升 1（5 分钟内至多调一次）。
+
+        信号量是 defaultdict，按需重建，因此无需关心当前是否已存在。
+        """
+        cfg = self._monitor_config()
+        if not cfg["dynamic_concurrency"]:
+            return
+        now = time.time()
+        if now - self._last_concurrency_adjust < 300:
+            return
+
+        rate = self._error_rate()
+        current = self.max_concurrent
+        target = current
+        if rate > 0.5 and current > 1:
+            target = current - 1
+        elif rate < 0.25 and current < self.preset_concurrent:
+            target = current + 1
+        if target != current:
+            self.max_concurrent = target
+            self.platform_semaphores.clear()
+            self._last_concurrency_adjust = now
+            logger.warning(
+                f"取流错误率 {rate:.0%}，平台并发数动态调整为 {target}（原 {current}）"
+            )
+        else:
+            self._last_concurrency_adjust = now
 
     @property
     def recordings(self):
@@ -187,12 +257,103 @@ class RecordingManager:
         return None
 
     async def check_all_live_status(self):
-        """Check the live status of all recordings and update their display titles."""
+        """每轮调度：按抖动/退避/快检决定哪些任务该查，跳过 unsupported。
+
+        - 抖动：每个任务的下次可检时间加 ±jitter_ratio 随机偏移，打散集中请求
+        - 退避：连续失败任务的间隔乘 backoff_multiplier（翻倍至上限，成功重置）
+        - 快检：刚录制结束的任务 post_record_recheck 秒后即可重检（防卡顿少录）
+        - unsupported：连续失败超限的任务本轮跳过
+        """
+        cfg = self._monitor_config()
+        now = time.time()
+
+        # 全局错误延迟（对齐旧容器「瞬时错误太多」逻辑）：上一轮失败过多，
+        # 本轮开头整体 sleep，让平台风控冷却
+        with self._results_lock:
+            round_failures = self._round_failures
+        if round_failures >= cfg["global_error_threshold"] and cfg["global_error_delay"] > 0:
+            logger.warning(
+                f"上一轮取流失败 {round_failures} 次（阈值 {cfg['global_error_threshold']}），"
+                f"整体延迟 {cfg['global_error_delay']}s 后继续"
+            )
+            await asyncio.sleep(cfg["global_error_delay"])
+        self._reset_round_failures()
+
+        self._maybe_adjust_concurrency()
+
+        base_interval = int(self.loop_time_seconds or 300)
+        skipped_unsupported = 0
         for recording in self.recordings:
-            if recording.monitor_status and not recording.is_recording:
-                is_exceeded = utils.is_time_interval_exceeded(recording.detection_time, recording.loop_time_seconds)
-                if not recording.detection_time or is_exceeded:
-                    self.services.run_coro(self.check_if_live(recording))
+            if not recording.monitor_status or recording.is_recording:
+                continue
+            if recording.unsupported:
+                skipped_unsupported += 1
+                continue
+            if recording.rec_id in self.active_recorders:
+                continue
+
+            # 快检：录制结束后的短窗口内不等完整间隔
+            interval = base_interval
+            if (
+                recording.record_finished_at
+                and cfg["post_record_recheck"] > 0
+                and now - recording.record_finished_at <= cfg["post_record_recheck"] * 2
+            ):
+                interval = min(interval, cfg["post_record_recheck"])
+
+            # 退避：连续失败间隔翻倍
+            if cfg["backoff_enabled"] and recording.backoff_multiplier > 1:
+                interval = interval * recording.backoff_multiplier
+
+            is_exceeded = utils.is_time_interval_exceeded(recording.detection_time, interval)
+            if not recording.detection_time or is_exceeded or recording.next_check_after <= now:
+                self.services.run_coro(self.check_if_live(recording))
+
+        if skipped_unsupported:
+            logger.info(f"本轮跳过 {skipped_unsupported} 个已标记不支持的任务")
+
+    def _jittered_interval(self, interval: float, jitter_ratio: float) -> float:
+        if jitter_ratio <= 0:
+            return interval
+        spread = interval * jitter_ratio
+        return interval + random.uniform(-spread, spread)
+
+    def _on_check_failed(self, recording: Recording) -> None:
+        """取流失败：累计连续失败、按退避策略排下次检查；超限标记 unsupported。"""
+        cfg = self._monitor_config()
+        recording.consecutive_failures += 1
+        if cfg["backoff_enabled"]:
+            recording.backoff_multiplier = min(
+                recording.backoff_multiplier * 2, max(1, cfg["backoff_max"])
+            )
+
+        limit = cfg["unsupported_limit"]
+        if limit and recording.consecutive_failures >= limit:
+            recording.unsupported = True
+            logger.warning(
+                f"连续失败 {recording.consecutive_failures} 次，标记为不支持并停止轮询: "
+                f"{recording.url}（编辑任务可重置）"
+            )
+            return
+
+        base = int(self.loop_time_seconds or 300)
+        interval = base * recording.backoff_multiplier
+        recording.next_check_after = time.time() + max(1, self._jittered_interval(interval, cfg["jitter_ratio"]))
+
+    def _on_check_succeeded(self, recording: Recording) -> None:
+        """取流成功：清失败计数/退避/unsupported，按抖动排下次检查。"""
+        cfg = self._monitor_config()
+        was_unsupported = recording.unsupported
+        recording.consecutive_failures = 0
+        recording.backoff_multiplier = 1
+        recording.unsupported = False
+        if was_unsupported:
+            logger.info(f"恢复轮询: {recording.url}")
+
+        base = int(self.loop_time_seconds or 300)
+        recording.next_check_after = time.time() + max(
+            1, self._jittered_interval(base, cfg["jitter_ratio"])
+        )
 
     _periodic_task_running = False
 
@@ -309,14 +470,18 @@ class RecordingManager:
         async with semaphore:
             stream_info = await recorder.fetch_stream()
             logger.info(f"Stream Data: {stream_info}")
+        self._record_request_result(ok=bool(stream_info and stream_info.anchor_name))
         if not stream_info or not stream_info.anchor_name:
             logger.error(f"Fetch stream data failed: {recording.url}")
             recording.is_checking = False
             recording.status_info = RecordingStatus.LIVE_STATUS_CHECK_ERROR
+            self._on_check_failed(recording)
             if recording.monitor_status:
                 self.services.broadcast_card_update(recording)
                 self.services.broadcast_pubsub("update", recording)
             return
+
+        self._on_check_succeeded(recording)
         if self.settings.user_config.get("remove_emojis"):
             stream_info.anchor_name = utils.clean_name(stream_info.anchor_name, self._["live_room"])
 

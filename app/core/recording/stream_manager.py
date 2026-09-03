@@ -161,6 +161,8 @@ class LiveStreamRecorder:
 
     async def _handle_recording_finished(self, record_name: str, stop_msg: str = "", complete_msg: str = "") -> None:
         self.recording.is_live = False
+        # 记录结束时刻：监控快检依据（结束后短间隔重检，防主播卡顿少录）
+        self.recording.record_finished_at = time.time()
         if self.recording.monitor_status:
             self.recording.status_info = RecordingStatus.MONITORING
             display_title = self.recording.title

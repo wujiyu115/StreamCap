@@ -362,7 +362,17 @@ export default function RecordingsPage() {
                                         {r.platform || "-"}
                                     </TableCell>
                                     <TableCell>
-                                        <StatusBadge state={r.state} label={t(stateLabelKey(r.state))} />
+                                        <div className="flex items-center gap-1.5">
+                                            <StatusBadge state={r.state} label={t(stateLabelKey(r.state))} />
+                                            {r.unsupported && (
+                                                <span
+                                                    className="cursor-help rounded-full border border-muted-foreground/40 px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                                                    title={t("recordings.unsupportedTip")}
+                                                >
+                                                    {t("recordings.statusUnsupported")}
+                                                </span>
+                                            )}
+                                        </div>
                                     </TableCell>
                                     <TableCell className="hidden md:table-cell">
                                         {t(`quality.${r.quality}`)}
@@ -507,7 +517,17 @@ function RecordingCardView({
                     <div className="truncate font-medium">{rec.streamer_name || rec.url}</div>
                     <div className="text-xs text-muted-foreground">{rec.platform}</div>
                 </div>
-                <StatusBadge state={rec.state} label={t(stateLabelKey(rec.state))} />
+                <div className="flex shrink-0 items-center gap-1.5">
+                    {rec.unsupported && (
+                        <span
+                            className="cursor-help rounded-full border border-muted-foreground/40 px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                            title={t("recordings.unsupportedTip")}
+                        >
+                            {t("recordings.statusUnsupported")}
+                        </span>
+                    )}
+                    <StatusBadge state={rec.state} label={t(stateLabelKey(rec.state))} />
+                </div>
             </div>
             <div className="mb-3 space-y-1 text-sm text-muted-foreground">
                 <div className="truncate text-xs">{rec.live_title || rec.url}</div>

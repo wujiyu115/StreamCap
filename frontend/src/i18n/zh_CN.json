@@ -96,7 +96,9 @@
     "addSuccess": "任务添加成功",
     "deleteSuccess": "任务已删除",
     "liveTitle": "直播标题",
-    "notSet": "未设置"
+    "notSet": "未设置",
+    "statusUnsupported": "不支持",
+    "unsupportedTip": "连续失败已停止轮询，编辑任务可重试"
   },
   "recordingDialog": {
     "addTitle": "新增录制任务",
@@ -314,7 +316,21 @@
     "moveToOriginal": "产物移回原视频目录",
     "outputDir": "输出目录名",
     "minFileAge": "文件稳定等待（分钟）",
-    "waitFileTimeout": "等待超时（分钟）"
+    "waitFileTimeout": "等待超时（分钟）",
+    "monitorStrategy": "监控策略（限流自保护）",
+    "monitorJitter": "轮询随机抖动比例",
+    "monitorJitterHint": "0.1 = 间隔 ±10% 随机偏移，打散集中请求",
+    "monitorBackoff": "失败退避",
+    "monitorBackoffHint": "连续失败的任务检查间隔翻倍",
+    "monitorBackoffMax": "退避间隔上限（倍数）",
+    "monitorGlobalDelay": "全局错误延迟（秒）",
+    "monitorGlobalThreshold": "全局错误触发阈值（次/轮）",
+    "monitorDynamicConc": "动态并发调整",
+    "monitorDynamicConcHint": "错误率 >50% 自动降并发、恢复后回升",
+    "monitorRecheck": "录制结束快检（秒）",
+    "monitorRecheckHint": "录制结束后短间隔重检，防主播卡顿少录",
+    "monitorUnsupportedLimit": "连续失败标记上限（次）",
+    "monitorUnsupportedLimitHint": "超限任务标记不支持、停止轮询；编辑任务可重置"
   },
   "about": {
     "title": "关于",

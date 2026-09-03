@@ -576,6 +576,19 @@ function RecordingSettings() {
                 { key: "check_live_on_browser_refresh", label: t("settings.checkOnRefresh"), type: "switch" },
             ],
         },
+        {
+            title: t("settings.monitorStrategy"),
+            fields: [
+                { key: "monitor_jitter_ratio", label: t("settings.monitorJitter"), type: "number", hint: t("settings.monitorJitterHint") },
+                { key: "monitor_failure_backoff_enabled", label: t("settings.monitorBackoff"), type: "switch", hint: t("settings.monitorBackoffHint") },
+                { key: "monitor_failure_backoff_max_multiplier", label: t("settings.monitorBackoffMax"), type: "number" },
+                { key: "monitor_global_error_delay_seconds", label: t("settings.monitorGlobalDelay"), type: "number" },
+                { key: "monitor_global_error_threshold", label: t("settings.monitorGlobalThreshold"), type: "number" },
+                { key: "monitor_dynamic_concurrency_enabled", label: t("settings.monitorDynamicConc"), type: "switch", hint: t("settings.monitorDynamicConcHint") },
+                { key: "monitor_post_record_recheck_seconds", label: t("settings.monitorRecheck"), type: "number", hint: t("settings.monitorRecheckHint") },
+                { key: "monitor_unsupported_failure_limit", label: t("settings.monitorUnsupportedLimit"), type: "number", hint: t("settings.monitorUnsupportedLimitHint") },
+            ],
+        },
     ]
 
     return (

@@ -96,7 +96,9 @@
     "addSuccess": "Task added",
     "deleteSuccess": "Task deleted",
     "liveTitle": "Live title",
-    "notSet": "Not set"
+    "notSet": "Not set",
+    "statusUnsupported": "Unsupported",
+    "unsupportedTip": "Polling stopped after consecutive failures; edit task to retry"
   },
   "recordingDialog": {
     "addTitle": "Add recording task",
@@ -314,7 +316,21 @@
     "moveToOriginal": "Move output next to original video",
     "outputDir": "Output directory name",
     "minFileAge": "File settle wait (minutes)",
-    "waitFileTimeout": "Wait timeout (minutes)"
+    "waitFileTimeout": "Wait timeout (minutes)",
+    "monitorStrategy": "Monitor Strategy (rate-limit protection)",
+    "monitorJitter": "Polling jitter ratio",
+    "monitorJitterHint": "0.1 = ±10% random offset per interval",
+    "monitorBackoff": "Failure backoff",
+    "monitorBackoffHint": "Double check interval on consecutive failures",
+    "monitorBackoffMax": "Backoff max multiplier",
+    "monitorGlobalDelay": "Global error delay (seconds)",
+    "monitorGlobalThreshold": "Global error threshold (per round)",
+    "monitorDynamicConc": "Dynamic concurrency",
+    "monitorDynamicConcHint": "Reduce concurrency on >50% error rate, recover later",
+    "monitorRecheck": "Post-record recheck (seconds)",
+    "monitorRecheckHint": "Quick recheck after recording ends to avoid missing streams",
+    "monitorUnsupportedLimit": "Unsupported failure limit",
+    "monitorUnsupportedLimitHint": "Mark task unsupported after N consecutive failures; edit task to reset"
   },
   "about": {
     "title": "About",

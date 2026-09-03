@@ -62,6 +62,8 @@ def serialize_recording(recording: Recording) -> dict:
             "record_url": recording.record_url,
             "current_output_file": recording.current_output_file,
             "state": compute_card_state(recording),
+            "unsupported": recording.unsupported,
+            "consecutive_failures": recording.consecutive_failures,
         }
     )
     return data
@@ -229,6 +231,11 @@ async def update_recording(
 
     recording.update(updates)
     recording.update_title(rm._.get(recording.quality, recording.quality))
+    # 编辑视为人工干预：重置失败计数/退避/unsupported，恢复轮询
+    recording.consecutive_failures = 0
+    recording.backoff_multiplier = 1
+    recording.unsupported = False
+    recording.next_check_after = 0.0
     services.run_coro(rm.persist_recordings())
     return serialize_recording(recording)
 
