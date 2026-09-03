@@ -25,6 +25,27 @@ def _is_clip_product(path: str, merged_suffix: str) -> bool:
     return os.path.splitext(os.path.basename(path))[0].endswith(merged_suffix or "_merged")
 
 
+def _expand_videos(paths: list[str], merged_suffix: str, output_dir: str) -> list[str]:
+    """提交项可以是文件或目录；目录递归展开为视频文件列表。
+
+    跳过产物：_merged 后缀文件与人体识别输出目录（重处理会套娃）。
+    """
+    videos: list[str] = []
+    for p in paths:
+        if os.path.isdir(p):
+            for walk_root, dirs, files in os.walk(p, topdown=True):
+                dirs[:] = [d for d in dirs if d != output_dir]
+                for f in sorted(files):
+                    if media_service.classify(f) != "video":
+                        continue
+                    full = os.path.join(walk_root, f)
+                    if not _is_clip_product(full, merged_suffix):
+                        videos.append(full)
+        elif os.path.isfile(p):
+            videos.append(p)
+    return videos
+
+
 @router.post("/tasks")
 async def submit_task(
     request: Request,
@@ -40,16 +61,12 @@ async def submit_task(
     except PermissionError:
         raise HTTPException(status_code=403, detail="access denied")
 
-    videos = [p for p in paths if os.path.isfile(p)]
-    if not videos:
-        raise HTTPException(status_code=400, detail="no video files found")
-
     params = PoseParams.from_user_config(
         {**(services.settings_config.user_config.get("pose_detection") or {}), **(body.overrides or {})}
     )
 
     merged_suffix = params.merged_suffix or "_merged"
-    videos = [p for p in videos if not _is_clip_product(p, merged_suffix)]
+    videos = _expand_videos(paths, merged_suffix, params.video_output_dir or "pose_output")
     if not videos:
         raise HTTPException(status_code=400, detail="no video files found (clip products are skipped)")
 

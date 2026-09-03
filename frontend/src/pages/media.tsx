@@ -152,13 +152,14 @@ export default function MediaPage() {
     })
 
     const submitPose = () => {
-        const videos = Array.from(selected).filter((rel) => {
+        // 文件夹也允许提交（后端递归展开为目录内全部视频）
+        const targets = Array.from(selected).filter((rel) => {
             const item = items.find((i) => i.rel_path === rel)
-            return item && item.type === "video"
+            return item && (item.type === "video" || item.type === "folder")
         })
-        if (videos.length === 0) return
-        if (confirm(tf("pose.submitConfirm", { count: videos.length }))) {
-            poseMutation.mutate(videos)
+        if (targets.length === 0) return
+        if (confirm(tf("pose.submitConfirm", { count: targets.length }))) {
+            poseMutation.mutate(targets)
         }
     }
 
@@ -184,7 +185,7 @@ export default function MediaPage() {
 
     const selectableFiles = items.filter((i) => i.type !== "folder")
     const allSelected =
-        selectableFiles.length > 0 && selectableFiles.every((f) => selected.has(f.rel_path))
+        selectableFiles.length > 0 && items.every((i) => i.type !== "folder" || selected.has(i.rel_path))
 
     const handleDelete = (item: MediaItem) => {
         if (confirm(tf("media.deleteFileConfirm", { name: item.name }))) {
@@ -449,19 +450,17 @@ function MediaCard({
                     item.type === "folder" ? "folder-thumb" : item.type === "image" ? "" : `g${index % 6}`
                 }`}
             >
-                {item.type !== "folder" && (
-                    <label
-                        className="absolute left-2 top-2 z-10 grid h-6 w-6 place-items-center rounded-md bg-black/40"
-                        onClick={(e) => e.stopPropagation()}
-                        title={t("media.select")}
-                    >
-                        <Checkbox
-                            className="h-4 w-4"
-                            checked={selected}
-                            onCheckedChange={() => onToggleSelect(item.rel_path)}
-                        />
-                    </label>
-                )}
+                <label
+                    className="absolute left-2 top-2 z-10 grid h-6 w-6 place-items-center rounded-md bg-black/40"
+                    onClick={(e) => e.stopPropagation()}
+                    title={t("media.select")}
+                >
+                    <Checkbox
+                        className="h-4 w-4"
+                        checked={selected}
+                        onCheckedChange={() => onToggleSelect(item.rel_path)}
+                    />
+                </label>
                 {item.type === "folder" ? (
                     <>
                         <Folder className="h-14 w-14 fill-primary/20 text-primary/80" />

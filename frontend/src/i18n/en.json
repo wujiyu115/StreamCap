@@ -202,7 +202,7 @@
     "stop": "Stop task",
     "stopped": "Task stopped",
     "videoProgress": "Video {current}/{total}",
-    "submitConfirm": "Run pose processing on {count} selected video(s)?",
+    "submitConfirm": "Run pose processing on {count} selected item(s) (folders are processed recursively)?",
     "submitted": "Pose task submitted",
     "busy": "A task is already running, please retry later",
     "notReadyError": "These files are still being written (recording in progress?): {files}",
