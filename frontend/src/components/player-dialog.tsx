@@ -174,27 +174,26 @@ export function PlayerDialog({
 
     return (
         <div
-            className="fixed inset-0 z-50 grid place-items-center bg-black/90 p-2 backdrop-blur-sm sm:p-6"
+            className="player-overlay fixed inset-0 z-50 grid place-items-center bg-black/90 p-2 backdrop-blur-sm sm:p-6"
             role="dialog"
             aria-modal="true"
             onClick={(e) => {
                 if (e.target === e.currentTarget) onClose()
             }}
         >
-            {/* 舞台：全屏与旋转都作用于它（工具栏随之） */}
+            {/* 舞台：全屏与旋转都作用于它（工具栏随之）。
+                桌面为居中卡片；移动端（<sm）由 CSS 改为全屏沉浸布局 */}
             <div
                 ref={stageRef}
-                className="player-stage relative w-full max-w-4xl overflow-hidden rounded-lg border border-white/10 bg-black shadow-2xl"
+                className={`player-stage relative w-full max-w-4xl overflow-hidden rounded-lg border border-white/10 bg-black shadow-2xl ${
+                    rotate ? "rot" : ""
+                }`}
             >
                 {isImage ? (
                     <img
                         src={streamUrl(item.rel_path)}
                         alt={item.name}
-                        className={
-                            rotate
-                                ? "h-[100vw] w-[100dvh] -rotate-90 object-contain"
-                                : "max-h-[70dvh] w-full object-contain"
-                        }
+                        className="player-media h-full w-full object-contain"
                         onClick={toggleRotate}
                     />
                 ) : (
@@ -202,11 +201,7 @@ export function PlayerDialog({
                         ref={videoRef}
                         controls
                         playsInline
-                        className={
-                            rotate
-                                ? "w-[100dvh] max-w-none rotate-90 bg-black"
-                                : "max-h-[64dvh] w-full bg-black"
-                        }
+                        className="player-media h-full w-full bg-black"
                     />
                 )}
 

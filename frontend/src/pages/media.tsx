@@ -1,15 +1,19 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
+    ArrowLeft,
     ChevronRight,
     FileVideo,
     Folder,
     FolderOpen,
+    LayoutGrid,
     Loader2,
     Play,
+    RefreshCw,
     Sparkles,
+    Table2,
     Trash2,
 } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { mediaApi, poseApi } from "@/api"
 import type { MediaItem } from "@/api/types"
 import { Badge } from "@/components/ui/badge"
@@ -43,8 +47,19 @@ export default function MediaPage() {
     const [path, setPath] = useState("")
     const [selected, setSelected] = useState<Set<string>>(new Set())
     const [previewItem, setPreviewItem] = useState<MediaItem | null>(null)
+    const [lastViewed, setLastViewed] = useState<string | null>(null)
     const [cleanOpen, setCleanOpen] = useState(false)
     const [cleanMb, setCleanMb] = useState("10")
+    const [search, setSearch] = useState("")
+    const [viewMode, setViewMode] = useState<"table" | "grid">(
+        () => (localStorage.getItem("media-view") as "table" | "grid") || "table",
+    )
+
+    // 各目录滚动位置记忆（Frostcast 同款）：离开时存，回来时恢复。
+    // 实际滚动容器是 AppLayout 的 <main>
+    const scrollPos = useRef<Record<string, number>>({})
+    const pendingRestore = useRef<number | null>(null)
+    const getScroller = () => document.querySelector("main") as HTMLElement | null
 
     const { data: tree, isLoading } = useQuery({
         queryKey: ["media-tree", path],
@@ -54,6 +69,18 @@ export default function MediaPage() {
         queryKey: ["media-stats", path],
         queryFn: () => mediaApi.stats(path),
     })
+
+    useEffect(() => {
+        if (pendingRestore.current != null) {
+            const scroller = getScroller()
+            if (scroller) scroller.scrollTop = pendingRestore.current
+            pendingRestore.current = null
+        }
+    }, [tree])
+
+    useEffect(() => {
+        localStorage.setItem("media-view", viewMode)
+    }, [viewMode])
 
     const invalidate = () => {
         queryClient.invalidateQueries({ queryKey: ["media-tree"] })
@@ -96,12 +123,16 @@ export default function MediaPage() {
         onError: (e: Error) => toast.error(e.message),
     })
 
-    const items = tree?.items ?? []
+    const allItems = tree?.items ?? []
+    const items = useMemo(() => {
+        const q = search.trim().toLowerCase()
+        return q ? allItems.filter((it) => it.name.toLowerCase().includes(q)) : allItems
+    }, [allItems, search])
     const protectedFiles = new Set((stats?.protected_files ?? []).map((p) => p))
     const segments = path ? path.split("/") : []
 
     // 预览队列：当前目录的媒体文件按显示顺序，供播放器上一个/下一个切换
-    const previewQueue = items.filter((i) => i.type !== "folder")
+    const previewQueue = useMemo(() => items.filter((i) => i.type !== "folder"), [items])
 
     const poseMutation = useMutation({
         mutationFn: (paths: string[]) => poseApi.submit(paths),
@@ -124,8 +155,14 @@ export default function MediaPage() {
     }
 
     const navigate = (rel: string) => {
+        // 离开前记录当前目录滚动位置（返回时恢复）
+        const scroller = getScroller()
+        if (scroller) scrollPos.current[path] = scroller.scrollTop
+        pendingRestore.current = scrollPos.current[rel] ?? 0
         setPath(rel)
         setSelected(new Set())
+        setSearch("")
+        setLastViewed(null)
     }
 
     const toggleSelect = (rel: string) => {
@@ -164,7 +201,29 @@ export default function MediaPage() {
                         {tf("media.stats", { files: stats.video_files, size: stats.total_size })}
                     </Badge>
                 )}
-                <div className="ml-auto flex gap-1.5">
+                <div className="ml-auto flex items-center gap-1.5">
+                    <Input
+                        placeholder={t("media.searchDir")}
+                        value={search}
+                        onChange={(e) => setSearch(e.target.value)}
+                        className="hidden w-44 md:block"
+                    />
+                    <div className="flex gap-0.5 rounded-md border p-0.5">
+                        <button
+                            className={`rounded px-2 py-1 ${viewMode === "table" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}
+                            title={t("media.tableView")}
+                            onClick={() => setViewMode("table")}
+                        >
+                            <Table2 className="h-4 w-4" />
+                        </button>
+                        <button
+                            className={`rounded px-2 py-1 ${viewMode === "grid" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}
+                            title={t("media.gridView")}
+                            onClick={() => setViewMode("grid")}
+                        >
+                            <LayoutGrid className="h-4 w-4" />
+                        </button>
+                    </div>
                     <Button
                         variant="outline"
                         size="sm"
@@ -193,8 +252,16 @@ export default function MediaPage() {
                 </div>
             </div>
 
-            {/* 面包屑 */}
+            {/* 面包屑：返回上级 + 路径 + 刷新 + 子目录跳转 */}
             <div className="flex items-center gap-1 overflow-x-auto text-sm">
+                <button
+                    className="flex shrink-0 items-center gap-1 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40"
+                    title={t("media.up")}
+                    disabled={!path}
+                    onClick={() => navigate(segments.slice(0, -1).join("/"))}
+                >
+                    <ArrowLeft className="h-4 w-4" />
+                </button>
                 <button
                     className="flex shrink-0 items-center gap-1 text-muted-foreground hover:text-foreground"
                     onClick={() => navigate("")}
@@ -217,16 +284,49 @@ export default function MediaPage() {
                         </button>
                     </span>
                 ))}
+                <button
+                    className="ml-1 flex shrink-0 items-center rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                    title={t("common.refresh")}
+                    onClick={() => invalidate()}
+                >
+                    <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
+                </button>
+                <SubdirJump
+                    folders={allItems
+                        .filter((i) => i.type === "folder")
+                        .map((i) => ({ name: i.name, rel_path: i.rel_path }))}
+                    onGoto={navigate}
+                />
             </div>
 
-            {/* 文件表 */}
+            {/* 文件区 */}
             {isLoading ? (
                 <div className="flex justify-center py-20">
                     <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                 </div>
             ) : items.length === 0 ? (
                 <div className="rounded-lg border border-dashed py-20 text-center text-muted-foreground">
-                    {t("media.empty")}
+                    {search ? t("media.noResults") : t("media.empty")}
+                </div>
+            ) : viewMode === "grid" ? (
+                <div className="media-grid">
+                    {items.map((item, i) => (
+                        <MediaCard
+                            key={item.rel_path}
+                            item={item}
+                            index={i}
+                            selected={selected.has(item.rel_path)}
+                            lastViewed={lastViewed === item.rel_path}
+                            previewing={previewItem?.rel_path === item.rel_path}
+                            onOpen={(it) => {
+                                setPreviewItem(it)
+                                setLastViewed(it.rel_path)
+                            }}
+                            onEnter={navigate}
+                            onDelete={handleDelete}
+                            onToggleSelect={toggleSelect}
+                        />
+                    ))}
                 </div>
             ) : (
                 <div className="rounded-lg border bg-card">
@@ -275,7 +375,9 @@ export default function MediaPage() {
                                             ? "previewing"
                                             : selected.has(item.rel_path)
                                               ? "selected"
-                                              : undefined
+                                              : lastViewed === item.rel_path
+                                                ? "last-viewed"
+                                                : undefined
                                     }
                                 >
                                     <TableCell onClick={(e) => e.stopPropagation()}>
@@ -417,5 +519,167 @@ function DurationCell({ item }: { item: MediaItem }) {
                 </span>
             ) : null}
         </span>
+    )
+}
+
+/** 大图标卡片（Frostcast 风格）：16:10 缩略图区 + 居中播放钮 + 时长角标 + 元信息 tags */
+function MediaCard({
+    item,
+    index,
+    selected,
+    lastViewed,
+    previewing,
+    onOpen,
+    onEnter,
+    onDelete,
+    onToggleSelect,
+}: {
+    item: MediaItem
+    index: number
+    selected: boolean
+    lastViewed: boolean
+    previewing: boolean
+    onOpen: (item: MediaItem) => void
+    onEnter: (rel: string) => void
+    onDelete: (item: MediaItem) => void
+    onToggleSelect: (rel: string) => void
+}) {
+    const { t } = useI18n()
+    const meta = useVideoMeta(item.type === "video" ? item.rel_path : null, item.type)
+
+    const onClick = () => {
+        if (item.type === "folder") onEnter(item.rel_path)
+        else onOpen(item)
+    }
+
+    const cls = [
+        "media-card",
+        selected ? "selected" : "",
+        lastViewed && !previewing ? "last-viewed" : "",
+        previewing ? "selected" : "",
+    ]
+        .filter(Boolean)
+        .join(" ")
+
+    return (
+        <article className={cls} onClick={onClick}>
+            <div
+                className={`media-thumb ${
+                    item.type === "folder" ? "folder-thumb" : item.type === "image" ? "" : `g${index % 6}`
+                }`}
+            >
+                {item.type !== "folder" && (
+                    <label
+                        className="absolute left-2 top-2 z-10 grid h-6 w-6 place-items-center rounded-md bg-black/40"
+                        onClick={(e) => e.stopPropagation()}
+                        title={t("media.select")}
+                    >
+                        <Checkbox
+                            className="h-4 w-4"
+                            checked={selected}
+                            onCheckedChange={() => onToggleSelect(item.rel_path)}
+                        />
+                    </label>
+                )}
+                {item.type === "folder" ? (
+                    <>
+                        <Folder className="h-14 w-14 text-primary/80" />
+                        <span className="count-badge">
+                            {item.count ?? 0} {t("media.items")}
+                        </span>
+                    </>
+                ) : item.type === "image" ? (
+                    <>
+                        <img src={mediaApi.streamUrl(item.rel_path)} alt={item.name} loading="lazy" />
+                        <span className="dur-badge">{t("media.image")}</span>
+                    </>
+                ) : (
+                    <>
+                        <span className="play-btn">
+                            <Play className="ml-0.5 h-5 w-5 fill-white" />
+                        </span>
+                        <span className="dur-badge">{meta?.duration ?? "…"}</span>
+                    </>
+                )}
+            </div>
+            <div className="meta-row">
+                <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium" title={item.name}>
+                        {item.name}
+                    </div>
+                </div>
+                <div className="flex w-full flex-wrap items-center gap-1.5">
+                    {item.type !== "folder" && <span className="tag">{item.ext}</span>}
+                    {meta?.resolution && <span className="tag">{meta.resolution}</span>}
+                    {item.size && <span className="tag">{item.size}</span>}
+                    <span className="tag">{formatTimestamp(item.mtime)}</span>
+                    {item.type !== "folder" && (
+                        <button
+                            className="ml-auto rounded p-1 text-muted-foreground hover:bg-accent hover:text-red-500"
+                            title={t("common.delete")}
+                            onClick={(e) => {
+                                e.stopPropagation()
+                                onDelete(item)
+                            }}
+                        >
+                            <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                    )}
+                </div>
+            </div>
+        </article>
+    )
+}
+
+/** 子目录快速跳转下拉（Frostcast crumb-jump 同款交互） */
+function SubdirJump({
+    folders,
+    onGoto,
+}: {
+    folders: Array<{ name: string; rel_path: string }>
+    onGoto: (rel: string) => void
+}) {
+    const { t } = useI18n()
+    const [open, setOpen] = useState(false)
+    const ref = useRef<HTMLDivElement | null>(null)
+
+    useEffect(() => {
+        if (!open) return
+        const onDoc = (e: MouseEvent) => {
+            if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+        }
+        document.addEventListener("mousedown", onDoc)
+        return () => document.removeEventListener("mousedown", onDoc)
+    }, [open])
+
+    if (folders.length === 0) return null
+
+    return (
+        <div className="relative shrink-0" ref={ref}>
+            <button
+                className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+                onClick={() => setOpen((o) => !o)}
+            >
+                {t("media.subdirs")} ({folders.length})
+                <ChevronRight className="h-3 w-3 -rotate-90" />
+            </button>
+            {open && (
+                <div className="absolute left-0 top-full z-20 mt-1 max-h-64 w-56 overflow-y-auto rounded-md border bg-popover p-1 shadow-lg">
+                    {folders.map((f) => (
+                        <button
+                            key={f.rel_path}
+                            className="flex w-full items-center gap-2 truncate rounded px-2 py-1.5 text-left text-sm hover:bg-accent"
+                            onClick={() => {
+                                setOpen(false)
+                                onGoto(f.rel_path)
+                            }}
+                        >
+                            <Folder className="h-4 w-4 shrink-0 text-blue-500" />
+                            <span className="truncate">{f.name}</span>
+                        </button>
+                    ))}
+                </div>
+            )}
+        </div>
     )
 }

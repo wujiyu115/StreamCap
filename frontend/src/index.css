@@ -102,7 +102,45 @@ body {
     @apply text-primary;
 }
 
-/* 播放器舞台进入全屏：铺满屏幕（含悬浮工具栏），视频占满高度 */
+/* ── 播放器舞台（Frostcast 布局）──────────────────────
+   桌面：居中卡片，媒体自适应高度；移动端（<640px）：全屏沉浸 */
+.player-stage {
+    display: flex;
+    flex-direction: column;
+}
+.player-stage .player-media {
+    max-height: 64dvh;
+    width: 100%;
+    height: auto;
+    object-fit: contain;
+    background: #000;
+}
+
+/* 移动端全屏沉浸：舞台占满视口，媒体铺满可用高度（避让刘海） */
+@media (max-width: 640px) {
+    .player-overlay {
+        padding: 0;
+    }
+    .player-stage {
+        width: 100%;
+        height: 100dvh;
+        max-width: none;
+        border-radius: 0;
+        border: none;
+        box-shadow: none;
+    }
+    .player-stage .player-media {
+        flex: 1;
+        min-height: 0;
+        max-height: none;
+        width: 100%;
+        height: auto;
+        aspect-ratio: auto;
+        padding-top: env(safe-area-inset-top);
+    }
+}
+
+/* 全屏：舞台铺满屏幕（含悬浮工具栏） */
 .player-stage:fullscreen {
     width: 100vw;
     height: 100vh;
@@ -110,22 +148,159 @@ body {
     max-height: none;
     border-radius: 0;
     border: none;
-    display: flex;
-    align-items: center;
+    box-shadow: none;
     justify-content: center;
-    background: #000;
 }
-.player-stage:fullscreen video,
-.player-stage:fullscreen img {
+.player-stage:fullscreen .player-media {
     max-height: none;
-    width: auto;
+    flex: 1;
+    min-height: 0;
+    width: 100%;
     height: 100%;
-    max-width: 100%;
-    object-fit: contain;
+    padding-top: 0;
 }
 .player-stage:-webkit-full-screen {
     width: 100vw;
     height: 100vh;
     border-radius: 0;
     background: #000;
+}
+
+/* 强制横屏（原版 center 法，top-left 版）：舞台 fixed 到左上角，
+   宽=视口高、高=视口宽，rotate(90deg) + translateY(-100%) 后恰好铺满视口。
+   （transform-origin: top left 让 translateY 的参考是自身宽=视口高，数学上确定） */
+.player-stage.rot {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100dvh;
+    height: 100dvw;
+    max-width: none;
+    max-height: none;
+    border-radius: 0;
+    border: none;
+    box-shadow: none;
+    transform: rotate(90deg) translateY(-100%);
+    transform-origin: top left;
+    justify-content: center;
+}
+.player-stage.rot .player-media {
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
+    max-height: none;
+    width: 100%;
+    height: auto;
+    aspect-ratio: auto;
+    padding-top: 0;
+    object-fit: contain;
+}
+
+/* ── 媒体卡片视图（Frostcast 大图标模式）──────────────── */
+.media-grid {
+    display: grid;
+    gap: clamp(12px, 1.8vw, 18px);
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr));
+}
+.media-card {
+    display: flex;
+    flex-direction: column;
+    cursor: pointer;
+    overflow: hidden;
+    border-radius: var(--radius);
+    border: 1px solid hsl(var(--border));
+    background: hsl(var(--card));
+    transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.media-card:hover {
+    transform: translateY(-3px);
+    border-color: hsl(var(--primary) / 0.4);
+    box-shadow: 0 8px 24px rgb(0 0 0 / 0.12);
+}
+.media-card.selected {
+    border-color: hsl(var(--primary));
+    box-shadow: 0 0 0 2px hsl(var(--primary) / 0.3);
+}
+.media-card.last-viewed {
+    border-color: hsl(var(--primary) / 0.6);
+}
+.media-thumb {
+    position: relative;
+    aspect-ratio: 16 / 10;
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+}
+.media-thumb .play-btn {
+    width: 48px;
+    height: 48px;
+    border-radius: 9999px;
+    display: grid;
+    place-items: center;
+    background: rgb(255 255 255 / 0.16);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgb(255 255 255 / 0.28);
+    box-shadow: 0 6px 18px rgb(0 0 0 / 0.4);
+    color: #fff;
+    transition: transform 0.2s ease, background 0.2s ease;
+}
+.media-card:hover .play-btn {
+    transform: scale(1.08);
+    background: rgb(255 255 255 / 0.28);
+}
+.media-thumb .dur-badge {
+    position: absolute;
+    right: 8px;
+    bottom: 8px;
+    font-size: 12px;
+    font-weight: 500;
+    color: #fff;
+    background: rgb(0 0 0 / 0.55);
+    border-radius: 6px;
+    padding: 1px 8px;
+    font-variant-numeric: tabular-nums;
+}
+.media-thumb .count-badge {
+    position: absolute;
+    right: 8px;
+    top: 8px;
+    font-size: 12px;
+    font-weight: 500;
+    color: #fff;
+    background: rgb(0 0 0 / 0.45);
+    border-radius: 6px;
+    padding: 1px 8px;
+}
+.media-thumb.folder-thumb {
+    background: linear-gradient(135deg, hsl(var(--primary) / 0.12), hsl(var(--primary) / 0.04));
+}
+.media-thumb.g0 { background: linear-gradient(135deg, #667eea33, #764ba233); }
+.media-thumb.g1 { background: linear-gradient(135deg, #f093fb33, #f5576c33); }
+.media-thumb.g2 { background: linear-gradient(135deg, #4facfe33, #00f2fe33); }
+.media-thumb.g3 { background: linear-gradient(135deg, #43e97b33, #38f9d733); }
+.media-thumb.g4 { background: linear-gradient(135deg, #fa709a33, #fee14033); }
+.media-thumb.g5 { background: linear-gradient(135deg, #30cfd033, #33086733); }
+.media-thumb img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+.media-card .meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding: 12px;
+}
+.media-card .meta-row .tag {
+    border-radius: 9999px;
+    background: hsl(var(--muted));
+    padding: 2px 8px;
+    font-size: 12px;
+    color: hsl(var(--muted-foreground));
+}
+[data-state="last-viewed"] td {
+    background: hsl(var(--primary) / 0.05);
 }

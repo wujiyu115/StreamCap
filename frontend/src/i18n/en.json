@@ -180,7 +180,13 @@
     "fullscreen": "Fullscreen",
     "exitFullscreen": "Exit fullscreen",
     "collapseBar": "Collapse toolbar",
-    "expandBar": "Expand toolbar"
+    "expandBar": "Expand toolbar",
+    "searchDir": "Search this folder…",
+    "tableView": "List view",
+    "gridView": "Grid view",
+    "subdirs": "Subfolders",
+    "select": "Select",
+    "noResults": "No matches"
   },
   "pose": {
     "title": "Pose processing",
