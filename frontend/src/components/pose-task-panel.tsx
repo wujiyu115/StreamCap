@@ -24,8 +24,8 @@ const STATE_KEY: Record<string, string> = {
 
 /** 人体识别任务：右侧悬浮按钮 + 点开悬浮进度面板。
 
- * 有任务时显示悬浮按钮（运行中带环形进度与旋转图标），点击展开面板
- * 看详情/日志/停止；无任务时整组隐藏，不占页面空间。
+ * 有任务时显示悬浮按钮（运行中显示百分比角标），点击展开面板看详情/
+ * 日志/停止；无任务时整组隐藏，不占页面空间。
  */
 export function PoseTaskPanel() {
     const { t, tf } = useI18n()
@@ -62,13 +62,20 @@ export function PoseTaskPanel() {
     const running = tasks.find((task) => task.status === "running")
     const latest = running ?? tasks[0]
 
+    const taskId = latest?.task_id
+
+    // 新任务开始时清掉旧任务日志，并重置增量拉取的 offset
     useEffect(() => {
-        if (!logOpen || !latest?.task_id) return
+        setLogText("")
+    }, [taskId])
+
+    useEffect(() => {
+        if (!logOpen || !taskId) return
         let offset = 0
         let cancelled = false
         const timer = setInterval(async () => {
             try {
-                const result = await poseApi.log(latest.task_id!, offset)
+                const result = await poseApi.log(taskId, offset)
                 if (cancelled) return
                 if (result.chunk) setLogText((prev) => prev + result.chunk)
                 offset = result.next_offset
@@ -80,7 +87,7 @@ export function PoseTaskPanel() {
             cancelled = true
             clearInterval(timer)
         }
-    }, [logOpen, latest?.task_id])
+    }, [logOpen, taskId])
 
     const stopMutation = useMutation({
         mutationFn: () => poseApi.stop(latest!.task_id!),
@@ -98,13 +105,13 @@ export function PoseTaskPanel() {
 
     return (
         <div ref={rootRef} className="pointer-events-none fixed inset-0 z-40">
-            {/* 悬浮按钮：始终在右缘垂直居中 */}
+            {/* 悬浮按钮：始终在右缘垂直居中，主题色 */}
             <button
                 type="button"
                 className={`pointer-events-auto fixed right-3 top-1/2 z-40 grid h-12 w-12 -translate-y-1/2 place-items-center rounded-full border shadow-lg transition-colors md:right-5 ${
                     latest.status === "running"
-                        ? "border-purple-400/60 bg-purple-600 text-white"
-                        : "border-border bg-card text-foreground"
+                        ? "border-primary/60 bg-primary text-primary-foreground"
+                        : "border-border bg-card text-primary"
                 }`}
                 title={t("pose.taskProgress")}
                 onClick={(e) => {
@@ -115,10 +122,10 @@ export function PoseTaskPanel() {
                 {latest.status === "running" ? (
                     <Loader2 className="h-6 w-6 animate-spin" />
                 ) : (
-                    <Sparkles className="h-6 w-6 text-purple-500" />
+                    <Sparkles className="h-6 w-6" />
                 )}
                 {latest.status === "running" && percent > 0 && (
-                    <span className="absolute -bottom-1 -right-1 grid h-6 w-6 place-items-center rounded-full bg-card text-[10px] font-semibold text-purple-600 shadow">
+                    <span className="absolute -bottom-1 -right-1 grid h-6 w-6 place-items-center rounded-full bg-card text-[10px] font-semibold text-primary shadow">
                         {Math.round(percent)}%
                     </span>
                 )}
@@ -129,20 +136,21 @@ export function PoseTaskPanel() {
                 )}
             </button>
 
-            {/* 悬浮进度面板：桌面端在按钮左侧；移动端在按钮下方（避免互相遮挡） */}
+            {/* 悬浮进度面板：桌面端在按钮左侧垂直居中；移动端在按钮下方，
+                用 max-h + overscroll-contain 保证不溢出屏幕且滚动不透传 */}
             {open && (
-                <div className="pointer-events-auto fixed right-3 top-[calc(50%+2.5rem)] z-40 w-[min(22rem,calc(100vw-1.5rem))] rounded-lg border bg-card p-4 shadow-xl md:right-20 md:top-1/2 md:w-[min(22rem,20rem)] md:-translate-y-1/2">
-                    <div className="mb-2 flex items-center justify-between">
-                        <div className="flex items-center gap-2 text-sm font-medium">
-                            <Sparkles className="h-4 w-4 text-purple-500" />
-                            {t("pose.taskProgress")}
+                <div className="pointer-events-auto fixed right-3 top-[calc(50%+2.5rem)] z-40 flex max-h-[calc(50%-3.5rem)] w-[calc(100vw-1.5rem)] flex-col overflow-hidden rounded-lg border bg-card p-4 shadow-xl md:top-1/2 md:max-h-[min(80vh,32rem)] md:w-80 md:-translate-y-1/2">
+                    <div className="mb-2 flex shrink-0 items-center justify-between">
+                        <div className="flex min-w-0 items-center gap-2 text-sm font-medium">
+                            <Sparkles className="h-4 w-4 shrink-0 text-primary" />
+                            <span className="truncate">{t("pose.taskProgress")}</span>
                             {latest.trigger === "auto" && (
-                                <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                                <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
                                     auto
                                 </span>
                             )}
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex shrink-0 items-center gap-2">
                             {latest.status === "running" && (
                                 <Button variant="destructive" size="sm" onClick={() => stopMutation.mutate()}>
                                     <Square className="h-3.5 w-3.5" />
@@ -150,7 +158,7 @@ export function PoseTaskPanel() {
                                 </Button>
                             )}
                             <Button variant="ghost" size="sm" onClick={() => setLogOpen((v) => !v)}>
-                                {logOpen ? <X className="h-3.5 w-3.5" /> : t("pose.log")}
+                                {t("pose.log")}
                             </Button>
                             <Button variant="ghost" size="sm" onClick={() => setOpen(false)}>
                                 <X className="h-3.5 w-3.5" />
@@ -158,30 +166,29 @@ export function PoseTaskPanel() {
                         </div>
                     </div>
 
-                    <div className="space-y-2">
-                        <div className="flex items-center justify-between text-sm">
+                    <div className="shrink-0 space-y-2">
+                        <div className="flex items-center justify-between gap-2 text-sm">
                             <span className="truncate">
                                 {latest.status === "running" && (
                                     <Loader2 className="mr-1 inline h-3 w-3 animate-spin" />
                                 )}
                                 {latest.message ?? statusLabel}
                             </span>
-                            {latest.pending_files && latest.pending_files.length > 0 && (
-                                <span
-                                    className="shrink-0 text-muted-foreground"
-                                    title={latest.pending_files.join("\n")}
-                                >
-                                    {tf("pose.waitingFiles", { count: latest.pending_files.length })}
-                                </span>
-                            )}
-                            {latest.total_videos != null && latest.total_videos > 0 && (
-                                <span className="shrink-0 text-muted-foreground">
-                                    {tf("pose.videoProgress", {
-                                        current: (latest.video_idx ?? 0) + 1,
-                                        total: latest.total_videos,
-                                    })}
-                                </span>
-                            )}
+                            <span className="flex shrink-0 items-center gap-2 text-muted-foreground">
+                                {latest.pending_files && latest.pending_files.length > 0 && (
+                                    <span title={latest.pending_files.join("\n")}>
+                                        {tf("pose.waitingFiles", { count: latest.pending_files.length })}
+                                    </span>
+                                )}
+                                {latest.total_videos != null && latest.total_videos > 0 && (
+                                    <span>
+                                        {tf("pose.videoProgress", {
+                                            current: (latest.video_idx ?? 0) + 1,
+                                            total: latest.total_videos,
+                                        })}
+                                    </span>
+                                )}
+                            </span>
                         </div>
 
                         {latest.status === "running" && (
@@ -202,7 +209,7 @@ export function PoseTaskPanel() {
                     </div>
 
                     {logOpen && (
-                        <pre className="mt-3 max-h-48 overflow-y-auto rounded-md bg-muted p-3 text-xs leading-relaxed">
+                        <pre className="mt-3 min-h-0 flex-1 overflow-y-auto overscroll-contain rounded-md bg-muted p-3 text-xs leading-relaxed">
                             {logText || "..."}
                         </pre>
                     )}
