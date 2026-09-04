@@ -16,8 +16,8 @@ export const recordingsApi = {
     batchMonitor: (ids: string[], enabled: boolean) =>
         api.post<{ ok: boolean; count: number }>("/recordings/batch-monitor", { ids, enabled }),
     stop: (recId: string) => api.post<Recording>(`/recordings/${recId}/stop`),
-    checkValidity: (ids: string[]) =>
-        api.post<ValidityCheckResponse>("/recordings/check-validity", { ids }),
+    checkValidity: (ids: string[], signal?: AbortSignal) =>
+        api.post<ValidityCheckResponse>("/recordings/check-validity", { ids }, signal),
 }
 
 export const authApi = {

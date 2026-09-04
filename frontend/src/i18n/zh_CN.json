@@ -109,7 +109,9 @@
     "validityPreciseBadge": "精确",
     "validityPreciseTip": "通过平台原始接口精确判定，可信度高",
     "validityNoInvalid": "未发现已失效的房间",
-    "validityEmpty": "暂无检测结果",
+    "validityIdleHint": "点击「开始检测」检查全部房间",
+    "validityStart": "开始检测",
+    "validityStop": "停止",
     "validityDeleteInvalid": "删除已失效配置",
     "validityDeleteConfirm": "确定要删除 {count} 个已失效的配置吗？删除后不可恢复。"
   },

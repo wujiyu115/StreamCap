@@ -15,7 +15,7 @@ import {
     Table2,
     Trash2,
 } from "lucide-react"
-import { useMemo, useState } from "react"
+import { useMemo, useRef, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { recordingsApi } from "@/api"
 import type { Recording, ValidityCheckResult } from "@/api/types"
@@ -78,6 +78,7 @@ export default function RecordingsPage() {
     const [validityOpen, setValidityOpen] = useState(false)
     const [validityResults, setValidityResults] = useState<ValidityCheckResult[] | null>(null)
     const [validityProgress, setValidityProgress] = useState<{ done: number; total: number } | null>(null)
+    const validityAbortRef = useRef<AbortController | null>(null)
 
     const { data, isLoading, refetch } = useQuery({
         queryKey: ["recordings"],
@@ -179,11 +180,18 @@ export default function RecordingsPage() {
     const checkValidity = useMutation({
         mutationFn: async (ids: string[]): Promise<ValidityCheckResult[]> => {
             const all: ValidityCheckResult[] = []
+            const controller = new AbortController()
+            validityAbortRef.current = controller
             setValidityProgress({ done: 0, total: ids.length })
             for (let i = 0; i < ids.length; i += VALIDITY_BATCH_SIZE) {
-                const batch = ids.slice(i, i + VALIDITY_BATCH_SIZE)
-                const d = await recordingsApi.checkValidity(batch)
-                all.push(...d.results)
+                try {
+                    const batch = ids.slice(i, i + VALIDITY_BATCH_SIZE)
+                    const d = await recordingsApi.checkValidity(batch, controller.signal)
+                    all.push(...d.results)
+                } catch (e) {
+                    if (e instanceof DOMException && e.name === "AbortError") break
+                    throw e
+                }
                 setValidityResults([...all])
                 setValidityProgress({ done: Math.min(i + VALIDITY_BATCH_SIZE, ids.length), total: ids.length })
                 if (i + VALIDITY_BATCH_SIZE < ids.length) {
@@ -192,9 +200,25 @@ export default function RecordingsPage() {
             }
             return all
         },
-        onSettled: () => setValidityProgress(null),
-        onError: (e: Error) => toast.error(translateError(e.message)),
+        onSettled: () => {
+            setValidityProgress(null)
+            validityAbortRef.current = null
+        },
+        onError: (e: Error) => {
+            if (e instanceof DOMException && e.name === "AbortError") return
+            toast.error(translateError(e.message))
+        },
     })
+
+    const startValidityCheck = () => {
+        if (checkValidity.isPending) return
+        setValidityResults(null)
+        checkValidity.mutate(recordings.map((r) => r.rec_id))
+    }
+
+    const stopValidityCheck = () => {
+        validityAbortRef.current?.abort()
+    }
 
     const invalidRecIds = useMemo(
         () => (validityResults ?? []).filter((r) => r.status === "invalid").map((r) => r.rec_id),
@@ -342,18 +366,10 @@ export default function RecordingsPage() {
                     <Button
                         variant="outline"
                         size="sm"
-                        disabled={recordings.length === 0 || checkValidity.isPending}
-                        onClick={() => {
-                            setValidityResults(null)
-                            setValidityOpen(true)
-                            checkValidity.mutate(recordings.map((r) => r.rec_id))
-                        }}
+                        disabled={recordings.length === 0}
+                        onClick={() => setValidityOpen(true)}
                     >
-                        {checkValidity.isPending ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                            <ScanSearch className="h-4 w-4" />
-                        )}
+                        <ScanSearch className="h-4 w-4" />
                         <span className="hidden sm:inline">{t("recordings.checkValidity")}</span>
                     </Button>
                     <DropdownMenu>
@@ -599,13 +615,12 @@ export default function RecordingsPage() {
 
             <ValidityCheckDialog
                 open={validityOpen}
-                onOpenChange={(open) => {
-                    setValidityOpen(open)
-                    if (!open) setValidityResults(null)
-                }}
+                onOpenChange={setValidityOpen}
                 results={validityResults}
                 checking={checkValidity.isPending}
                 progress={validityProgress}
+                onStart={startValidityCheck}
+                onStop={stopValidityCheck}
                 onDeleteInvalid={handleDeleteInvalid}
                 deleting={batchDelete.isPending}
                 invalidCount={invalidRecIds.length}

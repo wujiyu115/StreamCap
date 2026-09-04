@@ -109,7 +109,9 @@
     "validityPreciseBadge": "Precise",
     "validityPreciseTip": "Precisely determined via the platform's raw API",
     "validityNoInvalid": "No invalid rooms found",
-    "validityEmpty": "No results yet",
+    "validityIdleHint": "Click \"Start Check\" to check all rooms",
+    "validityStart": "Start Check",
+    "validityStop": "Stop",
     "validityDeleteInvalid": "Delete Invalid",
     "validityDeleteConfirm": "Delete {count} invalid configuration(s)? This cannot be undone."
   },

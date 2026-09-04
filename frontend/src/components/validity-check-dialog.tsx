@@ -1,4 +1,4 @@
-import { Loader2, ShieldCheck, Trash2 } from "lucide-react"
+import { Loader2, Play, ScanSearch, ShieldCheck, Square, Trash2 } from "lucide-react"
 import type { ValidityCheckResult } from "@/api/types"
 import { Button } from "@/components/ui/button"
 import {
@@ -24,6 +24,8 @@ export function ValidityCheckDialog({
     results,
     checking,
     progress,
+    onStart,
+    onStop,
     onDeleteInvalid,
     deleting,
     invalidCount,
@@ -33,6 +35,8 @@ export function ValidityCheckDialog({
     results: ValidityCheckResult[] | null
     checking: boolean
     progress: { done: number; total: number } | null
+    onStart: () => void
+    onStop: () => void
     onDeleteInvalid: () => void
     deleting: boolean
     invalidCount: number
@@ -152,8 +156,9 @@ export function ValidityCheckDialog({
                         <span className="text-sm">{t("recordings.validityNoInvalid")}</span>
                     </div>
                 ) : (
-                    <div className="py-16 text-center text-sm text-muted-foreground">
-                        {t("recordings.validityEmpty")}
+                    <div className="flex flex-1 flex-col items-center gap-2 py-16 text-muted-foreground">
+                        <ScanSearch className="h-8 w-8 text-muted-foreground/50" />
+                        <span className="text-sm">{t("recordings.validityIdleHint")}</span>
                     </div>
                 )}
 
@@ -167,9 +172,22 @@ export function ValidityCheckDialog({
                         {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                         <span>{t("recordings.validityDeleteInvalid")}</span>
                     </Button>
-                    <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
-                        {t("common.close")}
-                    </Button>
+                    <div className="flex items-center gap-2">
+                        {checking ? (
+                            <Button variant="outline" size="sm" onClick={onStop}>
+                                <Square className="h-4 w-4" />
+                                <span>{t("recordings.validityStop")}</span>
+                            </Button>
+                        ) : (
+                            <Button size="sm" onClick={onStart}>
+                                <Play className="h-4 w-4" />
+                                <span>{t("recordings.validityStart")}</span>
+                            </Button>
+                        )}
+                        <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
+                            {t("common.close")}
+                        </Button>
+                    </div>
                 </DialogFooter>
             </DialogContent>
         </Dialog>
