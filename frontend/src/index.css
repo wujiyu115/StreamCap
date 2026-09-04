@@ -318,6 +318,9 @@ body {
     position: static;
     flex: none;
     margin-right: 10px;
+}
+/* 仅未选中态透明；选中态保留深色底+白色对勾，否则对勾在浅色卡片上不可见 */
+.media-grid.list-mode .media-check[data-state="unchecked"] {
     background: transparent;
 }
 .media-grid.list-mode .media-thumb {
