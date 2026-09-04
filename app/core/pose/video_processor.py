@@ -161,8 +161,15 @@ class VideoProcessor:
         return moved_paths
 
     def output_dir_for(self, video_path: str) -> str:
-        root = self.media_root or os.path.dirname(os.path.dirname(os.path.abspath(video_path)))
-        return os.path.join(root, self.params.video_output_dir or "pose_output")
+        """产物输出根目录。
+
+        固定在应用内部工作目录（容器内 /app/pose_output），不放媒体根——
+        避免 pose_output 出现在宿主机媒体库目录里；产物随后仍会按
+        move_output_to_input 移回视频所在目录。
+        """
+        from ...core.runtime.paths import user_data_dir
+
+        return os.path.join(str(user_data_dir), self.params.video_output_dir or "pose_output")
 
     def merge_segments(self, segments, merge_threshold_seconds, min_segment_seconds):
         """合并相邻的人物区间，过滤过短区间。"""
