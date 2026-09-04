@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import mimetypes
 import os
+from email.utils import formatdate
 from pathlib import Path
 
 import aiofiles
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
 from .. import error_codes as errors, media_service
 from ..deps import get_current_user, get_services
@@ -35,6 +36,10 @@ def _guess_type(path: str) -> str:
     return t or "application/octet-stream"
 
 
+class _RangeUnsatisfiable(Exception):
+    """Range 语法合法但超出文件范围（应答 416）"""
+
+
 def _parse_range(range_header: str, file_size: int) -> tuple[int, int]:
     if not range_header.startswith("bytes=") or "," in range_header or file_size <= 0:
         raise ValueError("invalid range")
@@ -53,11 +58,15 @@ def _parse_range(range_header: str, file_size: int) -> tuple[int, int]:
         return max(0, file_size - suffix_length), file_size - 1
     start = int(start_text)
     if start >= file_size:
-        raise ValueError("range beyond end of file")
+        raise _RangeUnsatisfiable()
     end = int(end_text) if end_text else file_size - 1
     if end < start:
         raise ValueError("invalid range")
     return start, min(end, file_size - 1)
+
+
+def _etag(stat: os.stat_result) -> str:
+    return f'"{stat.st_size}-{stat.st_mtime_ns}"'
 
 
 async def _send_range(path: Path, start: int, end: int):
@@ -112,25 +121,52 @@ async def stream(request: Request, path: str = Query(...), user: str = Depends(g
     if not os.path.isfile(full):
         raise HTTPException(status_code=404, detail=errors.FILE_NOT_FOUND)
 
-    size = os.path.getsize(full)
+    st = os.stat(full)
+    size = st.st_size
     ctype = _guess_type(full)
+    # 协商缓存：文件内容未变（size+mtime 一致）时浏览器可直接命中本地缓存
+    etag = _etag(st)
+    cache_headers = {
+        "ETag": etag,
+        "Last-Modified": formatdate(st.st_mtime, usegmt=True),
+        "Cache-Control": "private, no-cache",
+    }
     range_header = request.headers.get("range")
+
     if not range_header:
+        inm = request.headers.get("if-none-match")
+        if inm and etag in [tag.strip() for tag in inm.split(",")]:
+            return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "private, no-cache"})
         return StreamingResponse(
             _send_range(Path(full), 0, size - 1),
             media_type=ctype,
-            headers={"Accept-Ranges": "bytes", "Content-Length": str(size)},
+            headers={"Accept-Ranges": "bytes", "Content-Length": str(size), **cache_headers},
         )
 
     try:
         start, end = _parse_range(range_header, size)
+    except _RangeUnsatisfiable:
+        return Response(
+            status_code=416,
+            headers={"Content-Range": f"bytes */{size}", "Accept-Ranges": "bytes"},
+        )
     except ValueError:
         raise HTTPException(status_code=400, detail=errors.BAD_RANGE)
+
+    # If-Range：ETag 不匹配（文件已变）时忽略 Range 回退全量 200
+    if_range = request.headers.get("if-range")
+    if if_range and if_range.strip() != etag:
+        return StreamingResponse(
+            _send_range(Path(full), 0, size - 1),
+            media_type=ctype,
+            headers={"Accept-Ranges": "bytes", "Content-Length": str(size), **cache_headers},
+        )
 
     headers = {
         "Content-Range": f"bytes {start}-{end}/{size}",
         "Accept-Ranges": "bytes",
         "Content-Length": str(end - start + 1),
+        **cache_headers,
     }
     return StreamingResponse(_send_range(Path(full), start, end), status_code=206, media_type=ctype, headers=headers)
 
