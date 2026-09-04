@@ -61,6 +61,24 @@ export interface RecordingStatusesResponse {
     server_time: string
 }
 
+export interface ValidityCheckResult {
+    rec_id: string
+    streamer_name: string
+    url: string
+    platform: string | null
+    platform_key: string | null
+    status: "live" | "offline" | "invalid" | "error"
+    anchor_name: string | null
+    title: string | null
+    detail: string | null
+    precise: boolean
+}
+
+export interface ValidityCheckResponse {
+    results: ValidityCheckResult[]
+    not_found: string[]
+}
+
 export interface MediaItem {
     type: "folder" | "video" | "image"
     name: string

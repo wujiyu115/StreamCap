@@ -10,6 +10,7 @@ import {
     Play,
     Plus,
     RefreshCw,
+    ScanSearch,
     Square,
     Table2,
     Trash2,
@@ -17,7 +18,7 @@ import {
 import { useMemo, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { recordingsApi } from "@/api"
-import type { Recording } from "@/api/types"
+import type { Recording, ValidityCheckResult } from "@/api/types"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
@@ -37,13 +38,18 @@ import {
     TableRow,
 } from "@/components/ui/table"
 import { displayDuration, formatDuration, StatusBadge, stateLabelKey } from "@/components/status"
-import { useI18n } from "@/i18n"
+import { translateError, useI18n } from "@/i18n"
 import { toast } from "sonner"
 import { RecordingDialog } from "@/components/recording-dialog"
+import { ValidityCheckDialog } from "@/components/validity-check-dialog"
 
 type StatusFilter = "all" | "recording" | "live" | "offline" | "error" | "stopped"
 
 const FILTERS: StatusFilter[] = ["all", "recording", "live", "offline", "error", "stopped"]
+
+// 房间有效性检测分批：控制单次请求时长（防 HTTP 超时）与平台请求节奏（防风控）
+const VALIDITY_BATCH_SIZE = 30
+const VALIDITY_BATCH_PAUSE_MS = 2000
 const FILTER_LABEL_KEY: Record<StatusFilter, string> = {
     all: "recordings.statusAll",
     recording: "recordings.statusRecording",
@@ -69,6 +75,9 @@ export default function RecordingsPage() {
     const [selected, setSelected] = useState<Set<string>>(new Set())
     const [dialogOpen, setDialogOpen] = useState(false)
     const [editing, setEditing] = useState<Recording | null>(null)
+    const [validityOpen, setValidityOpen] = useState(false)
+    const [validityResults, setValidityResults] = useState<ValidityCheckResult[] | null>(null)
+    const [validityProgress, setValidityProgress] = useState<{ done: number; total: number } | null>(null)
 
     const { data, isLoading, refetch } = useQuery({
         queryKey: ["recordings"],
@@ -166,6 +175,43 @@ export default function RecordingsPage() {
             invalidate()
         },
     })
+
+    const checkValidity = useMutation({
+        mutationFn: async (ids: string[]): Promise<ValidityCheckResult[]> => {
+            const all: ValidityCheckResult[] = []
+            setValidityProgress({ done: 0, total: ids.length })
+            for (let i = 0; i < ids.length; i += VALIDITY_BATCH_SIZE) {
+                const batch = ids.slice(i, i + VALIDITY_BATCH_SIZE)
+                const d = await recordingsApi.checkValidity(batch)
+                all.push(...d.results)
+                setValidityResults([...all])
+                setValidityProgress({ done: Math.min(i + VALIDITY_BATCH_SIZE, ids.length), total: ids.length })
+                if (i + VALIDITY_BATCH_SIZE < ids.length) {
+                    await new Promise((r) => setTimeout(r, VALIDITY_BATCH_PAUSE_MS))
+                }
+            }
+            return all
+        },
+        onSettled: () => setValidityProgress(null),
+        onError: (e: Error) => toast.error(translateError(e.message)),
+    })
+
+    const invalidRecIds = useMemo(
+        () => (validityResults ?? []).filter((r) => r.status === "invalid").map((r) => r.rec_id),
+        [validityResults],
+    )
+
+    const handleDeleteInvalid = () => {
+        if (invalidRecIds.length === 0) return
+        if (confirm(tf("recordings.validityDeleteConfirm", { count: invalidRecIds.length }))) {
+            batchDelete.mutate(invalidRecIds, {
+                onSuccess: () => {
+                    setValidityOpen(false)
+                    setValidityResults(null)
+                },
+            })
+        }
+    }
 
     const toggleSelect = (id: string) => {
         setSelected((prev) => {
@@ -292,6 +338,23 @@ export default function RecordingsPage() {
                     >
                         <Plus className="h-4 w-4" />
                         <span className="hidden sm:inline">{t("recordings.add")}</span>
+                    </Button>
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={recordings.length === 0 || checkValidity.isPending}
+                        onClick={() => {
+                            setValidityResults(null)
+                            setValidityOpen(true)
+                            checkValidity.mutate(recordings.map((r) => r.rec_id))
+                        }}
+                    >
+                        {checkValidity.isPending ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                            <ScanSearch className="h-4 w-4" />
+                        )}
+                        <span className="hidden sm:inline">{t("recordings.checkValidity")}</span>
                     </Button>
                     <DropdownMenu>
                         <DropdownMenuTrigger asChild>
@@ -532,6 +595,20 @@ export default function RecordingsPage() {
                     if (!open) setEditing(null)
                 }}
                 onSaved={invalidate}
+            />
+
+            <ValidityCheckDialog
+                open={validityOpen}
+                onOpenChange={(open) => {
+                    setValidityOpen(open)
+                    if (!open) setValidityResults(null)
+                }}
+                results={validityResults}
+                checking={checkValidity.isPending}
+                progress={validityProgress}
+                onDeleteInvalid={handleDeleteInvalid}
+                deleting={batchDelete.isPending}
+                invalidCount={invalidRecIds.length}
             />
         </div>
     )

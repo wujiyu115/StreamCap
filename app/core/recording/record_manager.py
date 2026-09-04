@@ -10,6 +10,7 @@ from ...models.recording.recording_model import Recording
 from ...models.recording.recording_status_model import RecordingStatus
 from ...utils import utils
 from ...utils.logger import logger
+from ..platforms import room_validity
 from ..platforms.platform_handlers import get_platform_info
 from ..runtime.process_manager import BackgroundService
 from .stream_manager import LiveStreamRecorder
@@ -21,6 +22,8 @@ class GlobalRecordingState:
 
 
 class RecordingManager:
+    ROOM_VALIDITY_TIMEOUT_SECONDS = 20
+
     def __init__(self, services):
         self.services = services
         self.settings = services.settings_config
@@ -255,6 +258,64 @@ class RecordingManager:
             if rec.rec_id == rec_id:
                 return rec
         return None
+
+    async def check_room_validity(self, rec_ids: list[str] | None = None) -> dict:
+        """检测一批录制配置的直播间是否仍存在（只读，不改任务监控状态）。
+
+        ids 为空 = 全部；返回 {"results": [...], "not_found": [...]}。
+        """
+        targets = self.recordings if not rec_ids else []
+        not_found: list[str] = []
+        if rec_ids:
+            id_set = set(rec_ids)
+            for rec in self.recordings:
+                if rec.rec_id in id_set:
+                    targets.append(rec)
+            not_found = list(id_set - {rec.rec_id for rec in targets})
+        results = await asyncio.gather(*(self._check_single_room_validity(rec) for rec in targets))
+        return {"results": list(results), "not_found": not_found}
+
+    async def _check_single_room_validity(self, recording: Recording) -> dict:
+        url = (recording.url or "").strip()
+        platform, platform_key = get_platform_info(url)
+        platform = platform or recording.platform
+        platform_key = platform_key or recording.platform_key
+        cookies = self.settings.cookies_config.get(platform_key)
+        proxy = room_validity.resolve_platform_proxy(self.settings.user_config, platform_key)
+        account = self.settings.accounts_config.get(platform_key, {}) if platform_key else {}
+
+        async with self.platform_semaphores[platform_key]:
+            # 请求间隔抖动：大批量检测时拉开请求节奏，降低平台风控概率
+            await asyncio.sleep(random.uniform(0.3, 0.8))
+            try:
+                result = await asyncio.wait_for(
+                    room_validity.check_room_validity(
+                        url,
+                        platform=platform,
+                        platform_key=platform_key,
+                        proxy=proxy,
+                        cookies=cookies,
+                        record_quality=recording.quality,
+                        account=account,
+                    ),
+                    timeout=self.ROOM_VALIDITY_TIMEOUT_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                result = room_validity.RoomValidityResult(
+                    status=room_validity.STATUS_ERROR, detail=f"检测超时（>{self.ROOM_VALIDITY_TIMEOUT_SECONDS}s）"
+                )
+            except Exception as e:
+                logger.error(f"Room validity check failed: {recording.url} - {type(e).__name__}: {e}")
+                result = room_validity.RoomValidityResult(status=room_validity.STATUS_ERROR, detail=f"{type(e).__name__}: {e}")
+
+        return {
+            "rec_id": recording.rec_id,
+            "streamer_name": recording.streamer_name,
+            "url": recording.url,
+            "platform": platform or recording.platform,
+            "platform_key": platform_key or recording.platform_key,
+            **result.to_dict(),
+        }
 
     async def check_all_live_status(self):
         """每轮调度：按抖动/退避/快检决定哪些任务该查，跳过 unsupported。

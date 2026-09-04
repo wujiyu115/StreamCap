@@ -19,6 +19,7 @@ RECORDING_NOT_FOUND = "err.recordingNotFound"
 URL_REQUIRED = "err.urlRequired"
 UNSUPPORTED_URL = "err.unsupportedUrl"
 NO_FIELDS_TO_UPDATE = "err.noFieldsToUpdate"
+VALIDITY_CHECK_UNAVAILABLE = "err.validityUnavailable"
 
 # 人体识别
 POSE_MANAGER_UNAVAILABLE = "err.poseUnavailable"

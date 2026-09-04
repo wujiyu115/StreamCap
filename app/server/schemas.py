@@ -72,6 +72,11 @@ class MonitorToggleRequest(BaseModel):
     enabled: bool
 
 
+class ValidityCheckRequest(BaseModel):
+    """直播间有效性检测；ids 为空 = 检测全部任务"""
+    ids: list[str] = Field(default_factory=list)
+
+
 class SettingsUpdate(BaseModel):
     user_settings: dict
 

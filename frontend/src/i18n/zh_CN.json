@@ -99,7 +99,19 @@
     "liveTitle": "直播标题",
     "notSet": "未设置",
     "statusUnsupported": "不支持",
-    "unsupportedTip": "连续失败已停止轮询，编辑任务可重试"
+    "unsupportedTip": "连续失败已停止轮询，编辑任务可重试",
+    "checkValidity": "检测房间",
+    "validityTitle": "房间有效性检测",
+    "validityChecking": "正在检测房间有效性，请稍候…",
+    "validityProgress": "已检测 {done} / {total}…",
+    "validitySummary": "共检测 {total} 项：直播中 {live} · 未开播 {offline} · 已失效 {invalid} · 检测失败 {error}",
+    "validityStatusInvalid": "已失效",
+    "validityStatusError": "检测失败",
+    "validityPreciseBadge": "精确",
+    "validityPreciseTip": "通过平台原始接口精确判定，可信度高",
+    "validityEmpty": "暂无检测结果",
+    "validityDeleteInvalid": "删除已失效配置",
+    "validityDeleteConfirm": "确定要删除 {count} 个已失效的配置吗？删除后不可恢复。"
   },
   "recordingDialog": {
     "addTitle": "新增录制任务",
@@ -367,6 +379,7 @@
     "urlRequired": "请填写直播地址",
     "unsupportedUrl": "不支持的平台地址",
     "noFieldsToUpdate": "没有需要更新的字段",
+    "validityUnavailable": "检测服务暂不可用，请稍后重试",
     "poseUnavailable": "人体识别服务未就绪",
     "poseNoVideos": "没有可处理的视频（识别产物会被跳过）",
     "poseFilesWriting": "以下文件仍在写入（可能录制中）",

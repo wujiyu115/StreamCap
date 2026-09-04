@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import uuid
 from datetime import datetime
@@ -19,6 +20,7 @@ from ..schemas import (
     MonitorToggleRequest,
     RecordingCreate,
     RecordingUpdate,
+    ValidityCheckRequest,
 )
 
 router = APIRouter(prefix="/api/recordings", tags=["recordings"])
@@ -291,6 +293,22 @@ async def delete_recordings_batch(
         await rm.remove_recording(recording)
         deleted.append(rec_id)
     return {"deleted": len(deleted), "not_found": not_found}
+
+
+@router.post("/check-validity")
+async def check_recordings_validity(
+    body: ValidityCheckRequest,
+    user: str = Depends(get_current_user),
+    services=Depends(get_services),
+):
+    """检测录制配置的直播间是否仍存在（抖音精确判定已失效；其他平台尽力而为）。
+
+    调度到后台 loop 执行以与周期监控共享平台信号量，再跨 loop 等待结果。
+    """
+    fut = services.run_coro(services.recording_manager.check_room_validity(body.ids or None))
+    if fut is None:
+        raise HTTPException(status_code=500, detail=errors.VALIDITY_CHECK_UNAVAILABLE)
+    return await asyncio.wrap_future(fut)
 
 
 @router.post("/{rec_id}/monitor")

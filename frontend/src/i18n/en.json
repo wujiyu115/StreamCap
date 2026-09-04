@@ -99,7 +99,19 @@
     "liveTitle": "Live title",
     "notSet": "Not set",
     "statusUnsupported": "Unsupported",
-    "unsupportedTip": "Polling stopped after consecutive failures; edit task to retry"
+    "unsupportedTip": "Polling stopped after consecutive failures; edit task to retry",
+    "checkValidity": "Check Rooms",
+    "validityTitle": "Room Validity Check",
+    "validityChecking": "Checking room validity, please wait…",
+    "validityProgress": "Checked {done} / {total}…",
+    "validitySummary": "Checked {total}: {live} live · {offline} offline · {invalid} invalid · {error} failed",
+    "validityStatusInvalid": "Invalid",
+    "validityStatusError": "Failed",
+    "validityPreciseBadge": "Precise",
+    "validityPreciseTip": "Precisely determined via the platform's raw API",
+    "validityEmpty": "No results yet",
+    "validityDeleteInvalid": "Delete Invalid",
+    "validityDeleteConfirm": "Delete {count} invalid configuration(s)? This cannot be undone."
   },
   "recordingDialog": {
     "addTitle": "Add recording task",
@@ -367,6 +379,7 @@
     "urlRequired": "URL is required",
     "unsupportedUrl": "Unsupported URL",
     "noFieldsToUpdate": "No fields to update",
+    "validityUnavailable": "Validity check is temporarily unavailable, please retry later",
     "poseUnavailable": "Pose task manager unavailable",
     "poseNoVideos": "No video files found (clip products are skipped)",
     "poseFilesWriting": "Files still being written (recording in progress?)",

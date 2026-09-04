@@ -1,5 +1,5 @@
 import { api } from "./client"
-import type { Recording, RecordingStatusesResponse } from "./types"
+import type { Recording, RecordingStatusesResponse, ValidityCheckResponse } from "./types"
 
 export const recordingsApi = {
     list: () => api.get<{ recordings: Recording[] }>("/recordings"),
@@ -16,6 +16,8 @@ export const recordingsApi = {
     batchMonitor: (ids: string[], enabled: boolean) =>
         api.post<{ ok: boolean; count: number }>("/recordings/batch-monitor", { ids, enabled }),
     stop: (recId: string) => api.post<Recording>(`/recordings/${recId}/stop`),
+    checkValidity: (ids: string[]) =>
+        api.post<ValidityCheckResponse>("/recordings/check-validity", { ids }),
 }
 
 export const authApi = {
