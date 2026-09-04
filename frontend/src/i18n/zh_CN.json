@@ -192,7 +192,7 @@
   },
   "pose": {
     "title": "人体识别处理",
-    "taskProgress": "识别任务",
+    "taskProgress": "任务进度",
     "noTask": "当前没有识别任务",
     "statusRunning": "处理中",
     "statusCompleted": "已完成",

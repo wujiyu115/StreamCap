@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
     ArrowLeft,
+    Eraser,
     ChevronRight,
     FileVideo,
     Folder,
@@ -57,10 +58,10 @@ export default function MediaPage() {
     )
 
     // 各目录滚动位置记忆（Frostcast 同款）：离开时存，回来时恢复。
-    // 实际滚动容器是 AppLayout 的 <main>
+    // 滚动容器是本页文件区的独立滚动 div（class="list-scroll"）
     const scrollPos = useRef<Record<string, number>>({})
     const pendingRestore = useRef<number | null>(null)
-    const getScroller = () => document.querySelector("main") as HTMLElement | null
+    const getScroller = () => document.querySelector(".list-scroll") as HTMLElement | null
 
     const { data: tree, isLoading } = useQuery({
         queryKey: ["media-tree", path],
@@ -193,8 +194,10 @@ export default function MediaPage() {
         }
     }
 
+    // 页面满高布局：头部（统计+工具栏+面包屑）固定，仅文件区滚动
     return (
-        <div className="space-y-4">
+        <div className="flex min-h-0 flex-1 flex-col gap-4">
+            <div className="shrink-0 space-y-2">
             {/* 统计与工具栏 */}
             <div className="flex flex-wrap items-center gap-2">
                 <h1 className="text-xl font-bold">{t("media.title")}</h1>
@@ -235,8 +238,10 @@ export default function MediaPage() {
                         <Sparkles className="h-4 w-4 text-purple-500" />
                         <span className="hidden sm:inline">{t("media.poseSubmit")}</span>
                     </Button>
+                    {/* 任务进度入口：与提交按钮区分（ghost+动态徽标），无任务时自动隐藏 */}
+                    <PoseTaskPanel />
                     <Button variant="outline" size="sm" onClick={() => setCleanOpen(true)}>
-                        <Trash2 className="h-4 w-4" />
+                        <Eraser className="h-4 w-4" />
                         <span className="hidden sm:inline">{t("media.cleanSmall")}</span>
                     </Button>
                     <Button
@@ -300,11 +305,10 @@ export default function MediaPage() {
                     onGoto={navigate}
                 />
             </div>
+            </div>
 
-            {/* 人体识别任务进度：放在列表上方，文件多时不用滚到底看进度 */}
-            <PoseTaskPanel />
-
-            {/* 文件区 */}
+            {/* 文件区：独立滚动 */}
+            <div className="list-scroll min-h-0 flex-1 overflow-y-auto">
             {isLoading ? (
                 <div className="flex justify-center py-20">
                     <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -334,6 +338,7 @@ export default function MediaPage() {
                     ))}
                 </div>
             )}
+            </div>
             {/* 清理对话框 */}
             <Dialog open={cleanOpen} onOpenChange={setCleanOpen}>
                 <DialogContent className="max-w-md">

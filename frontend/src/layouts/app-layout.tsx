@@ -169,9 +169,10 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                     </div>
                 </aside>
 
-                {/* 主内容区：移动端留出底部导航高度 */}
+                {/* 主内容区：移动端留出底部导航高度；flex 让页面可实现
+                    「头部固定 + 仅列表滚动」布局 */}
                 <main className="min-w-0 flex-1 overflow-auto pb-16 md:pb-0">
-                    <div className="mx-auto max-w-7xl p-4 md:p-6">{children}</div>
+                    <div className="mx-auto flex h-full max-w-7xl flex-col p-4 md:p-6">{children}</div>
                 </main>
 
                 {/* 移动端底部导航 */}

@@ -197,8 +197,9 @@ export default function RecordingsPage() {
         }
     }
 
+    // 页面满高布局：头部（正在录制+工具栏）固定，仅列表区滚动
     return (
-        <div className="space-y-4">
+        <div className="flex min-h-0 flex-1 flex-col gap-4">
             {/* 正在录制实时面板 */}
             <div className="rounded-lg border bg-card p-3">
                 <div className="mb-2 text-sm font-medium text-muted-foreground">
@@ -229,7 +230,7 @@ export default function RecordingsPage() {
             </div>
 
             {/* 工具栏 */}
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
                 <div className="flex gap-1 overflow-x-auto rounded-md border p-0.5">
                     {FILTERS.map((f) => (
                         <button
@@ -346,7 +347,8 @@ export default function RecordingsPage() {
                 </div>
             </div>
 
-            {/* 内容区 */}
+            {/* 内容区：独立滚动，头部固定不动 */}
+            <div className="min-h-0 flex-1 overflow-y-auto">
             {isLoading ? (
                 <div className="flex justify-center py-20">
                     <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -520,6 +522,7 @@ export default function RecordingsPage() {
                     ))}
                 </div>
             )}
+            </div>
 
             <RecordingDialog
                 open={dialogOpen}
