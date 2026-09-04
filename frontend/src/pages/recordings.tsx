@@ -47,21 +47,9 @@ type StatusFilter = "all" | "recording" | "live" | "offline" | "error" | "stoppe
 
 const FILTERS: StatusFilter[] = ["all", "recording", "live", "offline", "error", "stopped"]
 
-// 房间有效性检测分批：控制单次请求时长（防 HTTP 超时）与平台请求节奏（防风控）
-const VALIDITY_BATCH_SIZE = 30
+// 检测分批间隔：两次请求间的停顿，配合后端 limit 分批防风控
 const VALIDITY_BATCH_PAUSE_MS = 2000
 
-// 检测结果存 sessionStorage：刷新不丢，关标签页自动清
-const VALIDITY_STORAGE_KEY = "streamcap.validityResults"
-
-function loadValidityResults(): ValidityCheckResult[] | null {
-    try {
-        const parsed = JSON.parse(sessionStorage.getItem(VALIDITY_STORAGE_KEY) || "null")
-        return Array.isArray(parsed) ? (parsed as ValidityCheckResult[]) : null
-    } catch {
-        return null
-    }
-}
 const FILTER_LABEL_KEY: Record<StatusFilter, string> = {
     all: "recordings.statusAll",
     recording: "recordings.statusRecording",
@@ -88,7 +76,8 @@ export default function RecordingsPage() {
     const [dialogOpen, setDialogOpen] = useState(false)
     const [editing, setEditing] = useState<Recording | null>(null)
     const [validityOpen, setValidityOpen] = useState(false)
-    const [validityResults, setValidityResults] = useState<ValidityCheckResult[] | null>(loadValidityResults)
+    const [validityResults, setValidityResults] = useState<ValidityCheckResult[] | null>(null)
+    const [validityPending, setValidityPending] = useState<number | null>(null)
     const [validityProgress, setValidityProgress] = useState<{ done: number; total: number } | null>(null)
     const validityAbortRef = useRef<AbortController | null>(null)
 
@@ -100,15 +89,19 @@ export default function RecordingsPage() {
 
     const recordings = data?.recordings ?? []
 
-    // 检测结果写 sessionStorage（刷新后仍在，关标签页自动清）
+    // 打开弹窗时从后端拉检测结果快照（缓存条目 + 待检数，不发检测请求）
     useEffect(() => {
-        try {
-            if (validityResults) sessionStorage.setItem(VALIDITY_STORAGE_KEY, JSON.stringify(validityResults))
-            else sessionStorage.removeItem(VALIDITY_STORAGE_KEY)
-        } catch {
-            /* 存储满等异常不影响内存态 */
-        }
-    }, [validityResults])
+        if (!validityOpen) return
+        recordingsApi
+            .validitySnapshot()
+            .then((d) => {
+                if (!validityAbortRef.current) {
+                    setValidityResults(d.results)
+                    setValidityPending(d.pending)
+                }
+            })
+            .catch(() => undefined)
+    }, [validityOpen])
 
     const platforms = useMemo(
         () => Array.from(new Set(recordings.map((r) => r.platform).filter(Boolean))) as string[],
@@ -200,27 +193,33 @@ export default function RecordingsPage() {
     })
 
     const checkValidity = useMutation({
-        mutationFn: async (ids: string[]): Promise<ValidityCheckResult[]> => {
-            const all: ValidityCheckResult[] = []
+        mutationFn: async (force: boolean): Promise<ValidityCheckResult[]> => {
             const controller = new AbortController()
             validityAbortRef.current = controller
-            setValidityProgress({ done: 0, total: ids.length })
-            for (let i = 0; i < ids.length; i += VALIDITY_BATCH_SIZE) {
+            setValidityProgress({ done: 0, total: 0 })
+            // 全量重检：以本次开始时刻为界，早于此的缓存条目全部重检
+            const forceSince = force ? Math.floor(Date.now() / 1000) : 0
+            let last: ValidityCheckResult[] = []
+            for (;;) {
+                let d
                 try {
-                    const batch = ids.slice(i, i + VALIDITY_BATCH_SIZE)
-                    const d = await recordingsApi.checkValidity(batch, controller.signal)
-                    all.push(...d.results)
+                    d = await recordingsApi.checkValidity(
+                        { ids: [], force, force_since: forceSince },
+                        controller.signal,
+                    )
                 } catch (e) {
                     if (e instanceof DOMException && e.name === "AbortError") break
                     throw e
                 }
-                setValidityResults([...all])
-                setValidityProgress({ done: Math.min(i + VALIDITY_BATCH_SIZE, ids.length), total: ids.length })
-                if (i + VALIDITY_BATCH_SIZE < ids.length) {
-                    await new Promise((r) => setTimeout(r, VALIDITY_BATCH_PAUSE_MS))
-                }
+                last = d.results
+                setValidityResults(d.results)
+                setValidityPending(d.pending)
+                const total = d.results.length + d.pending
+                setValidityProgress({ done: d.results.length, total })
+                if (d.pending === 0) break
+                await new Promise((r) => setTimeout(r, VALIDITY_BATCH_PAUSE_MS))
             }
-            return all
+            return last
         },
         onSettled: () => {
             setValidityProgress(null)
@@ -232,23 +231,14 @@ export default function RecordingsPage() {
         },
     })
 
-    const startValidityCheck = () => {
+    const startValidityCheck = (force = false) => {
         if (checkValidity.isPending) return
-        setValidityResults(null)
-        checkValidity.mutate(recordings.map((r) => r.rec_id))
+        checkValidity.mutate(force)
     }
 
     const stopValidityCheck = () => {
         validityAbortRef.current?.abort()
     }
-
-    // 结果里清掉已不存在的任务（任务在别处被删除后）
-    useEffect(() => {
-        if (checkValidity.isPending || recordings.length === 0 || !validityResults) return
-        const ids = new Set(recordings.map((r) => r.rec_id))
-        const kept = validityResults.filter((r) => ids.has(r.rec_id))
-        if (kept.length !== validityResults.length) setValidityResults(kept)
-    }, [recordings, checkValidity.isPending, validityResults])
 
     const invalidRecIds = useMemo(
         () => (validityResults ?? []).filter((r) => r.status === "invalid").map((r) => r.rec_id),
@@ -262,6 +252,7 @@ export default function RecordingsPage() {
                 onSuccess: () => {
                     setValidityOpen(false)
                     setValidityResults(null)
+                    setValidityPending(null)
                 },
             })
         }
@@ -270,8 +261,10 @@ export default function RecordingsPage() {
     const handleDeleteInvalidOne = (r: ValidityCheckResult) => {
         if (confirm(tf("recordings.deleteOneConfirm", { name: r.streamer_name || r.url }))) {
             deleteMutation.mutate(r.rec_id, {
-                onSuccess: () =>
-                    setValidityResults((prev) => (prev ?? []).filter((x) => x.rec_id !== r.rec_id)),
+                onSuccess: () => {
+                    setValidityResults((prev) => (prev ?? []).filter((x) => x.rec_id !== r.rec_id))
+                    setValidityPending((p) => (p ?? 0) > 0 ? p! - 1 : p)
+                },
             })
         }
     }
@@ -658,6 +651,7 @@ export default function RecordingsPage() {
                 results={validityResults}
                 checking={checkValidity.isPending}
                 progress={validityProgress}
+                pending={validityPending}
                 onStart={startValidityCheck}
                 onStop={stopValidityCheck}
                 onDeleteInvalid={handleDeleteInvalid}

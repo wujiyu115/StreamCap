@@ -1,4 +1,4 @@
-import { Copy, Loader2, Play, ScanSearch, ShieldCheck, Square, Trash2 } from "lucide-react"
+import { Copy, Loader2, Play, RotateCw, ScanSearch, ShieldCheck, Square, Trash2 } from "lucide-react"
 import type { ValidityCheckResult } from "@/api/types"
 import { Button } from "@/components/ui/button"
 import {
@@ -54,6 +54,7 @@ export function ValidityCheckDialog({
     results,
     checking,
     progress,
+    pending,
     onStart,
     onStop,
     onDeleteInvalid,
@@ -66,7 +67,8 @@ export function ValidityCheckDialog({
     results: ValidityCheckResult[] | null
     checking: boolean
     progress: { done: number; total: number } | null
-    onStart: () => void
+    pending: number | null
+    onStart: (force?: boolean) => void
     onStop: () => void
     onDeleteInvalid: () => void
     onDeleteOne: (r: ValidityCheckResult) => void
@@ -93,6 +95,7 @@ export function ValidityCheckDialog({
         { live: 0, offline: 0, invalid: 0, error: 0 } as Record<ValidityCheckResult["status"], number>,
     )
     const invalidRows = all.filter((r) => r.status === "invalid")
+    const pendingCount = pending ?? 0
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
@@ -101,12 +104,17 @@ export function ValidityCheckDialog({
                     <DialogTitle>{t("recordings.validityTitle")}</DialogTitle>
                 </DialogHeader>
 
-                {checking && progress ? (
+                {checking && progress && progress.total > 0 ? (
                     <div className="flex shrink-0 items-center gap-2 text-sm text-muted-foreground">
                         <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
                         <span>
                             {tf("recordings.validityProgress", { done: progress.done, total: progress.total })}
                         </span>
+                    </div>
+                ) : checking ? (
+                    <div className="flex shrink-0 items-center gap-2 text-sm text-muted-foreground">
+                        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+                        <span>{t("recordings.validityChecking")}</span>
                     </div>
                 ) : all.length > 0 ? (
                     <div className="shrink-0 text-sm text-muted-foreground">
@@ -117,6 +125,11 @@ export function ValidityCheckDialog({
                             invalid: counts.invalid,
                             error: counts.error,
                         })}
+                        {pendingCount > 0 && (
+                            <span className="ml-1 text-orange-500">
+                                {tf("recordings.validityPending", { count: pendingCount })}
+                            </span>
+                        )}
                     </div>
                 ) : null}
 
@@ -214,7 +227,7 @@ export function ValidityCheckDialog({
                             </TableBody>
                         </Table>
                     </div>
-                ) : results ? (
+                ) : results && pendingCount === 0 ? (
                     <div className="flex flex-1 flex-col items-center gap-2 py-16 text-muted-foreground">
                         <ShieldCheck className="h-8 w-8 text-green-500" />
                         <span className="text-sm">{t("recordings.validityNoInvalid")}</span>
@@ -243,10 +256,16 @@ export function ValidityCheckDialog({
                                 <span>{t("recordings.validityStop")}</span>
                             </Button>
                         ) : (
-                            <Button size="sm" onClick={onStart}>
-                                <Play className="h-4 w-4" />
-                                <span>{t("recordings.validityStart")}</span>
-                            </Button>
+                            <>
+                                <Button size="sm" onClick={() => onStart(false)}>
+                                    <Play className="h-4 w-4" />
+                                    <span>{t("recordings.validityStart")}</span>
+                                </Button>
+                                <Button variant="outline" size="sm" onClick={() => onStart(true)}>
+                                    <RotateCw className="h-4 w-4" />
+                                    <span>{t("recordings.validityRecheck")}</span>
+                                </Button>
+                            </>
                         )}
                         <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
                             {t("common.close")}

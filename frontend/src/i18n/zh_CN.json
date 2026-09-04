@@ -112,6 +112,8 @@
     "validityIdleHint": "点击「开始检测」检查全部房间",
     "validityStart": "开始检测",
     "validityStop": "停止",
+    "validityRecheck": "全量重检",
+    "validityPending": "待检测 {count}",
     "validityCopy": "复制主播ID",
     "validityDeleteOne": "删除此配置",
     "validityCopied": "已复制：{text}",

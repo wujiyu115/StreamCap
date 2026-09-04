@@ -23,6 +23,8 @@ class GlobalRecordingState:
 
 class RecordingManager:
     ROOM_VALIDITY_TIMEOUT_SECONDS = 20
+    ROOM_VALIDITY_CACHE_TTL_SECONDS = 6 * 3600
+    ROOM_VALIDITY_DEFAULT_LIMIT = 30
 
     def __init__(self, services):
         self.services = services
@@ -30,6 +32,7 @@ class RecordingManager:
         self.periodic_task_started = False
         self.loop_time_seconds = None
         self.load_recordings()
+        self.validity_cache = services.config_manager.load_validity_cache_config() or {}
         self._ = {}
         self.load()
         self.initialize_dynamic_state()
@@ -259,11 +262,27 @@ class RecordingManager:
                 return rec
         return None
 
-    async def check_room_validity(self, rec_ids: list[str] | None = None) -> dict:
-        """检测一批录制配置的直播间是否仍存在（只读，不改任务监控状态）。
+    async def check_room_validity(
+        self,
+        rec_ids: list[str] | None = None,
+        force: bool = False,
+        force_since: float = 0,
+        limit: int | None = None,
+    ) -> dict:
+        """检测录制配置的直播间是否仍存在（只读，不改任务监控状态）。
 
-        ids 为空 = 全部；返回 {"results": [...], "not_found": [...]}。
+        结果缓存在 config/room_validity.json：已判定失效的任务与 TTL 内
+        的有效任务直接命中缓存不再发请求；error 不缓存（下次必重检）。
+        limit 限制本次实际检测的条数（0 = 只取快照不发请求），返回
+        pending 表示剩余待检数，配合前端分批拉取；force+force_since
+        为全量重检：checked_at 不早于 force_since 的条目视为已检。
         """
+        if limit is None:
+            limit = self.ROOM_VALIDITY_DEFAULT_LIMIT
+        limit = max(0, int(limit))
+        if force and not force_since:
+            force_since = time.time()
+
         targets = self.recordings if not rec_ids else []
         not_found: list[str] = []
         if rec_ids:
@@ -272,10 +291,65 @@ class RecordingManager:
                 if rec.rec_id in id_set:
                     targets.append(rec)
             not_found = list(id_set - {rec.rec_id for rec in targets})
-        results = await asyncio.gather(*(self._check_single_room_validity(rec) for rec in targets))
-        return {"results": list(results), "not_found": not_found}
 
-    async def _check_single_room_validity(self, recording: Recording) -> dict:
+        cache = self.validity_cache
+        now = time.time()
+
+        # 清理已删除任务的缓存条目
+        valid_ids = {rec.rec_id for rec in self.recordings}
+        stale_keys = [k for k in cache if k not in valid_ids]
+        for k in stale_keys:
+            cache.pop(k, None)
+
+        results, misses = [], []
+        for rec in targets:
+            entry = cache.get(rec.rec_id)
+            if self._validity_cache_hit(entry, rec.url, force, force_since, now):
+                results.append(self._validity_cached_result(rec, entry))
+            else:
+                misses.append(rec)
+
+        to_check = misses[:limit]
+        pending = len(misses) - len(to_check)
+        if to_check:
+            checked = await asyncio.gather(*(self._check_single_room_validity(rec, cache) for rec in to_check))
+            results.extend(checked)
+
+        if stale_keys or to_check:
+            await self.services.config_manager.save_validity_cache_config(cache)
+
+        return {"results": results, "not_found": not_found, "pending": pending}
+
+    def _validity_cache_hit(self, entry, url, force: bool, force_since: float, now: float) -> bool:
+        if not entry or entry.get("url") != url:
+            return False
+        if force:
+            return entry.get("checked_at", 0) >= force_since
+        status = entry.get("status")
+        if status == room_validity.STATUS_INVALID:
+            return True
+        if status in (room_validity.STATUS_LIVE, room_validity.STATUS_OFFLINE):
+            return now - entry.get("checked_at", 0) < self.ROOM_VALIDITY_CACHE_TTL_SECONDS
+        return False
+
+    @staticmethod
+    def _validity_cached_result(recording: Recording, entry: dict) -> dict:
+        return {
+            "rec_id": recording.rec_id,
+            "streamer_name": recording.streamer_name,
+            "url": recording.url,
+            "platform": recording.platform,
+            "platform_key": recording.platform_key,
+            "status": entry.get("status"),
+            "anchor_name": entry.get("anchor_name"),
+            "title": entry.get("title"),
+            "detail": entry.get("detail"),
+            "precise": entry.get("precise", False),
+            "checked_at": entry.get("checked_at"),
+            "cached": True,
+        }
+
+    async def _check_single_room_validity(self, recording: Recording, cache: dict) -> dict:
         url = (recording.url or "").strip()
         platform, platform_key = get_platform_info(url)
         platform = platform or recording.platform
@@ -308,6 +382,18 @@ class RecordingManager:
                 logger.error(f"Room validity check failed: {recording.url} - {type(e).__name__}: {e}")
                 result = room_validity.RoomValidityResult(status=room_validity.STATUS_ERROR, detail=f"{type(e).__name__}: {e}")
 
+        now = time.time()
+        if result.status != room_validity.STATUS_ERROR:
+            cache[recording.rec_id] = {
+                "url": recording.url,
+                "status": result.status,
+                "anchor_name": result.anchor_name,
+                "title": result.title,
+                "detail": result.detail,
+                "precise": result.precise,
+                "checked_at": now,
+            }
+
         return {
             "rec_id": recording.rec_id,
             "streamer_name": recording.streamer_name,
@@ -315,6 +401,8 @@ class RecordingManager:
             "platform": platform or recording.platform,
             "platform_key": platform_key or recording.platform_key,
             **result.to_dict(),
+            "checked_at": now,
+            "cached": False,
         }
 
     async def check_all_live_status(self):

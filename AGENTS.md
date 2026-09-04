@@ -32,5 +32,5 @@
 ### 项目特有陷阱
 
 - **跨 event loop**：平台信号量（`platform_semaphores`）绑定在后台监控线程的 loop；FastAPI 端点里不能直接 await 这些 asyncio 原语（会报 `bound to a different event loop`）。需 `services.run_coro(coro)` 提交到后台 loop，再 `asyncio.wrap_future(fut)` 等结果（参考 `app/server/routers/recordings.py` 的 check-validity 端点）
-- **抖音风控**：批量请求必须分批（前端每批 30 个、批间隔 2s）+ 每条随机抖动（0.3–0.8s）；cookie 未配置时 streamget 用内置公共 ttwid（写死在库里，共享且有寿命），量大易风控，可建议用户在设置里配置含 `ttwid=` 的完整 cookie
+- **抖音风控**：批量检测走后端缓存（`config/room_validity.json`，失效永久跳过、有效 6h TTL、error 必重检、URL 变更视为未检）+ 单次请求 limit 条数分批（前端按 pending 循环拉取、批间隔 2s）+ 每条随机抖动（0.3–0.8s）；cookie 未配置时 streamget 用内置公共 ttwid（写死在库里，共享且有寿命），量大易风控，可建议用户在设置里配置含 `ttwid=` 的完整 cookie
 - **handler 异常被吞**：所有平台 handler 的 `get_stream_info` 被 `@trace_error_decorator` 包裹，异常时返回 `[]`，上层拿不到异常细节。需要区分错误原因（如"房间不存在"vs"网络失败"）时绕过 handler 直接调 streamget 原始接口（参考 `app/core/platforms/room_validity.py`，用 `process_data=False` 拿原始 JSON 看 `status_code`）

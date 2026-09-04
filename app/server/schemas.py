@@ -73,8 +73,15 @@ class MonitorToggleRequest(BaseModel):
 
 
 class ValidityCheckRequest(BaseModel):
-    """直播间有效性检测；ids 为空 = 检测全部任务"""
+    """直播间有效性检测；ids 为空 = 检测全部任务。
+
+    limit 限制单次实际检测条数（分批防风控/防超时）；force+force_since
+    为全量重检（checked_at 早于 force_since 的条目重检）。
+    """
     ids: list[str] = Field(default_factory=list)
+    force: bool = False
+    force_since: float = 0
+    limit: int = 30
 
 
 class SettingsUpdate(BaseModel):

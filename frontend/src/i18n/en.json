@@ -112,6 +112,8 @@
     "validityIdleHint": "Click \"Start Check\" to check all rooms",
     "validityStart": "Start Check",
     "validityStop": "Stop",
+    "validityRecheck": "Full Recheck",
+    "validityPending": "{count} pending",
     "validityCopy": "Copy anchor ID",
     "validityDeleteOne": "Delete this task",
     "validityCopied": "Copied: {text}",

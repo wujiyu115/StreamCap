@@ -72,11 +72,14 @@ export interface ValidityCheckResult {
     title: string | null
     detail: string | null
     precise: boolean
+    checked_at?: number
+    cached?: boolean
 }
 
 export interface ValidityCheckResponse {
     results: ValidityCheckResult[]
     not_found: string[]
+    pending: number
 }
 
 export interface MediaItem {

@@ -24,6 +24,7 @@ class ConfigManager:
         self.cookies_config_path = os.path.join(self.config_path, "cookies.json")
         self.about_config_path = os.path.join(self.config_path, "version.json")
         self.recordings_config_path = os.path.join(self.config_path, "recordings.json")
+        self.validity_cache_config_path = os.path.join(self.config_path, "room_validity.json")
         self.accounts_config_path = os.path.join(self.config_path, "accounts.json")
         self.web_auth_config_path = os.path.join(self.config_path, "web_auth.json")
 
@@ -144,6 +145,9 @@ class ConfigManager:
     def load_recordings_config(self):
         return self._load_config(self.recordings_config_path, "An error occurred while loading recordings config")
 
+    def load_validity_cache_config(self):
+        return self._load_config(self.validity_cache_config_path, "An error occurred while loading room validity cache")
+
     def load_accounts_config(self):
         return self._load_config(self.accounts_config_path, "An error occurred while loading accounts config")
 
@@ -198,6 +202,14 @@ class ConfigManager:
             config,
             success_message="Recordings configuration saved.",
             error_message="An error occurred while saving recordings config",
+        )
+
+    async def save_validity_cache_config(self, config):
+        await self._save_config(
+            self.validity_cache_config_path,
+            config,
+            success_message="Room validity cache saved.",
+            error_message="An error occurred while saving room validity cache",
         )
 
     async def save_accounts_config(self, config):
