@@ -220,8 +220,11 @@ body {
 .media-thumb {
     position: relative;
     aspect-ratio: 16 / 10;
-    display: grid;
-    place-items: center;
+    /* flex 双轴居中：iOS Safari 对 grid place-items 的实现有差异，
+       网格模式下文件夹图标会贴顶（Chromium 正常） */
+    display: flex;
+    align-items: center;
+    justify-content: center;
     overflow: hidden;
 }
 .media-thumb .play-btn {
