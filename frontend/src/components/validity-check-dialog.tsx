@@ -1,4 +1,4 @@
-import { Loader2, Trash2 } from "lucide-react"
+import { Loader2, ShieldCheck, Trash2 } from "lucide-react"
 import type { ValidityCheckResult } from "@/api/types"
 import { Button } from "@/components/ui/button"
 import {
@@ -8,7 +8,6 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/components/ui/dialog"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import {
     Table,
     TableBody,
@@ -18,50 +17,6 @@ import {
     TableRow,
 } from "@/components/ui/table"
 import { useI18n } from "@/i18n"
-
-const STATUS_WEIGHT: Record<ValidityCheckResult["status"], number> = {
-    invalid: 0,
-    error: 1,
-    live: 2,
-    offline: 3,
-}
-
-const STATUS_CLASS: Record<ValidityCheckResult["status"], string> = {
-    invalid: "bg-red-500",
-    error: "bg-orange-500",
-    live: "bg-green-500",
-    offline: "bg-amber-500",
-}
-
-const STATUS_LABEL_KEY: Record<ValidityCheckResult["status"], string> = {
-    invalid: "recordings.validityStatusInvalid",
-    error: "recordings.validityStatusError",
-    live: "recordings.statusLive",
-    offline: "recordings.statusOffline",
-}
-
-function ValidityBadge({ result }: { result: ValidityCheckResult }) {
-    const { t } = useI18n()
-    return (
-        <span className="inline-flex items-center gap-1.5">
-            <span
-                className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium text-white ${
-                    STATUS_CLASS[result.status]
-                }`}
-            >
-                {t(STATUS_LABEL_KEY[result.status])}
-            </span>
-            {result.precise && result.status === "invalid" && (
-                <span
-                    className="cursor-help rounded-full border border-muted-foreground/40 px-1.5 py-0.5 text-[10px] text-muted-foreground"
-                    title={t("recordings.validityPreciseTip")}
-                >
-                    {t("recordings.validityPreciseBadge")}
-                </span>
-            )}
-        </span>
-    )
-}
 
 export function ValidityCheckDialog({
     open,
@@ -84,111 +39,125 @@ export function ValidityCheckDialog({
 }) {
     const { t, tf } = useI18n()
 
-    const counts = (results ?? []).reduce(
+    const all = results ?? []
+    const counts = all.reduce(
         (acc, r) => {
             acc[r.status] += 1
             return acc
         },
         { live: 0, offline: 0, invalid: 0, error: 0 } as Record<ValidityCheckResult["status"], number>,
     )
-    const sorted = [...(results ?? [])].sort((a, b) => STATUS_WEIGHT[a.status] - STATUS_WEIGHT[b.status])
+    const invalidRows = all.filter((r) => r.status === "invalid")
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="flex max-h-[85dvh] w-full max-w-3xl flex-col">
+            <DialogContent className="flex max-h-[85dvh] w-full max-w-3xl flex-col overflow-y-hidden">
                 <DialogHeader>
                     <DialogTitle>{t("recordings.validityTitle")}</DialogTitle>
                 </DialogHeader>
 
-                {checking && sorted.length === 0 ? (
-                    <div className="flex flex-col items-center gap-2 py-16 text-muted-foreground">
+                {checking && progress ? (
+                    <div className="flex shrink-0 items-center gap-2 text-sm text-muted-foreground">
+                        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+                        <span>
+                            {tf("recordings.validityProgress", { done: progress.done, total: progress.total })}
+                        </span>
+                    </div>
+                ) : all.length > 0 ? (
+                    <div className="shrink-0 text-sm text-muted-foreground">
+                        {tf("recordings.validitySummary", {
+                            total: all.length,
+                            live: counts.live,
+                            offline: counts.offline,
+                            invalid: counts.invalid,
+                            error: counts.error,
+                        })}
+                    </div>
+                ) : null}
+
+                {checking && invalidRows.length === 0 ? (
+                    <div className="flex flex-1 flex-col items-center gap-2 py-16 text-muted-foreground">
                         <Loader2 className="h-6 w-6 animate-spin" />
                         <span className="text-sm">{t("recordings.validityChecking")}</span>
-                        {progress && (
-                            <span className="text-xs">
-                                {tf("recordings.validityProgress", { done: progress.done, total: progress.total })}
-                            </span>
-                        )}
                     </div>
-                ) : sorted.length === 0 ? (
+                ) : invalidRows.length > 0 ? (
+                    <div className="min-h-0 flex-1 overflow-y-auto">
+                        <Table>
+                            <TableHeader>
+                                <TableRow>
+                                    <TableHead>{t("recordings.columnStreamer")}</TableHead>
+                                    <TableHead>{t("recordings.columnPlatform")}</TableHead>
+                                    <TableHead>{t("recordings.columnUrl")}</TableHead>
+                                    <TableHead>{t("recordings.columnStatus")}</TableHead>
+                                    <TableHead>{t("recordings.detail")}</TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {invalidRows.map((r) => (
+                                    <TableRow key={r.rec_id}>
+                                        <TableCell>
+                                            <div className="max-w-32 truncate font-medium" title={r.streamer_name}>
+                                                {r.streamer_name || "-"}
+                                            </div>
+                                        </TableCell>
+                                        <TableCell className="whitespace-nowrap text-muted-foreground">
+                                            {r.platform || "-"}
+                                        </TableCell>
+                                        <TableCell>
+                                            <a
+                                                href={r.url}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                                className="block max-w-48 truncate text-primary hover:underline"
+                                                title={r.url}
+                                            >
+                                                {r.url}
+                                            </a>
+                                        </TableCell>
+                                        <TableCell>
+                                            <span className="inline-flex items-center gap-1.5">
+                                                <span className="inline-flex items-center rounded-full bg-red-500 px-2.5 py-0.5 text-xs font-medium text-white">
+                                                    {t("recordings.validityStatusInvalid")}
+                                                </span>
+                                                {r.precise && (
+                                                    <span
+                                                        className="cursor-help rounded-full border border-muted-foreground/40 px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                                                        title={t("recordings.validityPreciseTip")}
+                                                    >
+                                                        {t("recordings.validityPreciseBadge")}
+                                                    </span>
+                                                )}
+                                            </span>
+                                        </TableCell>
+                                        <TableCell>
+                                            {r.detail ? (
+                                                <span
+                                                    className="block max-w-48 truncate text-xs text-muted-foreground"
+                                                    title={r.detail}
+                                                >
+                                                    {r.detail}
+                                                </span>
+                                            ) : (
+                                                <span className="text-xs text-muted-foreground">-</span>
+                                            )}
+                                        </TableCell>
+                                    </TableRow>
+                                ))}
+                            </TableBody>
+                        </Table>
+                    </div>
+                ) : results ? (
+                    <div className="flex flex-1 flex-col items-center gap-2 py-16 text-muted-foreground">
+                        <ShieldCheck className="h-8 w-8 text-green-500" />
+                        <span className="text-sm">{t("recordings.validityNoInvalid")}</span>
+                    </div>
+                ) : (
                     <div className="py-16 text-center text-sm text-muted-foreground">
                         {t("recordings.validityEmpty")}
                     </div>
-                ) : (
-                    <>
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                            {checking && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />}
-                            <span>
-                                {checking && progress
-                                    ? tf("recordings.validityProgress", { done: progress.done, total: progress.total })
-                                    : tf("recordings.validitySummary", {
-                                          total: sorted.length,
-                                          live: counts.live,
-                                          offline: counts.offline,
-                                          invalid: counts.invalid,
-                                          error: counts.error,
-                                      })}
-                            </span>
-                        </div>
-                        <ScrollArea className="min-h-0 flex-1">
-                            <Table>
-                                <TableHeader>
-                                    <TableRow>
-                                        <TableHead>{t("recordings.columnStreamer")}</TableHead>
-                                        <TableHead>{t("recordings.columnPlatform")}</TableHead>
-                                        <TableHead>{t("recordings.columnUrl")}</TableHead>
-                                        <TableHead>{t("recordings.columnStatus")}</TableHead>
-                                        <TableHead>{t("recordings.detail")}</TableHead>
-                                    </TableRow>
-                                </TableHeader>
-                                <TableBody>
-                                    {sorted.map((r) => (
-                                        <TableRow key={r.rec_id}>
-                                            <TableCell>
-                                                <div className="max-w-32 truncate font-medium" title={r.streamer_name}>
-                                                    {r.streamer_name || "-"}
-                                                </div>
-                                                {r.anchor_name && r.anchor_name !== r.streamer_name && (
-                                                    <div className="max-w-32 truncate text-xs text-muted-foreground" title={r.anchor_name}>
-                                                        {r.anchor_name}
-                                                    </div>
-                                                )}
-                                            </TableCell>
-                                            <TableCell className="whitespace-nowrap text-muted-foreground">
-                                                {r.platform || "-"}
-                                            </TableCell>
-                                            <TableCell>
-                                                <a
-                                                    href={r.url}
-                                                    target="_blank"
-                                                    rel="noreferrer"
-                                                    className="block max-w-48 truncate text-primary hover:underline"
-                                                    title={r.url}
-                                                >
-                                                    {r.url}
-                                                </a>
-                                            </TableCell>
-                                            <TableCell>
-                                                <ValidityBadge result={r} />
-                                            </TableCell>
-                                            <TableCell>
-                                                {r.detail ? (
-                                                    <span className="block max-w-48 truncate text-xs text-muted-foreground" title={r.detail}>
-                                                        {r.detail}
-                                                    </span>
-                                                ) : (
-                                                    <span className="text-xs text-muted-foreground">-</span>
-                                                )}
-                                            </TableCell>
-                                        </TableRow>
-                                    ))}
-                                </TableBody>
-                            </Table>
-                        </ScrollArea>
-                    </>
                 )}
 
-                <DialogFooter className="sm:justify-between">
+                <DialogFooter className="shrink-0 sm:justify-between">
                     <Button
                         variant="destructive"
                         size="sm"
