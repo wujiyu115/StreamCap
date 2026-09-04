@@ -237,6 +237,15 @@ export default function RecordingsPage() {
         }
     }
 
+    const handleDeleteInvalidOne = (r: ValidityCheckResult) => {
+        if (confirm(tf("recordings.deleteOneConfirm", { name: r.streamer_name || r.url }))) {
+            deleteMutation.mutate(r.rec_id, {
+                onSuccess: () =>
+                    setValidityResults((prev) => (prev ?? []).filter((x) => x.rec_id !== r.rec_id)),
+            })
+        }
+    }
+
     const toggleSelect = (id: string) => {
         setSelected((prev) => {
             const next = new Set(prev)
@@ -622,6 +631,7 @@ export default function RecordingsPage() {
                 onStart={startValidityCheck}
                 onStop={stopValidityCheck}
                 onDeleteInvalid={handleDeleteInvalid}
+                onDeleteOne={handleDeleteInvalidOne}
                 deleting={batchDelete.isPending}
                 invalidCount={invalidRecIds.length}
             />

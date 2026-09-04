@@ -112,6 +112,10 @@
     "validityIdleHint": "Click \"Start Check\" to check all rooms",
     "validityStart": "Start Check",
     "validityStop": "Stop",
+    "validityCopy": "Copy anchor ID",
+    "validityDeleteOne": "Delete this task",
+    "validityCopied": "Copied: {text}",
+    "validityCopyFailed": "Copy failed",
     "validityDeleteInvalid": "Delete Invalid",
     "validityDeleteConfirm": "Delete {count} invalid configuration(s)? This cannot be undone."
   },

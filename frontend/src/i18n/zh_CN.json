@@ -112,6 +112,10 @@
     "validityIdleHint": "点击「开始检测」检查全部房间",
     "validityStart": "开始检测",
     "validityStop": "停止",
+    "validityCopy": "复制主播ID",
+    "validityDeleteOne": "删除此配置",
+    "validityCopied": "已复制：{text}",
+    "validityCopyFailed": "复制失败",
     "validityDeleteInvalid": "删除已失效配置",
     "validityDeleteConfirm": "确定要删除 {count} 个已失效的配置吗？删除后不可恢复。"
   },

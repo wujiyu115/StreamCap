@@ -1,4 +1,4 @@
-import { Loader2, Play, ScanSearch, ShieldCheck, Square, Trash2 } from "lucide-react"
+import { Copy, Loader2, Play, ScanSearch, ShieldCheck, Square, Trash2 } from "lucide-react"
 import type { ValidityCheckResult } from "@/api/types"
 import { Button } from "@/components/ui/button"
 import {
@@ -17,6 +17,36 @@ import {
     TableRow,
 } from "@/components/ui/table"
 import { useI18n } from "@/i18n"
+import { toast } from "sonner"
+
+function extractRoomId(url: string): string {
+    try {
+        const parts = new URL(url).pathname.split("/").filter(Boolean)
+        return parts.length ? parts[parts.length - 1] : url
+    } catch {
+        return url
+    }
+}
+
+async function copyToClipboard(text: string): Promise<boolean> {
+    try {
+        if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(text)
+            return true
+        }
+    } catch {
+        /* http 非安全上下文无 clipboard API，走降级 */
+    }
+    const ta = document.createElement("textarea")
+    ta.value = text
+    ta.style.position = "fixed"
+    ta.style.opacity = "0"
+    document.body.appendChild(ta)
+    ta.select()
+    const ok = document.execCommand("copy")
+    document.body.removeChild(ta)
+    return ok
+}
 
 export function ValidityCheckDialog({
     open,
@@ -27,6 +57,7 @@ export function ValidityCheckDialog({
     onStart,
     onStop,
     onDeleteInvalid,
+    onDeleteOne,
     deleting,
     invalidCount,
 }: {
@@ -38,10 +69,20 @@ export function ValidityCheckDialog({
     onStart: () => void
     onStop: () => void
     onDeleteInvalid: () => void
+    onDeleteOne: (r: ValidityCheckResult) => void
     deleting: boolean
     invalidCount: number
 }) {
     const { t, tf } = useI18n()
+
+    const handleCopy = async (r: ValidityCheckResult) => {
+        const text = extractRoomId(r.url)
+        if (await copyToClipboard(text)) {
+            toast.success(tf("recordings.validityCopied", { text }))
+        } else {
+            toast.error(t("recordings.validityCopyFailed"))
+        }
+    }
 
     const all = results ?? []
     const counts = all.reduce(
@@ -94,6 +135,7 @@ export function ValidityCheckDialog({
                                     <TableHead>{t("recordings.columnUrl")}</TableHead>
                                     <TableHead>{t("recordings.columnStatus")}</TableHead>
                                     <TableHead>{t("recordings.detail")}</TableHead>
+                                    <TableHead className="w-20">{t("common.operations")}</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
@@ -144,6 +186,28 @@ export function ValidityCheckDialog({
                                             ) : (
                                                 <span className="text-xs text-muted-foreground">-</span>
                                             )}
+                                        </TableCell>
+                                        <TableCell>
+                                            <div className="flex items-center gap-1">
+                                                <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className="h-7 w-7 p-0"
+                                                    title={t("recordings.validityCopy")}
+                                                    onClick={() => handleCopy(r)}
+                                                >
+                                                    <Copy className="h-3.5 w-3.5" />
+                                                </Button>
+                                                <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className="h-7 w-7 p-0"
+                                                    title={t("recordings.validityDeleteOne")}
+                                                    onClick={() => onDeleteOne(r)}
+                                                >
+                                                    <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                                                </Button>
+                                            </div>
                                         </TableCell>
                                     </TableRow>
                                 ))}
