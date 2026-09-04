@@ -15,7 +15,7 @@ import {
     Table2,
     Trash2,
 } from "lucide-react"
-import { useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { recordingsApi } from "@/api"
 import type { Recording, ValidityCheckResult } from "@/api/types"
@@ -50,6 +50,18 @@ const FILTERS: StatusFilter[] = ["all", "recording", "live", "offline", "error",
 // 房间有效性检测分批：控制单次请求时长（防 HTTP 超时）与平台请求节奏（防风控）
 const VALIDITY_BATCH_SIZE = 30
 const VALIDITY_BATCH_PAUSE_MS = 2000
+
+// 检测结果存 sessionStorage：刷新不丢，关标签页自动清
+const VALIDITY_STORAGE_KEY = "streamcap.validityResults"
+
+function loadValidityResults(): ValidityCheckResult[] | null {
+    try {
+        const parsed = JSON.parse(sessionStorage.getItem(VALIDITY_STORAGE_KEY) || "null")
+        return Array.isArray(parsed) ? (parsed as ValidityCheckResult[]) : null
+    } catch {
+        return null
+    }
+}
 const FILTER_LABEL_KEY: Record<StatusFilter, string> = {
     all: "recordings.statusAll",
     recording: "recordings.statusRecording",
@@ -76,7 +88,7 @@ export default function RecordingsPage() {
     const [dialogOpen, setDialogOpen] = useState(false)
     const [editing, setEditing] = useState<Recording | null>(null)
     const [validityOpen, setValidityOpen] = useState(false)
-    const [validityResults, setValidityResults] = useState<ValidityCheckResult[] | null>(null)
+    const [validityResults, setValidityResults] = useState<ValidityCheckResult[] | null>(loadValidityResults)
     const [validityProgress, setValidityProgress] = useState<{ done: number; total: number } | null>(null)
     const validityAbortRef = useRef<AbortController | null>(null)
 
@@ -87,6 +99,16 @@ export default function RecordingsPage() {
     })
 
     const recordings = data?.recordings ?? []
+
+    // 检测结果写 sessionStorage（刷新后仍在，关标签页自动清）
+    useEffect(() => {
+        try {
+            if (validityResults) sessionStorage.setItem(VALIDITY_STORAGE_KEY, JSON.stringify(validityResults))
+            else sessionStorage.removeItem(VALIDITY_STORAGE_KEY)
+        } catch {
+            /* 存储满等异常不影响内存态 */
+        }
+    }, [validityResults])
 
     const platforms = useMemo(
         () => Array.from(new Set(recordings.map((r) => r.platform).filter(Boolean))) as string[],
@@ -219,6 +241,14 @@ export default function RecordingsPage() {
     const stopValidityCheck = () => {
         validityAbortRef.current?.abort()
     }
+
+    // 结果里清掉已不存在的任务（任务在别处被删除后）
+    useEffect(() => {
+        if (checkValidity.isPending || recordings.length === 0 || !validityResults) return
+        const ids = new Set(recordings.map((r) => r.rec_id))
+        const kept = validityResults.filter((r) => ids.has(r.rec_id))
+        if (kept.length !== validityResults.length) setValidityResults(kept)
+    }, [recordings, checkValidity.isPending, validityResults])
 
     const invalidRecIds = useMemo(
         () => (validityResults ?? []).filter((r) => r.status === "invalid").map((r) => r.rec_id),
