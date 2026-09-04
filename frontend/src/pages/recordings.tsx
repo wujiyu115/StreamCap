@@ -40,6 +40,7 @@ import {
 import { displayDuration, formatDuration, StatusBadge, stateLabelKey } from "@/components/status"
 import { translateError, useI18n } from "@/i18n"
 import { toast } from "sonner"
+import { CopyIdButton } from "@/components/copy-id-button"
 import { RecordingDialog } from "@/components/recording-dialog"
 import { ValidityCheckDialog } from "@/components/validity-check-dialog"
 
@@ -509,7 +510,10 @@ export default function RecordingsPage() {
                                         />
                                     </TableCell>
                                     <TableCell>
-                                        <div className="font-medium">{r.streamer_name || "-"}</div>
+                                        <div className="flex items-center gap-0.5">
+                                            <span className="truncate font-medium">{r.streamer_name || "-"}</span>
+                                            <CopyIdButton url={r.url} className="h-6 w-6 shrink-0 p-0" iconClassName="h-3 w-3" />
+                                        </div>
                                         <div className="max-w-48 truncate text-xs text-muted-foreground sm:max-w-64">
                                             {r.live_title || r.url}
                                         </div>
@@ -697,7 +701,10 @@ function RecordingCardView({
         >
             <div className="mb-2 flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                    <div className="truncate font-medium">{rec.streamer_name || rec.url}</div>
+                    <div className="flex items-center gap-0.5">
+                        <span className="truncate font-medium">{rec.streamer_name || rec.url}</span>
+                        <CopyIdButton url={rec.url} className="h-6 w-6 shrink-0 p-0" iconClassName="h-3 w-3" />
+                    </div>
                     <div className="text-xs text-muted-foreground">{rec.platform}</div>
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">

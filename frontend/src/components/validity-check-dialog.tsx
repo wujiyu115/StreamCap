@@ -1,5 +1,6 @@
-import { Copy, Loader2, Play, RotateCw, ScanSearch, ShieldCheck, Square, Trash2 } from "lucide-react"
+import { Loader2, Play, RotateCw, ScanSearch, ShieldCheck, Square, Trash2 } from "lucide-react"
 import type { ValidityCheckResult } from "@/api/types"
+import { CopyIdButton } from "@/components/copy-id-button"
 import { Button } from "@/components/ui/button"
 import {
     Dialog,
@@ -17,54 +18,6 @@ import {
     TableRow,
 } from "@/components/ui/table"
 import { useI18n } from "@/i18n"
-import { toast } from "sonner"
-
-function extractRoomId(url: string): string {
-    try {
-        const parts = new URL(url).pathname.split("/").filter(Boolean)
-        return parts.length ? parts[parts.length - 1] : url
-    } catch {
-        return url
-    }
-}
-
-async function copyToClipboard(text: string): Promise<boolean> {
-    // 只在安全上下文（https/localhost）用异步 clipboard API；
-    // http 下该 API 不可用或会被拒，且 await 失败后再降级会丢失用户手势导致 execCommand 也失败
-    if (window.isSecureContext && navigator.clipboard?.writeText) {
-        try {
-            await navigator.clipboard.writeText(text)
-            return true
-        } catch {
-            /* 降级 */
-        }
-    }
-    const ta = document.createElement("textarea")
-    ta.value = text
-    ta.setAttribute("readonly", "")
-    ta.style.position = "fixed"
-    ta.style.opacity = "0"
-    document.body.appendChild(ta)
-    if (/ipad|iphone|ipod/i.test(navigator.userAgent)) {
-        // iOS Safari 的 textarea.select() 不生效，需 Range + setSelectionRange 组合
-        const range = document.createRange()
-        range.selectNodeContents(ta)
-        const sel = window.getSelection()
-        sel?.removeAllRanges()
-        sel?.addRange(range)
-        ta.setSelectionRange(0, text.length)
-    } else {
-        ta.select()
-    }
-    let ok = false
-    try {
-        ok = document.execCommand("copy")
-    } catch {
-        ok = false
-    }
-    document.body.removeChild(ta)
-    return ok
-}
 
 export function ValidityCheckDialog({
     open,
@@ -94,15 +47,6 @@ export function ValidityCheckDialog({
     invalidCount: number
 }) {
     const { t, tf } = useI18n()
-
-    const handleCopy = async (r: ValidityCheckResult) => {
-        const text = extractRoomId(r.url)
-        if (await copyToClipboard(text)) {
-            toast.success(tf("recordings.validityCopied", { text }))
-        } else {
-            toast.error(t("recordings.validityCopyFailed"))
-        }
-    }
 
     const all = results ?? []
     const counts = all.reduce(
@@ -220,15 +164,7 @@ export function ValidityCheckDialog({
                                         </TableCell>
                                         <TableCell>
                                             <div className="flex items-center gap-1">
-                                                <Button
-                                                    variant="outline"
-                                                    size="sm"
-                                                    className="h-7 w-7 p-0"
-                                                    title={t("recordings.validityCopy")}
-                                                    onClick={() => handleCopy(r)}
-                                                >
-                                                    <Copy className="h-3.5 w-3.5" />
-                                                </Button>
+                                                <CopyIdButton url={r.url} variant="outline" className="h-7 w-7 p-0" />
                                                 <Button
                                                     variant="outline"
                                                     size="sm"
