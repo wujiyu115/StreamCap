@@ -130,6 +130,8 @@ body {
         height: auto;
         aspect-ratio: auto;
         padding-top: env(safe-area-inset-top);
+        /* 原生 controls 的进度条上移：不贴屏幕底（含无刘海设备） */
+        padding-bottom: calc(env(safe-area-inset-bottom) + 12px);
     }
 }
 

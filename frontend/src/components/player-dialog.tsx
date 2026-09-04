@@ -169,8 +169,9 @@ export function PlayerDialog({
     const isImage = item.type === "image"
     const metaParts = [item.ext, resolution, duration].filter(Boolean).join(" · ")
 
+    // 工具栏按钮统一 h-8 w-8，与折叠按钮同尺寸
     const iconBtn =
-        "h-10 w-10 shrink-0 border-white/20 bg-white/15 text-white hover:bg-white/30 hover:text-white disabled:opacity-30"
+        "h-8 w-8 shrink-0 border-white/20 bg-white/15 text-white hover:bg-white/30 hover:text-white disabled:opacity-30"
 
     return (
         <div
@@ -232,7 +233,7 @@ export function PlayerDialog({
                                 disabled={!hasPrev}
                                 onClick={onPrev}
                             >
-                                <ChevronLeft className="h-5 w-5" />
+                                <ChevronLeft className="h-4 w-4" />
                             </Button>
                             <Button
                                 variant="outline"
@@ -242,7 +243,7 @@ export function PlayerDialog({
                                 disabled={!hasNext}
                                 onClick={onNext}
                             >
-                                <ChevronRight className="h-5 w-5" />
+                                <ChevronRight className="h-4 w-4" />
                             </Button>
                             {!isImage && (
                                 <Button
@@ -253,7 +254,7 @@ export function PlayerDialog({
                                     onClick={toggleRotate}
                                 >
                                     {/* 手机旋转图标：与全屏 Maximize 明确区分 */}
-                                    <Smartphone className="h-5 w-5 -rotate-90" />
+                                    <Smartphone className="h-4 w-4 -rotate-90" />
                                 </Button>
                             )}
                             {isImage && (
@@ -264,7 +265,7 @@ export function PlayerDialog({
                                     title={t("media.rotate")}
                                     onClick={toggleRotate}
                                 >
-                                    <RotateCcw className="h-5 w-5" />
+                                    <RotateCcw className="h-4 w-4" />
                                 </Button>
                             )}
                             {!isImage && (
@@ -277,9 +278,9 @@ export function PlayerDialog({
                                     onClick={toggleFullscreen}
                                 >
                                     {isFullscreen ? (
-                                        <Minimize className="h-5 w-5" />
+                                        <Minimize className="h-4 w-4" />
                                     ) : (
-                                        <Maximize className="h-5 w-5" />
+                                        <Maximize className="h-4 w-4" />
                                     )}
                                 </Button>
                             )}
@@ -290,7 +291,7 @@ export function PlayerDialog({
                                 title={t("common.delete")}
                                 onClick={() => onDelete(item.rel_path)}
                             >
-                                <Trash2 className="h-5 w-5" />
+                                <Trash2 className="h-4 w-4" />
                             </Button>
                             <Button
                                 variant="outline"
@@ -302,7 +303,7 @@ export function PlayerDialog({
                                     onClose()
                                 }}
                             >
-                                <ChevronDown className="h-5 w-5" />
+                                <ChevronDown className="h-4 w-4" />
                             </Button>
                         </>
                     )}
@@ -311,8 +312,8 @@ export function PlayerDialog({
                         size="icon"
                         className={
                             barOpen
-                                ? `${iconBtn} h-8 w-8`
-                                : "h-8 w-8 border-white/20 bg-black/40 text-white hover:bg-black/60"
+                                ? iconBtn
+                                : "h-8 w-8 shrink-0 border-white/20 bg-black/40 text-white hover:bg-black/60"
                         }
                         title={barOpen ? t("media.collapseBar") : t("media.expandBar")}
                         onClick={() => setBarOpen((o) => !o)}
