@@ -15,7 +15,7 @@ import {
     Trash2,
 } from "lucide-react"
 import { useMemo, useState } from "react"
-import { useNavigate } from "react-router-dom"
+import { useNavigate, useSearchParams } from "react-router-dom"
 import { recordingsApi } from "@/api"
 import type { Recording } from "@/api/types"
 import { Button } from "@/components/ui/button"
@@ -57,7 +57,12 @@ export default function RecordingsPage() {
     const { t, tf } = useI18n()
     const navigate = useNavigate()
     const queryClient = useQueryClient()
-    const [filter, setFilter] = useState<StatusFilter>("all")
+    const [searchParams] = useSearchParams()
+    // 主页状态卡片跳转带 ?filter=xxx 预选状态 tab
+    const [filter, setFilter] = useState<StatusFilter>(() => {
+        const f = searchParams.get("filter")
+        return FILTERS.includes(f as StatusFilter) ? (f as StatusFilter) : "all"
+    })
     const [platform, setPlatform] = useState<string>("all")
     const [search, setSearch] = useState("")
     const [viewMode, setViewMode] = useState<"table" | "card">("table")

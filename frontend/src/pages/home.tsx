@@ -11,10 +11,10 @@ export default function HomePage() {
     const { data: info } = useQuery({ queryKey: ["system-info"], queryFn: systemApi.info, staleTime: 300_000 })
 
     const cards = [
-        { label: t("home.totalRecordings"), value: stats?.total_recordings ?? "-" },
-        { label: t("home.activeRecordings"), value: stats?.active_recordings ?? "-" },
-        { label: t("home.monitoring"), value: stats?.monitoring_recordings ?? "-" },
-        { label: t("home.stoppedMonitoring"), value: stats?.stopped_monitoring ?? "-" },
+        { label: t("home.totalRecordings"), value: stats?.total_recordings ?? "-", filter: "all" },
+        { label: t("home.activeRecordings"), value: stats?.active_recordings ?? "-", filter: "recording" },
+        { label: t("home.monitoring"), value: stats?.monitoring_recordings ?? "-", filter: "live" },
+        { label: t("home.stoppedMonitoring"), value: stats?.stopped_monitoring ?? "-", filter: "stopped" },
     ]
 
     const lang = document.documentElement.lang || "zh_CN"
@@ -32,12 +32,14 @@ export default function HomePage() {
 
             <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
                 {cards.map((c) => (
-                    <Card key={c.label}>
-                        <CardContent className="p-4">
-                            <div className="text-2xl font-bold">{c.value}</div>
-                            <div className="text-sm text-muted-foreground">{c.label}</div>
-                        </CardContent>
-                    </Card>
+                    <Link key={c.label} to={`/recordings?filter=${c.filter}`} className="group">
+                        <Card className="transition-colors group-hover:border-primary/50">
+                            <CardContent className="p-4">
+                                <div className="text-2xl font-bold">{c.value}</div>
+                                <div className="text-sm text-muted-foreground">{c.label}</div>
+                            </CardContent>
+                        </Card>
+                    </Link>
                 ))}
                 <Card>
                     <CardContent className="p-4">
