@@ -239,7 +239,7 @@ export function ValidityCheckDialog({
                     </div>
                 )}
 
-                <DialogFooter className="shrink-0 sm:justify-between">
+                <DialogFooter className="shrink-0 gap-2 sm:justify-between">
                     <Button
                         variant="destructive"
                         size="sm"
@@ -249,28 +249,23 @@ export function ValidityCheckDialog({
                         {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                         <span>{t("recordings.validityDeleteInvalid")}</span>
                     </Button>
-                    <div className="flex items-center gap-2">
-                        {checking ? (
-                            <Button variant="outline" size="sm" onClick={onStop}>
-                                <Square className="h-4 w-4" />
-                                <span>{t("recordings.validityStop")}</span>
-                            </Button>
-                        ) : (
-                            <>
-                                <Button size="sm" onClick={() => onStart(false)}>
-                                    <Play className="h-4 w-4" />
-                                    <span>{t("recordings.validityStart")}</span>
-                                </Button>
-                                <Button variant="outline" size="sm" onClick={() => onStart(true)}>
-                                    <RotateCw className="h-4 w-4" />
-                                    <span>{t("recordings.validityRecheck")}</span>
-                                </Button>
-                            </>
-                        )}
-                        <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
-                            {t("common.close")}
+                    {checking ? (
+                        <Button variant="outline" size="sm" onClick={onStop}>
+                            <Square className="h-4 w-4" />
+                            <span>{t("recordings.validityStop")}</span>
                         </Button>
-                    </div>
+                    ) : (
+                        <div className="flex items-center gap-2">
+                            <Button size="sm" onClick={() => onStart(false)}>
+                                <Play className="h-4 w-4" />
+                                <span>{t("recordings.validityStart")}</span>
+                            </Button>
+                            <Button variant="outline" size="sm" onClick={() => onStart(true)}>
+                                <RotateCw className="h-4 w-4" />
+                                <span>{t("recordings.validityRecheck")}</span>
+                            </Button>
+                        </div>
+                    )}
                 </DialogFooter>
             </DialogContent>
         </Dialog>
