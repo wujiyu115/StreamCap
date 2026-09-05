@@ -39,12 +39,17 @@ import { useSearchParams } from "react-router-dom"
 export default function MediaPage() {
     const { t, tf } = useI18n()
     const queryClient = useQueryClient()
-    // 录制管理「打开目录」跳转带 ?path=；导航内切换时同步更新 URL
+    // 录制管理「打开目录」跳转带 ?path=；导航内切换时同步更新 URL。
+    // 切 tab 会卸载本页组件，目录与滚动位置持久化到 localStorage，挂载时恢复
     const [searchParams, setSearchParams] = useSearchParams()
-    const [path, setPathState] = useState(() => searchParams.get("path") ?? "")
+    const [path, setPathState] = useState(
+        () => searchParams.get("path") ?? localStorage.getItem("media-path") ?? "",
+    )
+    const pathRef = useRef(path)
 
     const setPath = (next: string) => {
         setPathState(next)
+        localStorage.setItem("media-path", next)
         setSearchParams(next ? { path: next } : {}, { replace: true })
     }
     const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -71,6 +76,48 @@ export default function MediaPage() {
         queryKey: ["media-stats", path],
         queryFn: () => mediaApi.stats(path),
     })
+
+    // 恢复持久化的滚动位置表，并把恢复出的目录同步进 URL（保持地址栏一致）
+    useEffect(() => {
+        try {
+            scrollPos.current = JSON.parse(localStorage.getItem("media-scroll") ?? "{}") as Record<
+                string,
+                number
+            >
+        } catch {
+            scrollPos.current = {}
+        }
+        pendingRestore.current = scrollPos.current[pathRef.current] ?? 0
+        // 挂载路径（含 ?path= 跳转进入的）也记为「上次目录」，切 tab 回来回到这里
+        localStorage.setItem("media-path", pathRef.current)
+        if (pathRef.current && searchParams.get("path") !== pathRef.current) {
+            setSearchParams({ path: pathRef.current }, { replace: true })
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [])
+
+    useEffect(() => {
+        pathRef.current = path
+    }, [path])
+
+    // 实时记录当前目录滚动位置到内存表（卸载时统一持久化）。
+    // 卸载时 passive cleanup 晚于 DOM 移除，读不到 scroller，所以不能在卸载时才读位置
+    useEffect(() => {
+        const scroller = getScroller()
+        if (!scroller) return
+        const onScroll = () => {
+            scrollPos.current[pathRef.current] = scroller.scrollTop
+        }
+        scroller.addEventListener("scroll", onScroll, { passive: true })
+        return () => {
+            scroller.removeEventListener("scroll", onScroll)
+            try {
+                localStorage.setItem("media-scroll", JSON.stringify(scrollPos.current))
+            } catch {
+                // localStorage 满等异常时静默放弃
+            }
+        }
+    }, [])
 
     useEffect(() => {
         if (pendingRestore.current != null) {

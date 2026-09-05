@@ -169,20 +169,21 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                     </div>
                 </aside>
 
-                {/* 主内容区：移动端留出底部导航高度；flex 让页面可实现
+                {/* 主内容区：移动端留出底部导航高度（含 iOS 底部安全区）；flex 让页面可实现
                     「头部固定 + 仅列表滚动」布局 */}
-                <main className="min-w-0 flex-1 overflow-auto pb-16 md:pb-0">
+                <main className="min-w-0 flex-1 overflow-auto pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-0">
                     <div className="mx-auto flex h-full max-w-7xl flex-col p-4 md:p-6">{children}</div>
                 </main>
 
-                {/* 移动端底部导航 */}
-                <nav className="fixed inset-x-0 bottom-0 z-10 flex h-16 items-stretch border-t bg-sidebar md:hidden">
+                {/* 移动端底部导航：整格可点（flex-1 + items-stretch）；
+                    pb 让出 iOS 底部 Home 指示条手势区，避免文字下方点击被系统吞掉 */}
+                <nav className="fixed inset-x-0 bottom-0 z-10 flex h-[calc(4rem+env(safe-area-inset-bottom))] items-stretch border-t bg-sidebar pb-[env(safe-area-inset-bottom)] md:hidden">
                     {NAV_ITEMS.map((item) => (
                         <NavLink
                             key={item.to}
                             to={item.to}
                             className={({ isActive }) =>
-                                `flex flex-1 flex-col items-center justify-center gap-1 text-[11px] transition-colors ${
+                                `flex flex-1 flex-col items-center justify-center gap-1 rounded-md text-[11px] transition-colors active:bg-accent ${
                                     isActive ? "text-primary" : "text-muted-foreground"
                                 }`
                             }
