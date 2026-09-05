@@ -1,5 +1,9 @@
 import { api } from "./client"
-import type { Recording, RecordingStatusesResponse, ValidityCheckResponse } from "./types"
+import type { AnalyticsOverview, Recording, RecordingStatusesResponse, ValidityCheckResponse } from "./types"
+
+export const analyticsApi = {
+    overview: (days: number) => api.get<AnalyticsOverview>(`/analytics/overview?days=${days}`),
+}
 
 export const recordingsApi = {
     list: () => api.get<{ recordings: Recording[] }>("/recordings"),

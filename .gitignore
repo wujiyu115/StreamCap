@@ -89,6 +89,7 @@ ipython_config.py
 /config/cookies.json
 /config/web_auth.json
 /config/room_validity.json
+/config/analytics/
 .ruff_cache/
 logs/
 storage/

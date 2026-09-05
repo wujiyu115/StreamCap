@@ -11,6 +11,7 @@ from ...models.recording.recording_model import Recording
 from ...models.recording.recording_status_model import RecordingStatus
 from ...utils import utils
 from ...utils.logger import logger
+from ..analytics.analytics_store import AnalyticsStore
 from ..platforms import room_validity
 from ..platforms.platform_handlers import get_platform_info
 from ..runtime.process_manager import BackgroundService
@@ -34,6 +35,7 @@ class RecordingManager:
         self.loop_time_seconds = None
         self.load_recordings()
         self.validity_cache = services.config_manager.load_validity_cache_config() or {}
+        self.analytics = AnalyticsStore(services.config_manager.analytics_dir)
         self._ = {}
         self.load()
         self.initialize_dynamic_state()
@@ -71,11 +73,14 @@ class RecordingManager:
             "recency_priority_enabled": bool(cfg.get("monitor_recency_priority_enabled", True)),
         }
 
-    def _record_request_result(self, ok: bool) -> None:
+    def _record_request_result(self, ok: bool, platform_key: str | None = None) -> None:
         with self._results_lock:
             self._request_results.append((ok, time.time()))
             if not ok:
                 self._round_failures += 1
+        if platform_key:
+            self.analytics.record_check(platform_key, ok, time.time())
+            self.analytics.maybe_flush()
 
     @asynccontextmanager
     async def _platform_slot(self, platform_key: str):
@@ -530,6 +535,8 @@ class RecordingManager:
             gap = now_ts - recording.last_live_time
             prev = recording.avg_live_interval
             recording.avg_live_interval = gap if prev is None else prev * 0.5 + gap * 0.5
+        self.analytics.record_session(recording.rec_id, now_ts)
+        self.analytics.maybe_flush()
 
     @staticmethod
     def _is_tracked(recording: Recording) -> bool:
@@ -653,6 +660,7 @@ class RecordingManager:
                 await self.check_free_space()
                 if self.services.recording_enabled:
                     await self.check_all_live_status()
+                self.analytics.maybe_flush()
                 if not immediate_check_on_startup:
                     await asyncio.sleep(interval)
 
@@ -761,7 +769,7 @@ class RecordingManager:
             recording.detection_time = datetime.now().time()
             stream_info = await recorder.fetch_stream()
             logger.info(f"Stream Data: {stream_info}")
-        self._record_request_result(ok=bool(stream_info and stream_info.anchor_name))
+        self._record_request_result(ok=bool(stream_info and stream_info.anchor_name), platform_key=platform_key)
         # 过期守卫：排队期间任务可能被停止监控、编辑 URL 或删除。旧检查的
         # 结果必须作废——否则会用旧房间数据覆盖任务，甚至对已停止监控/已
         # 删除的任务启动录制（节奏门把这段竞态窗口从毫秒级放大到了分钟级）

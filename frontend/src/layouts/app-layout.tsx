@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { Home, Info, LogOut, Menu, Moon, Radio, Settings, Sun, Video } from "lucide-react"
+import { BarChart3, Home, Info, LogOut, Menu, Moon, Radio, Settings, Sun, Video } from "lucide-react"
 import { useEffect, useState } from "react"
 import { NavLink } from "react-router-dom"
 import { authApi } from "@/api"
@@ -53,6 +53,7 @@ const NAV_ITEMS = [
     { to: "/home", icon: Home, labelKey: "nav.home" },
     { to: "/recordings", icon: Radio, labelKey: "nav.recordings" },
     { to: "/media", icon: Video, labelKey: "nav.media" },
+    { to: "/analytics", icon: BarChart3, labelKey: "nav.analytics" },
     { to: "/settings", icon: Settings, labelKey: "nav.settings" },
     { to: "/about", icon: Info, labelKey: "nav.about" },
 ]

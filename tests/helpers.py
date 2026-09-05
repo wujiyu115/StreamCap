@@ -73,6 +73,31 @@ def offline_stream_info(anchor="某主播"):
     return type("StreamData", (), {"anchor_name": anchor, "is_live": False, "title": "t"})()
 
 
+class FakeAnalytics:
+    """替换 AnalyticsStore：只记录调用，不落盘"""
+
+    def __init__(self):
+        self.sessions = []
+        self.segments = []
+        self.checks = []
+        self.flushes = 0
+
+    def record_session(self, rec_id, ts):
+        self.sessions.append((rec_id, ts))
+
+    def record_segment(self, rec_id, start_ts, duration_seconds, files):
+        self.segments.append((rec_id, start_ts, duration_seconds, files))
+
+    def record_check(self, platform_key, ok, ts):
+        self.checks.append((platform_key, ok, ts))
+
+    def maybe_flush(self):
+        self.flushes += 1
+
+    def flush(self):
+        self.flushes += 1
+
+
 def make_manager(user_config=None):
     """构造只含被测逻辑所需状态的 RecordingManager（不触发真实初始化）"""
     mgr = RecordingManager.__new__(RecordingManager)
@@ -81,6 +106,7 @@ def make_manager(user_config=None):
     mgr.settings = settings
     mgr._ = dict(I18N_KEYS)
     mgr.loop_time_seconds = 180
+    mgr.analytics = FakeAnalytics()
     mgr.platform_semaphores = defaultdict(lambda: asyncio.Semaphore(3))
     mgr._request_spacing_locks = defaultdict(asyncio.Lock)
     mgr._next_slot_at = {}

@@ -25,6 +25,7 @@
     "home": "Home",
     "recordings": "Recordings",
     "media": "Media",
+    "analytics": "Analytics",
     "settings": "Settings",
     "about": "About"
   },
@@ -400,5 +401,32 @@
     "poseTaskRunning": "A task is already running, stop it or wait",
     "poseQueueFull": "Wait queue is full",
     "poseNoRunningTask": "No running task"
+  },
+  "analytics": {
+    "title": "Analytics",
+    "daysOption": "{n} days",
+    "sessionsLabel": "Sessions",
+    "durationLabel": "Total duration",
+    "filesLabel": "Files",
+    "activeAnchorsLabel": "Active anchors / monitored",
+    "trendTitle": "Daily sessions",
+    "trendUnit": "sessions",
+    "trendHint": "Sessions per day",
+    "histogramTitle": "24h live-start distribution (all time)",
+    "topSessionsTitle": "Top recorded duration",
+    "topSingleDayTitle": "Longest single day",
+    "topFrequencyTitle": "Most frequent streamers",
+    "avgInterval": "avg {h} h / session",
+    "idleTitle": "Idle monitors",
+    "idleEmpty": "No idle monitoring tasks",
+    "idleDays": "{d} days since last live",
+    "daysLeft": "{d} days left",
+    "neverRecorded": "Never recorded",
+    "platformTitle": "Detection health",
+    "failureRate": "fail {r}%",
+    "noData": "No data yet",
+    "hourShort": "h",
+    "minShort": "min",
+    "storageSize": "stored data {size} · {n} files"
   }
 }

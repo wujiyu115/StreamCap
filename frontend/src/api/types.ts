@@ -82,6 +82,32 @@ export interface ValidityCheckResponse {
     pending: number
 }
 
+export interface AnalyticsOverview {
+    days: number
+    summary: {
+        sessions: number
+        seconds: number
+        files: number
+        active_anchors: number
+        monitoring: number
+        checks: number
+        check_failures: number
+        sessions_prev: number
+        sessions_change_pct: number | null
+    }
+    trend: { date: string; sessions: number; seconds: number; files: number }[]
+    rankings: {
+        top_sessions: { rec_id: string; name: string; sessions: number; seconds: number; files: number }[]
+        top_single_day: { rec_id: string; name: string; date: string; seconds: number }[]
+        top_frequency: { rec_id: string; name: string; live_count: number; avg_interval_hours: number | null }[]
+    }
+    idle: { rec_id: string; name: string; idle_days: number; days_left: number | null }[]
+    never_recorded: { rec_id: string; name: string }[]
+    histogram: number[]
+    platform_checks: { platform: string; checks: number; failures: number; failure_rate: number }[]
+    storage: { total_bytes: number; files: { name: string; bytes: number }[] }
+}
+
 export interface MediaItem {
     type: "folder" | "video" | "image"
     name: string

@@ -4,6 +4,7 @@ import { createBrowserRouter, Navigate, Outlet } from "react-router-dom"
 import { authApi } from "@/api"
 import { AppLayout } from "@/layouts/app-layout"
 import { AuthGate } from "@/layouts/auth-gate"
+import AnalyticsPage from "@/pages/analytics"
 import AboutPage from "@/pages/about"
 import HomePage from "@/pages/home"
 import LoginPage from "@/pages/login"
@@ -53,6 +54,7 @@ export const router = createBrowserRouter([
             { path: "/home", element: <HomePage /> },
             { path: "/recordings", element: <RecordingsPage /> },
             { path: "/media", element: <MediaPage /> },
+            { path: "/analytics", element: <AnalyticsPage /> },
             { path: "/settings", element: <SettingsPage /> },
             { path: "/about", element: <AboutPage /> },
         ],

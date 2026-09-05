@@ -444,6 +444,27 @@ class LiveStreamRecorder:
             return_code = process.returncode
             safe_return_codes = {0, 255}
 
+            # 录制分析：本次 ffmpeg 运行的时长与产出文件数计入开始日期
+            start_ts = getattr(self, "recording_start_time", None)
+            if start_ts:
+                try:
+                    if self.segment_record:
+                        prefix = os.path.basename(save_file_path).rsplit("_", maxsplit=1)[0]
+                        files = sum(
+                            1 for p in utils.get_file_paths(os.path.dirname(save_file_path))
+                            if os.path.basename(p).startswith(prefix)
+                        )
+                    else:
+                        files = 1 if os.path.exists(save_file_path) else 0
+                    analytics = getattr(self.services.recording_manager, "analytics", None)
+                    if analytics is not None:
+                        analytics.record_segment(
+                            self.recording.rec_id, start_ts, time.time() - start_ts, files
+                        )
+                        analytics.maybe_flush()
+                except Exception as e:
+                    logger.warning(f"Failed to record analytics segment: {e}")
+
             if return_code not in safe_return_codes:
                 error_output = stderr.decode(errors="replace").strip()
                 if error_output:

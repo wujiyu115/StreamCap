@@ -25,6 +25,7 @@
     "home": "主页",
     "recordings": "录制管理",
     "media": "视频管理",
+    "analytics": "数据分析",
     "settings": "设置",
     "about": "关于"
   },
@@ -400,5 +401,32 @@
     "poseTaskRunning": "已有任务在运行，请先停止或等待完成",
     "poseQueueFull": "等待队列已满",
     "poseNoRunningTask": "没有正在运行的任务"
+  },
+  "analytics": {
+    "title": "录制分析",
+    "daysOption": "{n} 天",
+    "sessionsLabel": "录制场次",
+    "durationLabel": "录制总时长",
+    "filesLabel": "产出文件",
+    "activeAnchorsLabel": "活跃主播/监控",
+    "trendTitle": "每日录制场次",
+    "trendUnit": "场",
+    "trendHint": "每日录制场次",
+    "histogramTitle": "24 小时开播分布（累计）",
+    "topSessionsTitle": "录制时长排行",
+    "topSingleDayTitle": "单日最长录制",
+    "topFrequencyTitle": "开播最频繁",
+    "avgInterval": "平均 {h} 小时/场",
+    "idleTitle": "低效监控清单",
+    "idleEmpty": "没有低效监控任务",
+    "idleDays": "已 {d} 天未开播",
+    "daysLeft": "剩 {d} 天",
+    "neverRecorded": "从未录到过",
+    "platformTitle": "检测健康度",
+    "failureRate": "失败率 {r}%",
+    "noData": "暂无数据",
+    "hourShort": "小时",
+    "minShort": "分钟",
+    "storageSize": "持久化数据 {size} · {n} 个文件"
   }
 }

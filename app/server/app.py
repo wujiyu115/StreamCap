@@ -11,7 +11,7 @@ from ..core.pose.pose_task_manager import PoseTaskManager
 from ..core.runtime.backend_services import BackendServices
 from ..utils.logger import logger
 from .deps import SESSION_COOKIE
-from .routers import auth, media, pose, recordings, settings as settings_router, system
+from .routers import analytics, auth, media, pose, recordings, settings as settings_router, system
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -55,6 +55,7 @@ def create_app(run_path: str | None = None) -> FastAPI:
     app.include_router(media.router)
     app.include_router(pose.router)
     app.include_router(system.router)
+    app.include_router(analytics.router)
 
     _mount_spa(app)
 

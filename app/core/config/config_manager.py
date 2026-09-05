@@ -27,6 +27,7 @@ class ConfigManager:
         self.validity_cache_config_path = os.path.join(self.config_path, "room_validity.json")
         self.accounts_config_path = os.path.join(self.config_path, "accounts.json")
         self.web_auth_config_path = os.path.join(self.config_path, "web_auth.json")
+        self.analytics_dir = os.path.join(self.config_path, "analytics")
 
         template_dir = os.path.join(run_path, self.TEMPLATE_DIR_NAME)
         if os.path.isdir(template_dir):
