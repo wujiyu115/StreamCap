@@ -54,6 +54,11 @@ class RecordingManager:
         # 周期监控、有效性检测共享；锁与信号量同样只在后台 loop 使用
         self._request_spacing_locks = defaultdict(asyncio.Lock)
         self._next_slot_at: dict[str, float] = {}
+        # 优先级等待队列：priority（新添加/手动开启/快检）插到 normal 前，
+        # 全局节奏不变，只是交互性检查不排在长队尾
+        self._slot_waiters = defaultdict(lambda: {"priority": deque(), "normal": deque()})
+        self._slot_intervals: dict[str, float] = {}
+        self._dispenser_tasks: dict[str, asyncio.Task] = {}
 
     # ── 监控自保护：配置读取 ──────────────────────────────
 
@@ -83,23 +88,62 @@ class RecordingManager:
             self.analytics.maybe_flush()
 
     @asynccontextmanager
-    async def _platform_slot(self, platform_key: str):
+    async def _platform_slot(self, platform_key: str, priority: bool = False):
         """平台请求节奏门：信号量限并发，最小间隔限制请求发起速率。
 
         相邻两次请求的发起时刻至少隔 platform_min_interval 秒，把「一轮
         任务在数秒内爆发完」摊成匀速流，避免超出平台单位时间容忍度触发
         风控。周期监控与有效性检测共用同一份节奏预算。interval<=0 时仅
         保留并发限制（保持旧行为）。
+
+        等待者分两档队列：priority（新添加任务、手动开启监控、录制结束
+        快检）优先放行——全局节奏不变，只是不排在长队尾，交互操作秒级
+        出结果。
         """
         interval = self._monitor_config()["platform_min_interval"]
         async with self.platform_semaphores[platform_key]:
             if interval > 0:
-                async with self._request_spacing_locks[platform_key]:
-                    wait = self._next_slot_at.get(platform_key, 0.0) - time.monotonic()
-                    if wait > 0:
-                        await asyncio.sleep(wait)
-                    self._next_slot_at[platform_key] = time.monotonic() + interval
+                self._slot_intervals[platform_key] = interval
+                fut = asyncio.get_running_loop().create_future()
+                queue = self._slot_waiters[platform_key]["priority" if priority else "normal"]
+                queue.append(fut)
+                self._ensure_dispenser(platform_key)
+                try:
+                    await fut
+                finally:
+                    try:
+                        queue.remove(fut)
+                    except ValueError:
+                        pass
             yield
+
+    def _ensure_dispenser(self, platform_key: str) -> None:
+        task = self._dispenser_tasks.get(platform_key)
+        if task is None or task.done():
+            self._dispenser_tasks[platform_key] = asyncio.create_task(
+                self._slot_dispenser(platform_key)
+            )
+
+    async def _slot_dispenser(self, platform_key: str) -> None:
+        """按节奏依次放行等待者，优先队列非空时优先；无等待者即退出。"""
+        while True:
+            queues = self._slot_waiters[platform_key]
+            fut = None
+            if queues["priority"]:
+                fut = queues["priority"].popleft()
+            elif queues["normal"]:
+                fut = queues["normal"].popleft()
+            else:
+                self._dispenser_tasks.pop(platform_key, None)
+                return
+            wait = self._next_slot_at.get(platform_key, 0.0) - time.monotonic()
+            if wait > 0:
+                await asyncio.sleep(wait)
+            self._next_slot_at[platform_key] = time.monotonic() + self._slot_intervals.get(
+                platform_key, 2.0
+            )
+            if not fut.done():
+                fut.set_result(None)
 
     def _reset_round_failures(self) -> None:
         with self._results_lock:
@@ -231,7 +275,7 @@ class RecordingManager:
             self.services.broadcast_card_update(recording)
             self.services.broadcast_pubsub("update", recording)
 
-            self.services.run_coro(self.check_if_live(recording))
+            self.services.run_coro(self.check_if_live(recording, priority=True))
 
             if auto_save:
                 self.services.run_coro(self.persist_recordings())
@@ -479,14 +523,16 @@ class RecordingManager:
             if recording.rec_id in self.active_recorders:
                 continue
 
-            # 快检：录制结束后的短窗口内不等完整间隔
+            # 快检：录制结束后的短窗口内不等完整间隔（且走节奏门优先队列）
             interval = base_interval
+            fast_recheck = False
             if (
                 recording.record_finished_at
                 and cfg["post_record_recheck"] > 0
                 and now - recording.record_finished_at <= cfg["post_record_recheck"] * 2
             ):
                 interval = min(interval, cfg["post_record_recheck"])
+                fast_recheck = True
 
             # 退避：连续失败间隔翻倍
             if cfg["backoff_enabled"] and recording.backoff_multiplier > 1:
@@ -498,7 +544,7 @@ class RecordingManager:
 
             is_exceeded = utils.is_time_interval_exceeded(recording.detection_time, interval)
             if not recording.detection_time or is_exceeded or recording.next_check_after <= now:
-                self.services.run_coro(self.check_if_live(recording))
+                self.services.run_coro(self.check_if_live(recording, priority=fast_recheck))
 
         if skipped_unsupported:
             logger.info(f"本轮跳过 {skipped_unsupported} 个已标记不支持的任务")
@@ -672,23 +718,26 @@ class RecordingManager:
         else:
             logger.info("Periodic live check task already running globally, skipping initialization")
 
-    async def check_if_live(self, recording: Recording):
+    async def check_if_live(self, recording: Recording, priority: bool = False):
         """Check if the live stream is available, fetch stream data and update is_live status.
 
         in-flight 守卫：任务已有检查协程在排队/执行时跳过重复派发——节奏门
         使请求排队成为常态（任务多时一轮消化不完），没有守卫的话调度器每轮
         都会对排队中的任务再派协程，队列越滚越大、同一任务连发多次请求。
+
+        priority：交互性检查（新添加/手动开启监控/录制结束快检）走节奏门
+        优先队列，秒级出结果。
         """
         if recording.check_in_flight:
             logger.debug(f"Skip check_if_live, check already in flight: {recording.url}")
             return
         recording.check_in_flight = True
         try:
-            await self._check_if_live_impl(recording)
+            await self._check_if_live_impl(recording, priority)
         finally:
             recording.check_in_flight = False
 
-    async def _check_if_live_impl(self, recording: Recording):
+    async def _check_if_live_impl(self, recording: Recording, priority: bool = False):
         recording.manually_stopped = False
         if recording.is_recording or recording.stopping_in_progress:
             logger.debug(f"Skip check_if_live because recording is busy: {recording.url}")
@@ -763,7 +812,7 @@ class RecordingManager:
         }
 
         recorder = LiveStreamRecorder(self.services, recording, recording_info)
-        async with self._platform_slot(platform_key):
+        async with self._platform_slot(platform_key, priority):
             # detection_time 以实际请求发起时刻为准：任务在节奏门前可能排队
             # 数轮，若沿用派发时刻，调度器会在检查完成后立刻误判超时重派
             recording.detection_time = datetime.now().time()

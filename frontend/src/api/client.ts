@@ -15,27 +15,48 @@ export class ApiError extends Error {
     }
 }
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+const DEFAULT_TIMEOUT_MS = 30_000
+
+async function request<T>(path: string, options: RequestInit = {}, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<T> {
+    // 超时兜底：iOS 切后台/锁屏会把在途 fetch 无限挂起，mutation 的
+    // isPending 永远为 true，按钮永久禁用且无提示——必须让挂起变成错误
+    const controller = new AbortController()
+    const callerSignal = options.signal
+    if (callerSignal) {
+        if (callerSignal.aborted) controller.abort()
+        else callerSignal.addEventListener("abort", () => controller.abort(), { once: true })
+    }
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
     const init: RequestInit = {
         credentials: "same-origin",
         ...options,
+        signal: controller.signal,
         headers: {
             "Content-Type": "application/json",
             ...(options.headers ?? {}),
         },
     }
-    const response = await fetch(`/api${path}`, init)
-    if (!response.ok) {
-        let detail = response.statusText
-        try {
-            const body = await response.json()
-            detail = body.detail ?? detail
-        } catch {
-            /* ignore body parse errors */
+    try {
+        const response = await fetch(`/api${path}`, init)
+        if (!response.ok) {
+            let detail = response.statusText
+            try {
+                const body = await response.json()
+                detail = body.detail ?? detail
+            } catch {
+                /* ignore body parse errors */
+            }
+            throw new ApiError(response.status, detail)
         }
-        throw new ApiError(response.status, detail)
+        return (await response.json()) as T
+    } catch (e) {
+        if (e instanceof DOMException && e.name === "AbortError" && !callerSignal?.aborted) {
+            throw new ApiError(408, "err.requestTimeout")
+        }
+        throw e
+    } finally {
+        clearTimeout(timer)
     }
-    return (await response.json()) as T
 }
 
 export const api = {

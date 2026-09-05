@@ -400,7 +400,8 @@
     "poseFilesWriting": "Files still being written (recording in progress?)",
     "poseTaskRunning": "A task is already running, stop it or wait",
     "poseQueueFull": "Wait queue is full",
-    "poseNoRunningTask": "No running task"
+    "poseNoRunningTask": "No running task",
+    "requestTimeout": "Request timed out, please retry"
   },
   "analytics": {
     "title": "Analytics",

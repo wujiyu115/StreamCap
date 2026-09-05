@@ -1,4 +1,4 @@
-"""平台请求节奏门：相邻请求发起时刻 ≥ 最小间隔；interval=0 保持旧行为"""
+"""平台请求节奏门：相邻请求发起时刻 ≥ 最小间隔；优先队列插队；interval=0 保持旧行为"""
 import asyncio
 import time
 
@@ -55,3 +55,31 @@ def test_spacing_shared_per_platform():
 
     elapsed = asyncio.run(run())
     assert elapsed < 0.1, f"其他平台不应被 douyin 的排期阻塞，实际 {elapsed:.2f}s"
+
+
+def test_priority_jumps_queue():
+    """优先请求插队：晚到的 priority 应先于晚到的 normal 放行，全局节奏不变"""
+    mgr = make_manager({"monitor_platform_min_interval_seconds": 0.1})
+    order = []
+    starts = []
+
+    async def worker(priority, name):
+        async with mgr._platform_slot("douyin", priority):
+            starts.append(time.monotonic())
+            order.append(name)
+
+    async def run():
+        # 先派 4 个 normal，等它们全部入队
+        tasks = [asyncio.create_task(worker(False, f"n{i}")) for i in range(4)]
+        await asyncio.sleep(0.03)
+        # 此时再投一个 priority 和一个 normal：P 应插到 n4 前面
+        tasks.append(asyncio.create_task(worker(True, "P")))
+        tasks.append(asyncio.create_task(worker(False, "n4")))
+        await asyncio.gather(*tasks)
+
+    asyncio.run(run())
+
+    assert order.index("P") < order.index("n4"), f"优先应插队，实际顺序 {order}"
+    gaps = [starts[i + 1] - starts[i] for i in range(len(starts) - 1)]
+    assert all(g >= 0.09 for g in gaps), f"插队不得破坏全局节奏，实际间隔 {gaps}"
+

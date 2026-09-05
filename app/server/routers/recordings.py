@@ -158,7 +158,7 @@ async def create_recording(
         recording.scheduled_start_time, recording.monitor_hours
     )
     if recording.monitor_status:
-        services.run_coro(rm.check_if_live(recording))
+        services.run_coro(rm.check_if_live(recording, priority=True))
     return serialize_recording(recording, media_root=services.settings_config.get_video_save_path())
 
 
@@ -221,7 +221,7 @@ async def create_recordings_batch(
         recording.scheduled_time_range = await rm.get_scheduled_time_range(
             recording.scheduled_start_time, recording.monitor_hours
         )
-        services.run_coro(rm.check_if_live(recording))
+        services.run_coro(rm.check_if_live(recording, priority=True))
         created.append(serialize_recording(recording, media_root=services.settings_config.get_video_save_path()))
 
     return {"created": len(created), "recordings": created}
@@ -259,6 +259,9 @@ async def update_recording(
     # 重新开启监控或换 URL（新房间）时重置未开播宽限期
     if updates.get("monitor_status") or "url" in updates:
         recording.last_live_time = time.time()
+    if updates.get("monitor_status"):
+        # 编辑里开启监控等同手动开启：立即走优先检查
+        services.run_coro(rm.check_if_live(recording, priority=True))
     services.run_coro(rm.persist_recordings())
     return serialize_recording(recording, media_root=services.settings_config.get_video_save_path())
 

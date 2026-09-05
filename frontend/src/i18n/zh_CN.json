@@ -400,7 +400,8 @@
     "poseFilesWriting": "以下文件仍在写入（可能录制中）",
     "poseTaskRunning": "已有任务在运行，请先停止或等待完成",
     "poseQueueFull": "等待队列已满",
-    "poseNoRunningTask": "没有正在运行的任务"
+    "poseNoRunningTask": "没有正在运行的任务",
+    "requestTimeout": "请求超时，请重试"
   },
   "analytics": {
     "title": "录制分析",

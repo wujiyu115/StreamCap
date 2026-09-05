@@ -10,7 +10,7 @@ def test_concurrent_dispatch_runs_once():
     rec = make_recording()
     runs = []
 
-    async def slow_impl(r):
+    async def slow_impl(r, priority=False):
         runs.append(1)
         await asyncio.sleep(0.05)
 
@@ -30,10 +30,10 @@ def test_exception_resets_in_flight_flag():
     mgr = make_manager()
     rec = make_recording()
 
-    async def boom(r):
+    async def boom(r, priority=False):
         raise RuntimeError("boom")
 
-    async def ok(r):
+    async def ok(r, priority=False):
         runs.append(1)
 
     runs = []

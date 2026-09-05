@@ -110,6 +110,9 @@ def make_manager(user_config=None):
     mgr.platform_semaphores = defaultdict(lambda: asyncio.Semaphore(3))
     mgr._request_spacing_locks = defaultdict(asyncio.Lock)
     mgr._next_slot_at = {}
+    mgr._slot_waiters = defaultdict(lambda: {"priority": deque(), "normal": deque()})
+    mgr._slot_intervals = {}
+    mgr._dispenser_tasks = {}
     mgr.active_recorders = {}
     mgr.validity_cache = {}
     mgr._request_results = deque(maxlen=100)
