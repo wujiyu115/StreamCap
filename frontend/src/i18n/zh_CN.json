@@ -359,7 +359,13 @@
     "monitorRecheck": "录制结束快检（秒）",
     "monitorRecheckHint": "录制结束后短间隔重检，防主播卡顿少录",
     "monitorUnsupportedLimit": "连续失败标记上限（次）",
-    "monitorUnsupportedLimitHint": "超限任务标记不支持、停止轮询；编辑任务可重置"
+    "monitorUnsupportedLimitHint": "超限任务标记不支持、停止轮询；编辑任务可重置",
+    "autoStopMonitorDays": "未开播自动停监控（天）",
+    "autoStopMonitorDaysHint": "0=不启用。距上次开播超过 N 天自动停止监控，重新开启监控或编辑任务会重新计时",
+    "monitorMinInterval": "平台请求最小间隔（秒）",
+    "monitorMinIntervalHint": "同一平台相邻检测请求的最小间隔，摊开请求防风控；0=不限",
+    "monitorRecencyPriority": "活跃房间优先监控",
+    "monitorRecencyPriorityHint": "两档：最近 2 天播过、或平均开播间隔 ≤3 天（自动统计）的房间每轮都查，其余每 2 轮一次（约 6 分钟）；开播后自动回到高档"
   },
   "about": {
     "title": "关于",

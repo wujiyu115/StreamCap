@@ -596,6 +596,9 @@ function RecordingSettings() {
                 { key: "monitor_dynamic_concurrency_enabled", label: t("settings.monitorDynamicConc"), type: "switch", hint: t("settings.monitorDynamicConcHint") },
                 { key: "monitor_post_record_recheck_seconds", label: t("settings.monitorRecheck"), type: "number", hint: t("settings.monitorRecheckHint") },
                 { key: "monitor_unsupported_failure_limit", label: t("settings.monitorUnsupportedLimit"), type: "number", hint: t("settings.monitorUnsupportedLimitHint") },
+                { key: "auto_stop_monitor_days", label: t("settings.autoStopMonitorDays"), type: "number", hint: t("settings.autoStopMonitorDaysHint") },
+                { key: "monitor_platform_min_interval_seconds", label: t("settings.monitorMinInterval"), type: "number", hint: t("settings.monitorMinIntervalHint") },
+                { key: "monitor_recency_priority_enabled", label: t("settings.monitorRecencyPriority"), type: "switch", hint: t("settings.monitorRecencyPriorityHint") },
             ],
         },
     ]

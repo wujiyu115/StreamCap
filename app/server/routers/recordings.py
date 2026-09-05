@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 import uuid
 from datetime import datetime
 
@@ -255,6 +256,9 @@ async def update_recording(
     recording.backoff_multiplier = 1
     recording.unsupported = False
     recording.next_check_after = 0.0
+    # 重新开启监控或换 URL（新房间）时重置未开播宽限期
+    if updates.get("monitor_status") or "url" in updates:
+        recording.last_live_time = time.time()
     services.run_coro(rm.persist_recordings())
     return serialize_recording(recording, media_root=services.settings_config.get_video_save_path())
 

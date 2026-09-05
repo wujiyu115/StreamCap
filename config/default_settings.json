@@ -74,6 +74,9 @@
     "monitor_post_record_recheck_seconds": 30,
     "monitor_unsupported_failure_limit": 10,
     "monitor_dynamic_concurrency_enabled": true,
+    "auto_stop_monitor_days": 0,
+    "monitor_platform_min_interval_seconds": 2,
+    "monitor_recency_priority_enabled": true,
     "last_route": "/home",
     "check_live_on_browser_refresh": false,
     "pose_detection": {

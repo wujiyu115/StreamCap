@@ -1,4 +1,5 @@
 from datetime import timedelta
+import time
 
 
 class Recording:
@@ -67,10 +68,13 @@ class Recording:
         # backoff_multiplier 失败退避倍数（1=正常，失败翻倍至上限，成功重置）
         # unsupported 连续失败超限置 True，轮询跳过（编辑任务可重置）
         # next_check_after 时间戳，抖动/退避后的下次可检时刻
+        # check_in_flight 检查协程已派发且未完成（含在平台节奏门前排队），
+        #   调度器据此跳过，防止排队期间重复派发导致请求队列雪崩
         self.consecutive_failures = 0
         self.backoff_multiplier = 1
         self.unsupported = False
         self.next_check_after = 0.0
+        self.check_in_flight = False
         self.record_finished_at = None
         self.scheduled_time_range = None
         self.title = f"{streamer_name} - {self.quality}"
@@ -100,6 +104,13 @@ class Recording:
         self.use_proxy = None
         self.record_url = None
         self.preview_url = None
+        # 上次开播时刻（epoch 秒，持久化）："N 天未开播自动停监控"的计时基准。
+        # 新建任务从创建时刻起算宽限期；开播检测与开启监控时会刷新
+        self.last_live_time = time.time()
+        # 开播节奏统计（持久化）：live_count 累计开播次数；
+        # avg_live_interval 平均开播间隔秒（EMA，None=样本不足），活跃优先分层用
+        self.live_count = 0
+        self.avg_live_interval = None
 
     def to_dict(self):
         """Convert the Recording instance to a dictionary for saving."""
@@ -123,6 +134,9 @@ class Recording:
             "flv_use_direct_download": self.flv_use_direct_download,
             "video_bitrate": self.video_bitrate,
             "pose_enabled": self.pose_enabled,
+            "last_live_time": self.last_live_time,
+            "live_count": self.live_count,
+            "avg_live_interval": self.avg_live_interval,
         }
 
     @classmethod
@@ -152,6 +166,10 @@ class Recording:
         recording.last_duration_str = data.get("last_duration")
         recording.platform = data.get("platform")
         recording.platform_key = data.get("platform_key")
+        # 旧数据无此字段时保持 None，由监控循环首次观察到时初始化宽限期
+        recording.last_live_time = data.get("last_live_time")
+        recording.live_count = data.get("live_count") or 0
+        recording.avg_live_interval = data.get("avg_live_interval")
         if recording.last_duration_str is not None:
             recording.last_duration = timedelta(seconds=float(recording.last_duration_str))
         return recording

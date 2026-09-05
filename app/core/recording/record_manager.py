@@ -3,6 +3,7 @@ import random
 import threading
 import time
 from collections import defaultdict, deque
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 
 from ...messages import message_pusher
@@ -47,6 +48,11 @@ class RecordingManager:
         self._round_failures = 0
         self._last_concurrency_adjust = 0.0
 
+        # 平台请求节奏门：相邻请求发起时刻的最小间隔（防风控爆发），与
+        # 周期监控、有效性检测共享；锁与信号量同样只在后台 loop 使用
+        self._request_spacing_locks = defaultdict(asyncio.Lock)
+        self._next_slot_at: dict[str, float] = {}
+
     # ── 监控自保护：配置读取 ──────────────────────────────
 
     def _monitor_config(self) -> dict:
@@ -60,6 +66,9 @@ class RecordingManager:
             "post_record_recheck": max(0, int(cfg.get("monitor_post_record_recheck_seconds", 30))),
             "unsupported_limit": max(0, int(cfg.get("monitor_unsupported_failure_limit", 10))),
             "dynamic_concurrency": bool(cfg.get("monitor_dynamic_concurrency_enabled", True)),
+            "auto_stop_monitor_days": max(0.0, float(cfg.get("auto_stop_monitor_days", 0) or 0)),
+            "platform_min_interval": max(0.0, float(cfg.get("monitor_platform_min_interval_seconds", 2) or 0)),
+            "recency_priority_enabled": bool(cfg.get("monitor_recency_priority_enabled", True)),
         }
 
     def _record_request_result(self, ok: bool) -> None:
@@ -67,6 +76,25 @@ class RecordingManager:
             self._request_results.append((ok, time.time()))
             if not ok:
                 self._round_failures += 1
+
+    @asynccontextmanager
+    async def _platform_slot(self, platform_key: str):
+        """平台请求节奏门：信号量限并发，最小间隔限制请求发起速率。
+
+        相邻两次请求的发起时刻至少隔 platform_min_interval 秒，把「一轮
+        任务在数秒内爆发完」摊成匀速流，避免超出平台单位时间容忍度触发
+        风控。周期监控与有效性检测共用同一份节奏预算。interval<=0 时仅
+        保留并发限制（保持旧行为）。
+        """
+        interval = self._monitor_config()["platform_min_interval"]
+        async with self.platform_semaphores[platform_key]:
+            if interval > 0:
+                async with self._request_spacing_locks[platform_key]:
+                    wait = self._next_slot_at.get(platform_key, 0.0) - time.monotonic()
+                    if wait > 0:
+                        await asyncio.sleep(wait)
+                    self._next_slot_at[platform_key] = time.monotonic() + interval
+            yield
 
     def _reset_round_failures(self) -> None:
         with self._results_lock:
@@ -184,6 +212,9 @@ class RecordingManager:
             recording.is_checking = True
             recording.is_live = False
             recording.showed_checking_status = False
+            # 重新开启监控视为人工干预：宽限期从此重新起算，避免自动停
+            # 之后一开启就因旧时间戳被再次停掉
+            recording.last_live_time = time.time()
             await self._update_recording(
                 recording=recording,
                 monitor_status=True,
@@ -358,7 +389,7 @@ class RecordingManager:
         proxy = room_validity.resolve_platform_proxy(self.settings.user_config, platform_key)
         account = self.settings.accounts_config.get(platform_key, {}) if platform_key else {}
 
-        async with self.platform_semaphores[platform_key]:
+        async with self._platform_slot(platform_key):
             # 请求间隔抖动：大批量检测时拉开请求节奏，降低平台风控概率
             await asyncio.sleep(random.uniform(0.3, 0.8))
             try:
@@ -406,11 +437,12 @@ class RecordingManager:
         }
 
     async def check_all_live_status(self):
-        """每轮调度：按抖动/退避/快检决定哪些任务该查，跳过 unsupported。
+        """每轮调度：按抖动/退避/快检/新近度决定哪些任务该查，跳过 unsupported。
 
         - 抖动：每个任务的下次可检时间加 ±jitter_ratio 随机偏移，打散集中请求
         - 退避：连续失败任务的间隔乘 backoff_multiplier（翻倍至上限，成功重置）
         - 快检：刚录制结束的任务 post_record_recheck 秒后即可重检（防卡顿少录）
+        - 新近度：最近开播的房间每轮都查，长期未开播的拉长间隔让出请求预算
         - unsupported：连续失败超限的任务本轮跳过
         """
         cfg = self._monitor_config()
@@ -429,6 +461,7 @@ class RecordingManager:
         self._reset_round_failures()
 
         self._maybe_adjust_concurrency()
+        self._auto_stop_stale_monitors(cfg)
 
         base_interval = int(self.loop_time_seconds or 300)
         skipped_unsupported = 0
@@ -454,12 +487,54 @@ class RecordingManager:
             if cfg["backoff_enabled"] and recording.backoff_multiplier > 1:
                 interval = interval * recording.backoff_multiplier
 
+            # 新近度优先：活跃房间保住预算，冷房间让路
+            if cfg["recency_priority_enabled"]:
+                interval = interval * self._activity_tier_multiplier(recording, now)
+
             is_exceeded = utils.is_time_interval_exceeded(recording.detection_time, interval)
             if not recording.detection_time or is_exceeded or recording.next_check_after <= now:
                 self.services.run_coro(self.check_if_live(recording))
 
         if skipped_unsupported:
             logger.info(f"本轮跳过 {skipped_unsupported} 个已标记不支持的任务")
+
+    # 两档优先级：活跃房间（最近开播或开播频繁）每轮都查，其余每 2 轮一次
+    MONITOR_HOT_RECENT_DAYS = 2    # 距上次开播在此天数内视为活跃
+    MONITOR_HOT_FREQ_DAYS = 3      # 平均开播间隔不超过此天数视为开播频繁
+    MONITOR_COLD_MULTIPLIER = 2    # 非活跃任务的检测间隔倍数（180s 轮 ≈ 6 分钟）
+
+    def _activity_tier_multiplier(self, recording: Recording, now: float) -> int:
+        """两档检测间隔：活跃 1×，冷门 2×。
+
+        活跃 = 最近 MONITOR_HOT_RECENT_DAYS 天内播过（新近度），
+        或平均开播间隔 ≤ MONITOR_HOT_FREQ_DAYS 天（频率，EMA 统计）。
+        频率维度覆盖「按固定节奏回归的主播」：即使这次间隔略超 2 天，
+        按其历史节奏仍应保持每轮检测。
+        """
+        llt = recording.last_live_time
+        if llt and now - llt < self.MONITOR_HOT_RECENT_DAYS * 86400:
+            return 1
+        avg = recording.avg_live_interval
+        if avg is not None and avg <= self.MONITOR_HOT_FREQ_DAYS * 86400:
+            return 1
+        return self.MONITOR_COLD_MULTIPLIER
+
+    def _update_live_cadence(self, recording: Recording, now_ts: float) -> None:
+        """未开播 → 开播过渡时更新开播节奏统计（EMA）。
+
+        第 1 次开播无从计算间隔（last_live_time 初始为任务创建时刻的宽限
+        起点），第 2 次起 gap = 两次开播时刻差，之后指数滑动平均。
+        """
+        recording.live_count += 1
+        if recording.live_count >= 2 and recording.last_live_time:
+            gap = now_ts - recording.last_live_time
+            prev = recording.avg_live_interval
+            recording.avg_live_interval = gap if prev is None else prev * 0.5 + gap * 0.5
+
+    @staticmethod
+    def _is_tracked(recording: Recording) -> bool:
+        """任务是否仍在监控列表（排队期间可能已被删除）。"""
+        return any(r.rec_id == recording.rec_id for r in GlobalRecordingState.recordings)
 
     def _jittered_interval(self, interval: float, jitter_ratio: float) -> float:
         if jitter_ratio <= 0:
@@ -504,6 +579,56 @@ class RecordingManager:
             1, self._jittered_interval(base, cfg["jitter_ratio"])
         )
 
+    # ── 监控池自动瘦身 ──────────────────────────────────
+
+    def _auto_stop_stale_monitors(self, cfg: dict) -> None:
+        """每轮清理监控池：直播间已失效的、连续 auto_stop_monitor_days 天
+        未开播的任务自动停止监控（可通过重新开启监控恢复）。
+
+        last_live_time 为空的任务（升级前已存在）首次观察到时初始化为当前
+        时间——宽限期从此起算，避免重启/升级即误停存量任务。
+        """
+        days = cfg["auto_stop_monitor_days"]
+        now = time.time()
+        changed = False
+        for recording in self.recordings:
+            if not recording.monitor_status or recording.is_recording:
+                continue
+            if self._auto_stop_invalid(recording):
+                changed = True
+                continue
+            if days <= 0:
+                continue
+            if recording.last_live_time is None:
+                recording.last_live_time = now
+                changed = True
+                continue
+            if now - recording.last_live_time > days * 86400:
+                recording.monitor_status = False
+                recording.status_info = RecordingStatus.STOPPED_MONITORING
+                recording.display_title = f"[{self._['monitor_stopped']}] {recording.title}"
+                recording.is_checking = False
+                logger.warning(f"{days:g} 天未开播，自动停止监控: {recording.url}")
+                self.services.broadcast_card_update(recording)
+                changed = True
+        if changed:
+            self.services.run_coro(self.persist_recordings())
+
+    def _auto_stop_invalid(self, recording: Recording) -> bool:
+        """有效性缓存判定直播间已失效（抖音精确）→ 停止监控。返回是否有变更。"""
+        entry = self.validity_cache.get(recording.rec_id)
+        if not entry or entry.get("status") != room_validity.STATUS_INVALID:
+            return False
+        if entry.get("url") != recording.url:
+            return False
+        recording.monitor_status = False
+        recording.status_info = RecordingStatus.STOPPED_MONITORING
+        recording.display_title = f"[{self._['monitor_stopped']}] {recording.title}"
+        recording.is_checking = False
+        logger.warning(f"直播间已失效，自动停止监控: {recording.url}")
+        self.services.broadcast_card_update(recording)
+        return True
+
     _periodic_task_running = False
 
     @classmethod
@@ -540,8 +665,22 @@ class RecordingManager:
             logger.info("Periodic live check task already running globally, skipping initialization")
 
     async def check_if_live(self, recording: Recording):
-        """Check if the live stream is available, fetch stream data and update is_live status."""
+        """Check if the live stream is available, fetch stream data and update is_live status.
 
+        in-flight 守卫：任务已有检查协程在排队/执行时跳过重复派发——节奏门
+        使请求排队成为常态（任务多时一轮消化不完），没有守卫的话调度器每轮
+        都会对排队中的任务再派协程，队列越滚越大、同一任务连发多次请求。
+        """
+        if recording.check_in_flight:
+            logger.debug(f"Skip check_if_live, check already in flight: {recording.url}")
+            return
+        recording.check_in_flight = True
+        try:
+            await self._check_if_live_impl(recording)
+        finally:
+            recording.check_in_flight = False
+
+    async def _check_if_live_impl(self, recording: Recording):
         recording.manually_stopped = False
         if recording.is_recording or recording.stopping_in_progress:
             logger.debug(f"Skip check_if_live because recording is busy: {recording.url}")
@@ -615,12 +754,25 @@ class RecordingManager:
             "video_bitrate": recording.video_bitrate,
         }
 
-        semaphore = self.platform_semaphores[platform_key]
         recorder = LiveStreamRecorder(self.services, recording, recording_info)
-        async with semaphore:
+        async with self._platform_slot(platform_key):
+            # detection_time 以实际请求发起时刻为准：任务在节奏门前可能排队
+            # 数轮，若沿用派发时刻，调度器会在检查完成后立刻误判超时重派
+            recording.detection_time = datetime.now().time()
             stream_info = await recorder.fetch_stream()
             logger.info(f"Stream Data: {stream_info}")
         self._record_request_result(ok=bool(stream_info and stream_info.anchor_name))
+        # 过期守卫：排队期间任务可能被停止监控、编辑 URL 或删除。旧检查的
+        # 结果必须作废——否则会用旧房间数据覆盖任务，甚至对已停止监控/已
+        # 删除的任务启动录制（节奏门把这段竞态窗口从毫秒级放大到了分钟级）
+        if (
+            not recording.monitor_status
+            or recording.url != recording_info["live_url"]
+            or not self._is_tracked(recording)
+        ):
+            logger.info(f"Discard stale check result: {recording.url}")
+            recording.is_checking = False
+            return
         if not stream_info or not stream_info.anchor_name:
             logger.error(f"Fetch stream data failed: {recording.url}")
             recording.is_checking = False
@@ -636,6 +788,10 @@ class RecordingManager:
             stream_info.anchor_name = utils.clean_name(stream_info.anchor_name, self._["live_room"])
 
         if stream_info.is_live:
+            now_ts = time.time()
+            if not recording.is_live:
+                self._update_live_cadence(recording, now_ts)
+            recording.last_live_time = now_ts
             recording.live_title = stream_info.title
             # 空名（只填房间号新建的任务）或默认占位名都回填真实主播名
             if not recording.streamer_name.strip() or recording.streamer_name.strip() == self._["live_room"]:

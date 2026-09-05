@@ -359,7 +359,13 @@
     "monitorRecheck": "Post-record recheck (seconds)",
     "monitorRecheckHint": "Quick recheck after recording ends to avoid missing streams",
     "monitorUnsupportedLimit": "Unsupported failure limit",
-    "monitorUnsupportedLimitHint": "Mark task unsupported after N consecutive failures; edit task to reset"
+    "monitorUnsupportedLimitHint": "Mark task unsupported after N consecutive failures; edit task to reset",
+    "autoStopMonitorDays": "Auto-stop monitor after days offline",
+    "autoStopMonitorDaysHint": "0=disabled. Stop monitoring rooms not live for N days; re-enabling or editing a task restarts the timer",
+    "monitorMinInterval": "Min platform request interval (seconds)",
+    "monitorMinIntervalHint": "Minimum spacing between checks of the same platform to avoid rate-limit risk control; 0=unlimited",
+    "monitorRecencyPriority": "Prioritize active rooms",
+    "monitorRecencyPriorityHint": "Two tiers: rooms live within 2 days, or with average go-live interval ≤3 days (auto-tracked), are checked every round; others every 2 rounds (~6 min). Going live restores top tier"
   },
   "about": {
     "title": "About",
