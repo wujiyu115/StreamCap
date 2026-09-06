@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { BarChart3, Home, Info, LogOut, Menu, Moon, Radio, Settings, Sun, Video } from "lucide-react"
 import { useEffect, useState } from "react"
-import { NavLink } from "react-router-dom"
+import { NavLink, useNavigate } from "react-router-dom"
 import { authApi } from "@/api"
 import { Button } from "@/components/ui/button"
 import {
@@ -58,11 +58,15 @@ const NAV_ITEMS = [
     { to: "/about", icon: Info, labelKey: "nav.about" },
 ]
 
+// 「关于」低频，不占移动端底部 tab 位（入口在顶栏菜单）；桌面侧栏不受限
+const MOBILE_TAB_ITEMS = NAV_ITEMS.filter((item) => item.to !== "/about")
+
 /** 桌面：固定左侧边栏；移动（<md）：顶栏 + 底部 Tab 导航 */
 export function AppLayout({ children }: { children: React.ReactNode }) {
     const i18n = useI18nState()
     const theme = useTheme()
     const queryClient = useQueryClient()
+    const navigate = useNavigate()
     const { t } = i18n
 
     const logout = useMutation({
@@ -89,6 +93,10 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                             </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => navigate("/about")}>
+                                <Info className="mr-2 h-4 w-4" />
+                                {t("nav.about")}
+                            </DropdownMenuItem>
                             <DropdownMenuItem onClick={() => i18n.setLang("zh_CN")}>
                                 简体中文 {i18n.lang === "zh_CN" && "✓"}
                             </DropdownMenuItem>
@@ -179,7 +187,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                 {/* 移动端底部导航：整格可点（flex-1 + items-stretch）；
                     pb 让出 iOS 底部 Home 指示条手势区，避免文字下方点击被系统吞掉 */}
                 <nav className="fixed inset-x-0 bottom-0 z-10 flex h-[calc(4rem+env(safe-area-inset-bottom))] items-stretch border-t bg-sidebar pb-[env(safe-area-inset-bottom)] md:hidden">
-                    {NAV_ITEMS.map((item) => (
+                    {MOBILE_TAB_ITEMS.map((item) => (
                         <NavLink
                             key={item.to}
                             to={item.to}

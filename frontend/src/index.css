@@ -133,6 +133,10 @@ body {
         /* 原生 controls 的进度条上移：不贴屏幕底（含无刘海设备） */
         padding-bottom: calc(env(safe-area-inset-bottom) + 12px);
     }
+    /* 工具栏避让刘海/灵动岛（原版同款）：absolute 定位不随视频的 padding-top 下移 */
+    .player-stagebar {
+        padding-top: calc(12px + env(safe-area-inset-top));
+    }
 }
 
 /* 全屏：舞台铺满屏幕（含悬浮工具栏） */

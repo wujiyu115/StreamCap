@@ -65,6 +65,18 @@ export function PlayerDialog({
         return () => document.removeEventListener("fullscreenchange", onFs)
     }, [])
 
+    // 播放器打开期间锁页级滚动：overlay 是 main 的 DOM 后代，滚轮/触摸会链式滚到 main
+    // （移动端 main 因底部导航预留的 padding-bottom 而可滚，背景页面会被顶走；原版锁 body 同理）
+    useEffect(() => {
+        const main = document.querySelector("main")
+        if (!main) return
+        const prev = main.style.overflow
+        main.style.overflow = "hidden"
+        return () => {
+            main.style.overflow = prev
+        }
+    }, [])
+
     // 切换媒体时复位旋转
     useEffect(() => {
         setRotate(false)
@@ -169,9 +181,9 @@ export function PlayerDialog({
     const isImage = item.type === "image"
     const metaParts = [item.ext, resolution, duration].filter(Boolean).join(" · ")
 
-    // 工具栏按钮统一 h-8 w-8，与折叠按钮同尺寸
+    // 工具栏按钮：桌面 32px，移动端 44px 触控目标（原版同款）
     const iconBtn =
-        "h-8 w-8 shrink-0 border-white/20 bg-white/15 text-white hover:bg-white/30 hover:text-white disabled:opacity-30"
+        "h-11 w-11 shrink-0 border-white/20 bg-white/15 text-white hover:bg-white/30 hover:text-white disabled:opacity-30 md:h-8 md:w-8"
 
     return (
         <div
@@ -202,16 +214,17 @@ export function PlayerDialog({
                         ref={videoRef}
                         controls
                         playsInline
+                        preload="metadata"
                         className="player-media h-full w-full bg-black"
                     />
                 )}
 
-                {/* 悬浮工具栏：顶部渐变，收起后只留展开按钮 */}
+                {/* 悬浮工具栏：顶部渐变，收起后只留展开按钮（player-stagebar 供安全区 CSS 用） */}
                 <div
                     className={
                         barOpen
-                            ? "absolute inset-x-0 top-0 z-10 flex items-center gap-2 bg-gradient-to-b from-black/70 to-transparent p-3"
-                            : "absolute inset-x-0 top-0 z-10 flex justify-end p-2"
+                            ? "player-stagebar absolute inset-x-0 top-0 z-10 flex items-center gap-2 bg-gradient-to-b from-black/70 to-transparent p-3"
+                            : "player-stagebar absolute inset-x-0 top-0 z-10 flex justify-end p-2"
                     }
                 >
                     {barOpen && (
@@ -244,6 +257,16 @@ export function PlayerDialog({
                                 onClick={onNext}
                             >
                                 <ChevronRight className="h-4 w-4" />
+                            </Button>
+                            {/* 删除在横屏按钮左边：远离关闭钮，降低移动端误触 */}
+                            <Button
+                                variant="outline"
+                                size="icon"
+                                className={`${iconBtn} border-red-400/40 bg-red-500/30 hover:bg-red-500/50`}
+                                title={t("common.delete")}
+                                onClick={() => onDelete(item.rel_path)}
+                            >
+                                <Trash2 className="h-4 w-4" />
                             </Button>
                             {!isImage && (
                                 <Button
@@ -287,15 +310,6 @@ export function PlayerDialog({
                             <Button
                                 variant="outline"
                                 size="icon"
-                                className={`${iconBtn} border-red-400/40 bg-red-500/30 hover:bg-red-500/50`}
-                                title={t("common.delete")}
-                                onClick={() => onDelete(item.rel_path)}
-                            >
-                                <Trash2 className="h-4 w-4" />
-                            </Button>
-                            <Button
-                                variant="outline"
-                                size="icon"
                                 className={iconBtn}
                                 title={t("common.close")}
                                 onClick={() => {
@@ -313,7 +327,7 @@ export function PlayerDialog({
                         className={
                             barOpen
                                 ? iconBtn
-                                : "h-8 w-8 shrink-0 border-white/20 bg-black/40 text-white hover:bg-black/60"
+                                : "h-11 w-11 shrink-0 border-white/20 bg-black/40 text-white hover:bg-black/60 md:h-8 md:w-8"
                         }
                         title={barOpen ? t("media.collapseBar") : t("media.expandBar")}
                         onClick={() => setBarOpen((o) => !o)}

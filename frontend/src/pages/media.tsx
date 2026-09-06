@@ -56,7 +56,8 @@ export default function MediaPage() {
     const [previewItem, setPreviewItem] = useState<MediaItem | null>(null)
     const [lastViewed, setLastViewed] = useState<string | null>(null)
     const [cleanOpen, setCleanOpen] = useState(false)
-    const [cleanMb, setCleanMb] = useState("10")
+    // 清理阈值持久化（原版 LS_THRESH 同款）：|| 兜底，空串/未存时回默认 10
+    const [cleanMb, setCleanMb] = useState(() => localStorage.getItem("media-clean-mb") || "10")
     const [search, setSearch] = useState("")
     const [viewMode, setViewMode] = useState<"list" | "grid">(
         () => (localStorage.getItem("media-view") as "list" | "grid") || "list",
@@ -131,6 +132,10 @@ export default function MediaPage() {
         localStorage.setItem("media-view", viewMode)
     }, [viewMode])
 
+    useEffect(() => {
+        localStorage.setItem("media-clean-mb", cleanMb)
+    }, [cleanMb])
+
     const invalidate = () => {
         queryClient.invalidateQueries({ queryKey: ["media-tree"] })
         queryClient.invalidateQueries({ queryKey: ["media-stats"] })
@@ -182,6 +187,16 @@ export default function MediaPage() {
 
     // 预览队列：当前目录的媒体文件按显示顺序，供播放器上一个/下一个切换
     const previewQueue = useMemo(() => items.filter((i) => i.type !== "folder"), [items])
+    // 按 rel_path 定位（原版 Frostcast 同款）：删除刷新后 tree 重建对象，
+    // indexOf 按引用比对会失联（症状：删除一个后「上一个」永久禁用、下一个越界跳首项）
+    const playIdx = previewItem
+        ? previewQueue.findIndex((m) => m.rel_path === previewItem.rel_path)
+        : -1
+    // 原版 open() 同款：同时记「正在播放」与「最近查看」，上一个/下一个也走这里，列表高亮才跟手
+    const play = (it: MediaItem) => {
+        setPreviewItem(it)
+        setLastViewed(it.rel_path)
+    }
 
     const poseMutation = useMutation({
         mutationFn: (paths: string[]) => poseApi.submit(paths),
@@ -374,10 +389,7 @@ export default function MediaPage() {
                             selected={selected.has(item.rel_path)}
                             lastViewed={lastViewed === item.rel_path}
                             previewing={previewItem?.rel_path === item.rel_path}
-                            onOpen={(it) => {
-                                setPreviewItem(it)
-                                setLastViewed(it.rel_path)
-                            }}
+                            onOpen={play}
                             onEnter={navigate}
                             onDelete={handleDelete}
                             onToggleSelect={toggleSelect}
@@ -419,27 +431,28 @@ export default function MediaPage() {
                 <PlayerDialog
                     item={previewItem}
                     streamUrl={mediaApi.streamUrl}
-                    hasPrev={previewQueue.indexOf(previewItem) > 0}
-                    hasNext={previewQueue.indexOf(previewItem) < previewQueue.length - 1}
+                    hasPrev={playIdx > 0}
+                    hasNext={playIdx >= 0 && playIdx < previewQueue.length - 1}
                     onPrev={() => {
-                        const idx = previewQueue.indexOf(previewItem)
-                        if (idx > 0) setPreviewItem(previewQueue[idx - 1])
+                        const t = previewQueue[playIdx - 1]
+                        if (t) play(t)
                     }}
                     onNext={() => {
-                        const idx = previewQueue.indexOf(previewItem)
-                        if (idx < previewQueue.length - 1) setPreviewItem(previewQueue[idx + 1])
+                        const t = previewQueue[playIdx + 1]
+                        if (t) play(t)
                     }}
                     onClose={() => setPreviewItem(null)}
                     onDelete={(rel) => {
-                        // 播放器内删除不弹确认（列表卡片的删除仍保留确认）
-                        deleteMutation.mutate(rel, {
-                            onSettled: () => {
-                                const idx = previewQueue.findIndex((i) => i.rel_path === rel)
-                                const next =
-                                    previewQueue[idx + 1] ?? previewQueue[idx - 1] ?? null
-                                setPreviewItem(next)
-                            },
-                        })
+                        // 播放器内删除不弹确认（列表卡片的删除仍保留确认）；
+                        // 删当前项后自动切到下一项（末项退上一项，无剩余关闭），高亮随 play 更新
+                        const idx = previewQueue.findIndex((i) => i.rel_path === rel)
+                        const next = previewQueue[idx + 1] ?? previewQueue[idx - 1] ?? null
+                        deleteMutation.mutate(rel)
+                        if (next) play(next)
+                        else {
+                            setPreviewItem(null)
+                            setLastViewed(null)
+                        }
                     }}
                 />
             )}
