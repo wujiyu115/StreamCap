@@ -202,6 +202,9 @@ body {
     grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr));
 }
 .media-card {
+    /* 勾选框（absolute left-2 top-2）的定位上下文：缺失时全部卡片
+       的勾选框会叠到外层定位祖先上，看似只有第一张有、其余不显示 */
+    position: relative;
     display: flex;
     flex-direction: column;
     cursor: pointer;

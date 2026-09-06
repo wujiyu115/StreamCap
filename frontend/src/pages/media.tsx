@@ -520,6 +520,7 @@ function MediaCard({
                         <Folder className="h-14 w-14 fill-primary/20 text-primary/80" />
                         <span className="count-badge">
                             {item.count ?? 0} {t("media.items")}
+                            {item.size ? ` · ${item.size}` : ""}
                         </span>
                     </>
                 ) : item.type === "image" ? (

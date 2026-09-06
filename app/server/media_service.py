@@ -45,11 +45,16 @@ def media_root_path(root: str) -> str:
     return os.path.realpath(root)
 
 
-def count_media(abspath: str) -> int:
+def count_media(abspath: str) -> tuple[int, int]:
+    """递归统计目录内媒体文件数与占用大小；列表展示文件夹时本就要走一遍，size 不增加遍历。"""
     total = 0
+    total_bytes = 0
     for _root, _dirs, files in os.walk(abspath):
-        total += sum(1 for f in files if classify(f))
-    return total
+        for f in files:
+            if classify(f):
+                total += 1
+                total_bytes += os.path.getsize(os.path.join(_root, f))
+    return total, total_bytes
 
 
 def stats(rel: str, root: str) -> dict:
@@ -138,12 +143,15 @@ def list_dir(rel: str, root: str) -> dict:
     for entry in os.scandir(base):
         entry_rel = os.path.relpath(entry.path, real_root)
         if entry.is_dir():
+            count, size_bytes = count_media(entry.path)
             folders.append(
                 {
                     "type": "folder",
                     "name": entry.name,
                     "rel_path": entry_rel,
-                    "count": count_media(entry.path),
+                    "count": count,
+                    "bytes": size_bytes,
+                    "size": human_size(size_bytes),
                     "mtime": int(entry.stat().st_mtime),
                 }
             )
