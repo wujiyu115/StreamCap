@@ -213,7 +213,7 @@ export default function AnalyticsPage() {
                                         >
                                             <div
                                                 className="absolute bottom-0 w-full rounded-t bg-blue-500/60 group-hover:bg-blue-500"
-                                                style={{ height: `${(count / maxHistogram) * 100}%` }}
+                                                style={{ height: `${Math.max(2, (count / maxHistogram) * 100)}%` }}
                                             />
                                         </div>
                                     ))}
@@ -262,17 +262,15 @@ export default function AnalyticsPage() {
                                                             className="group relative h-full flex-1"
                                                             title={`${hour}:00–${hour + 1}:00 · ${count}`}
                                                         >
-                                                            {/* 0 场次不渲染柱：无信息量的细线只会形成梳齿噪音 */}
-                                                            {count > 0 && (
-                                                                <div
-                                                                    className={`absolute bottom-0 w-full rounded-t ${
-                                                                        hour === s.peak_hour
-                                                                            ? "bg-blue-500"
-                                                                            : "bg-blue-500/35 group-hover:bg-blue-500/70"
-                                                                    }`}
-                                                                    style={{ height: `${(count / max) * 100}%` }}
-                                                                />
-                                                            )}
+                                                            {/* 0 场次渲染最小高度细线（保留整点刻度感） */}
+                                                            <div
+                                                                className={`absolute bottom-0 w-full rounded-t ${
+                                                                    hour === s.peak_hour
+                                                                        ? "bg-blue-500"
+                                                                        : "bg-blue-500/35 group-hover:bg-blue-500/70"
+                                                                }`}
+                                                                style={{ height: `${Math.max(3, (count / max) * 100)}%` }}
+                                                            />
                                                         </div>
                                                     ))}
                                                 </div>
