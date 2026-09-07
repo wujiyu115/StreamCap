@@ -111,6 +111,8 @@ class Recording:
         # avg_live_interval 平均开播间隔秒（EMA，None=样本不足），活跃优先分层用
         self.live_count = 0
         self.avg_live_interval = None
+        # 任务添加时刻（epoch 秒，持久化）；旧数据无此字段保持 None，前端显示「—」
+        self.created_at = time.time()
 
     def to_dict(self):
         """Convert the Recording instance to a dictionary for saving."""
@@ -137,6 +139,7 @@ class Recording:
             "last_live_time": self.last_live_time,
             "live_count": self.live_count,
             "avg_live_interval": self.avg_live_interval,
+            "created_at": self.created_at,
         }
 
     @classmethod
@@ -170,6 +173,7 @@ class Recording:
         recording.last_live_time = data.get("last_live_time")
         recording.live_count = data.get("live_count") or 0
         recording.avg_live_interval = data.get("avg_live_interval")
+        recording.created_at = data.get("created_at")
         if recording.last_duration_str is not None:
             recording.last_duration = timedelta(seconds=float(recording.last_duration_str))
         return recording

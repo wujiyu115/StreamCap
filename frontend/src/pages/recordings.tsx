@@ -37,7 +37,7 @@ import {
     TableHeader,
     TableRow,
 } from "@/components/ui/table"
-import { displayDuration, formatDuration, StatusBadge, stateLabelKey } from "@/components/status"
+import { displayDuration, formatDuration, formatTimestamp, StatusBadge, stateLabelKey } from "@/components/status"
 import { translateError, useI18n } from "@/i18n"
 import { toast } from "sonner"
 import { CopyIdButton } from "@/components/copy-id-button"
@@ -495,6 +495,12 @@ export default function RecordingsPage() {
                                     {t("recordings.columnQuality")}
                                 </TableHead>
                                 <TableHead className="hidden sm:table-cell">
+                                    {t("recordings.columnActivity")}
+                                </TableHead>
+                                <TableHead className="hidden lg:table-cell">
+                                    {t("recordings.columnAdded")}
+                                </TableHead>
+                                <TableHead className="hidden sm:table-cell">
                                     {t("recordings.columnDuration")}
                                 </TableHead>
                                 <TableHead className="text-right">{t("common.operations")}</TableHead>
@@ -513,6 +519,9 @@ export default function RecordingsPage() {
                                         <div className="flex items-center gap-0.5">
                                             <span className="truncate font-medium">{r.streamer_name || "-"}</span>
                                             <CopyIdButton url={r.url} className="h-6 w-6 shrink-0 p-0" iconClassName="h-3 w-3" />
+                                            <span className="sm:hidden">
+                                                <ActivityBadge rec={r} />
+                                            </span>
                                         </div>
                                         <div className="max-w-48 truncate text-xs text-muted-foreground sm:max-w-64">
                                             {r.live_title || r.url}
@@ -536,6 +545,12 @@ export default function RecordingsPage() {
                                     </TableCell>
                                     <TableCell className="hidden md:table-cell">
                                         {t(`quality.${r.quality}`)}
+                                    </TableCell>
+                                    <TableCell className="hidden sm:table-cell">
+                                        <ActivityBadge rec={r} />
+                                    </TableCell>
+                                    <TableCell className="hidden text-sm text-muted-foreground lg:table-cell">
+                                        {r.created_at ? formatTimestamp(r.created_at) : "—"}
                                     </TableCell>
                                     <TableCell className="hidden font-mono text-sm tabular-nums sm:table-cell">
                                         <LiveDuration rec={r} />
@@ -672,6 +687,40 @@ function LiveDuration({ rec }: { rec: Recording }) {
     return <span>{formatDuration(seconds)}</span>
 }
 
+/** 活跃度：口径与监控活跃优先分层一致（上次开播 ≤2 天，或平均开播间隔 ≤3 天 = 活跃） */
+function ActivityBadge({ rec }: { rec: Recording }) {
+    const { t, tf } = useI18n()
+    if (!rec.live_count) {
+        return (
+            <span
+                className="inline-block cursor-help rounded-full border border-muted-foreground/40 px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                title={tf("recordings.actTip", { last: "—", n: 0, avg: "—" })}
+            >
+                {t("recordings.actNever")}
+            </span>
+        )
+    }
+    const now = Date.now() / 1000
+    const days = rec.last_live_time ? (now - rec.last_live_time) / 86400 : Infinity
+    const lastText =
+        days < 1 ? `<${t("recordings.actDay")}` : `${Math.floor(days)}${t("recordings.actDay")}`
+    const avgText =
+        rec.avg_live_interval != null
+            ? `${Math.round(rec.avg_live_interval / 3600)}${t("recordings.actHour")}`
+            : "—"
+    const hot = days <= 2 || (rec.avg_live_interval != null && rec.avg_live_interval <= 3 * 86400)
+    return (
+        <span
+            className={`inline-block cursor-help rounded-full border px-1.5 py-0.5 text-[10px] ${
+                hot ? "border-green-500/50 text-green-600" : "border-muted-foreground/40 text-muted-foreground"
+            }`}
+            title={tf("recordings.actTip", { last: lastText, n: rec.live_count, avg: avgText })}
+        >
+            {hot ? t("recordings.actHot") : tf("recordings.actCold", { d: Math.floor(days) })}
+        </span>
+    )
+}
+
 function RecordingCardView({
     rec,
     selected,
@@ -723,6 +772,7 @@ function RecordingCardView({
                 <div className="truncate text-xs">{rec.live_title || rec.url}</div>
                 <div className="flex items-center gap-3">
                     <span>{t(`quality.${rec.quality}`)}</span>
+                    <ActivityBadge rec={rec} />
                     {rec.is_recording && (
                         <>
                             <span className="font-mono tabular-nums">
@@ -731,6 +781,9 @@ function RecordingCardView({
                             <span className="text-xs">{rec.speed}</span>
                         </>
                     )}
+                </div>
+                <div className="text-xs">
+                    {t("recordings.columnAdded")} {rec.created_at ? formatTimestamp(rec.created_at) : "—"}
                 </div>
             </div>
             <div className="flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>

@@ -103,7 +103,7 @@ export default function AnalyticsPage() {
         )
     }
 
-    const { summary, trend, rankings, idle, never_recorded, histogram, platform_checks, storage } = data
+    const { summary, trend, rankings, idle, never_recorded, histogram, streamer_hours, platform_checks, storage } = data
     const maxTrendSessions = Math.max(...trend.map((d) => d.sessions), 1)
     const maxHistogram = Math.max(...histogram, 1)
     const changePct = summary.sessions_change_pct
@@ -222,6 +222,59 @@ export default function AnalyticsPage() {
                                     <span>0</span><span>6</span><span>12</span><span>18</span><span>23</span>
                                 </div>
                             </>
+                        )}
+                    </CardContent>
+                </Card>
+
+                {/* 主播开播时间分布（按主播，数据累计所有月份） */}
+                <Card>
+                    <CardHeader>
+                        <CardTitle className="text-base">{t("analytics.hoursByStreamerTitle")}</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                        {streamer_hours.length === 0 ? (
+                            <div className="py-6 text-center text-sm text-muted-foreground">{t("analytics.noData")}</div>
+                        ) : (
+                            <div className="max-h-96 space-y-2 overflow-y-auto pr-1">
+                                {streamer_hours.map((s) => {
+                                    const max = Math.max(...s.hours, 1)
+                                    return (
+                                        <div key={s.rec_id} className="flex items-center gap-3">
+                                            <div
+                                                className="w-24 shrink-0 truncate text-sm sm:w-32"
+                                                title={`${s.name} · ${s.total}`}
+                                            >
+                                                {s.name}
+                                            </div>
+                                            <div className="flex h-8 min-w-0 flex-1 items-end gap-px">
+                                                {s.hours.map((count, hour) => (
+                                                    <div
+                                                        key={hour}
+                                                        className="group relative h-full flex-1"
+                                                        title={`${hour}:00–${hour + 1}:00 · ${count}`}
+                                                    >
+                                                        <div
+                                                            className={`absolute bottom-0 w-full rounded-t ${
+                                                                hour === s.peak_hour
+                                                                    ? "bg-blue-500"
+                                                                    : "bg-blue-500/35 group-hover:bg-blue-500/70"
+                                                            }`}
+                                                            style={{ height: `${Math.max(3, (count / max) * 100)}%` }}
+                                                        />
+                                                    </div>
+                                                ))}
+                                            </div>
+                                            <Badge
+                                                variant="secondary"
+                                                className="w-20 shrink-0 justify-center text-xs"
+                                                title={t("analytics.peakHourDesc")}
+                                            >
+                                                {t("analytics.peakHour").replace("{h}", String(s.peak_hour))}
+                                            </Badge>
+                                        </div>
+                                    )
+                                })}
+                            </div>
                         )}
                     </CardContent>
                 </Card>

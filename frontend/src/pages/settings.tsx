@@ -156,7 +156,7 @@ function PushSettings() {
     useEffect(() => {
         if (data) {
             setValues(data.user_settings)
-            setTimeout(() => debounced.markReady(), 100)
+            debounced.markReady(data.user_settings)
         }
     }, [data]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -351,7 +351,7 @@ function PoseSettings() {
     useEffect(() => {
         if (data) {
             setValues(data.user_settings)
-            setTimeout(() => debounced.markReady(), 100)
+            debounced.markReady(data.user_settings)
         }
     }, [data]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -491,10 +491,6 @@ function useDebouncedSave(
     const [initial, setInitial] = useState(true)
     const loadedSnapshot = useRef<Record<string, unknown> | null>(null)
 
-    if (ready && loadedSnapshot.current === null) {
-        loadedSnapshot.current = values
-    }
-
     useEffect(() => {
         if (!ready || initial) return
         // 页面加载后未做任何编辑（values 仍是加载时的同一对象引用）不触发保存
@@ -504,7 +500,12 @@ function useDebouncedSave(
     }, [values, ready, initial, delay]) // eslint-disable-line react-hooks/exhaustive-deps
 
     return {
-        markReady: () => setInitial(false),
+        // 基线快照必须取「加载进来的服务器数据」引用（与 setValues 存的是同一对象）。
+        // 若在渲染期早取，取到的是挂载时的空对象，一进页面就会误发 PUT 并弹「已保存」
+        markReady: (snapshot: Record<string, unknown>) => {
+            loadedSnapshot.current = snapshot
+            setInitial(false)
+        },
         saving: save.isPending,
         saveNow: () => {
             loadedSnapshot.current = values
@@ -524,7 +525,7 @@ function RecordingSettings() {
     useEffect(() => {
         if (data) {
             setValues(data.user_settings)
-            setTimeout(() => debounced.markReady(), 100)
+            debounced.markReady(data.user_settings)
         }
     }, [data]) // eslint-disable-line react-hooks/exhaustive-deps
 

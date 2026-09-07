@@ -38,6 +38,10 @@ export interface Recording {
     state: "recording" | "error" | "live" | "offline" | "stopped" | "checking" | "unknown"
     unsupported?: boolean
     consecutive_failures?: number
+    created_at?: number | null
+    last_live_time?: number | null
+    live_count?: number
+    avg_live_interval?: number | null
 }
 
 export interface RecordingStatusSnapshot {
@@ -104,6 +108,7 @@ export interface AnalyticsOverview {
     idle: { rec_id: string; name: string; idle_days: number; days_left: number | null }[]
     never_recorded: { rec_id: string; name: string }[]
     histogram: number[]
+    streamer_hours: { rec_id: string; name: string; hours: number[]; total: number; peak_hour: number }[]
     platform_checks: { platform: string; checks: number; failures: number; failure_rate: number }[]
     storage: { total_bytes: number; files: { name: string; bytes: number }[] }
 }

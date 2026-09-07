@@ -132,9 +132,27 @@ async def get_overview(
     idle = idle[:20]
 
     histogram = [0] * 24
-    for hours in rm.analytics.read_hours().values():
+    hours_by_rec = rm.analytics.read_hours()
+    for hours in hours_by_rec.values():
         for h, count in enumerate(hours):
             histogram[h] += count
+
+    # 每个主播的开播小时分布（数据本就按 rec_id 落盘，这里原样暴露）
+    streamer_hours = []
+    for rid, hours in hours_by_rec.items():
+        total = sum(hours)
+        if total <= 0:
+            continue
+        streamer_hours.append(
+            {
+                "rec_id": rid,
+                "name": name_of_any(rid),
+                "hours": hours,
+                "total": total,
+                "peak_hour": max(range(24), key=lambda h: hours[h]),
+            }
+        )
+    streamer_hours.sort(key=lambda x: -x["total"])
 
     platform_checks = sorted(
         (
@@ -171,6 +189,7 @@ async def get_overview(
         "idle": idle,
         "never_recorded": never_recorded[:20],
         "histogram": histogram,
+        "streamer_hours": streamer_hours,
         "platform_checks": platform_checks,
         "storage": _analytics_storage(services),
     }
