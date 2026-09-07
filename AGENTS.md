@@ -36,3 +36,56 @@
 - **handler 异常被吞**：所有平台 handler 的 `get_stream_info` 被 `@trace_error_decorator` 包裹，异常时返回 `[]`，上层拿不到异常细节。需要区分错误原因（如"房间不存在"vs"网络失败"）时绕过 handler 直接调 streamget 原始接口（参考 `app/core/platforms/room_validity.py`，用 `process_data=False` 拿原始 JSON 看 `status_code`）
 - **MP4 直录是 fragmented 容器**：ffmpeg 录制用 `-movflags +frag_keyframe+empty_moov+faststart+delay_moov`（防崩溃设计，见 `app/core/media/ffmpeg_builders/video/mp4.py`），产物是 ftyp+moov(头部)+moof/mdat 分片结构。实测（lavfi 复现，同 muxer 参数）：手动停（SIGINT 优雅停）与 SIGKILL 强杀都保留头部 moov（empty_moov 即时写入），差别只在最后一个 fragment 是否收尾——手动停的文件结构完整、ffprobe/VLC 可读可播、人体识别可直接处理；强杀的最后一个 fragment 可能截断。**但时长元数据不可靠**（5s 内容 ffprobe 报 480s，2s 分段报 16.7s），专用播放器进度条/Seek 会怪。转标准 mp4：`ffmpeg -i in.mp4 -c copy -movflags +faststart out.mp4` 无损重封装（秒级）；识别原始分片式：顶层 atom 出现 moof。mp4 直录目前没有录制后 remux，remux 仅存在于 ts→mp4 转码路径
 - **Playwright Chromium 无 H.264/AAC 解码器**：无系统 Chrome 时，headless Chromium 对**任何** h264 mp4（含正常封装）都报 MediaError code 4 / readyState=0——浏览器端"能否播放"验证完全失效，不可据此断定容器损坏。可播性结论必须真机（iOS Safari）或带专有解码器的 Chrome（channel="chrome"）。2026-09 之前"浏览器直接播放会卡死"的记录即受此污染，待真机复核
+
+## Unraid 生产容器更新流程
+
+StreamCap 的生产部署目标是 Unraid 7.x 服务器 **tank**（`192.168.31.139`），容器 `streamcap` 镜像为 `wujiyu115/streamcap:latest`，持久化目录 `/mnt/user/appdata/streamcap/config:/app/config`、下载盘 `/mnt/disk1/adult:/app/downloads`、端口 `6006`。代码推上 main 后 CI 自动构建镜像，但**容器不会自己刷新**，必须手动走一遍下面的流程才算完成。
+
+### 前置条件
+
+- SSH 免密已配：`ssh -i ~/.ssh/id_rsa_nas root@192.168.31.139` 直连，不要密码登录
+- GitHub Actions 工作流：`.github/workflows/docker.yml`，`push` 到 main 自动构建并推 `:latest` + `:{sha}` 到 Docker Hub（用 `secrets.DOCKERHUB_USERNAME/TOKEN`）；多架构 + QEMU，通常 1–2 分钟跑完
+
+### 流程（5 步）
+
+1. **本地提交推送**
+   ```
+   git commit -m "..." && git push origin main
+   ```
+2. **确认 CI 跑过**
+   - 有 `gh`：`gh run list --repo wujiyu115/StreamCap --limit 3` 看最近一次 `completed success`
+   - 没 `gh`（未登录）：走未认证 GitHub API `curl https://api.github.com/repos/wujiyu115/StreamCap/actions/runs?per_page=3`，按 `head_sha` 对应本次 commit，看 `status=completed / conclusion=success`
+   - **不要只凭本地 `git push` 成功就往下走**——CI 可能编译失败
+3. **Unraid 上拉新镜像**
+   ```
+   ssh -i ~/.ssh/id_rsa_nas root@192.168.31.139 \
+     "docker pull wujiyu115/streamcap:latest"
+   ```
+   输出里看到 `Downloaded newer image` 或新 digest 才算拉到新版本；`Image is up to date` 表示本地就是最新（可能 CI 还没完成、或 tag 没变）
+4. **用 Unraid 官方脚本重建容器**（保留 template 里的所有绑定 / 端口 / 环境变量）
+   ```
+   ssh -i ~/.ssh/id_rsa_nas root@192.168.31.139 \
+     "/usr/local/emhttp/plugins/dynamix.docker.manager/scripts/rebuild_container streamcap"
+   ```
+   这个脚本读 `/boot/config/plugins/dockerMan/templates-user/my-streamcap.xml`，`docker run` 起新镜像、删旧容器、清旧镜像；**严禁**直接 `docker stop + docker run` 拼参数，否则 UI 上的配置变更会丢
+5. **启动 + 自检**
+   - `streamcap` **不在 autostart 列表**（`/var/lib/docker/unraid-autostart`），`rebuild_container` 会按 Unraid 惯例重建后自动 `stop`，所以第一次跑完 `docker ps -a` 看到 `Exited (137)` 是正常的
+   - 启动：`docker start streamcap`，等 30–60s 健康检查
+   - 自检：`docker ps --filter name=streamcap` 看 `Up ... (healthy)`；`curl http://localhost:6006/api/recordings` 看任务数（生产 ~170+）与 `is_recording` 字段正常；`docker logs --tail 30 streamcap` 看监控轮询在跑
+
+### 关键禁忌
+
+- **不要在有任务 `is_recording=True` 时重建**：rebuild 会 `docker stop`（SIGTERM → 升级成 SIGKILL），正在录的 ffmpeg 产物最后一个 fragment 可能截断。先通过 API `GET /api/recordings` 确认所有 `is_recording=false`
+- **不要绕过 template 用裸 `docker run`**：Unraid 的 Web UI 把用户配置持久化在 XML 里，裸 docker run 出来的容器在 UI 上显示"orphan"，下一次点 Update 会丢配置
+- **不要凭"已拉新镜像"就宣布完成**：对比 `docker inspect streamcap --format '{{.Image}}'` 与 `docker images wujiyu115/streamcap:latest --format '{{.ID}}'` 的 image ID 是否一致，确认新镜像已经跑起来
+- **重建后 `docker ps` 看不到 streamcap 别慌**：先看 `docker ps -a`，如果 `Exited (137)` 就是 autostart 行为，`docker start` 即可；只有 `Created`（从未跑过）才需要排查 template 或镜像问题
+
+### 回滚
+
+- template 每次更新前备份到 `/tmp/my-streamcap.xml.bak`
+- 回滚：`cp /tmp/my-streamcap.xml.bak /boot/config/plugins/dockerMan/templates-user/my-streamcap.xml` + 再跑一遍 `rebuild_container streamcap`
+- 指定旧版本：改 template 里 `<Repository>` 为 `wujiyu115/streamcap:<旧sha或旧tag>` 再重建；Docker Hub 上每次 CI 同时推 `:{github.sha}`，可以精确回退到任意一次提交
+
+### 扩展到其他容器
+
+同流程改容器名即可：`rebuild_container <name>`。其他 `wujiyu115/*` 系列（`docknav`、`gamesearch`、`jxpan` 等）都按这套走；第三方镜像（`vaultwarden`、`homeassistant` 等）如果 template 里的 `<Repository>` 是 `:latest`，也能直接 `rebuild_container` 拉新版
