@@ -156,9 +156,9 @@ export default function AnalyticsPage() {
     const poseSaved = pose.deleted_bytes - pose.output_bytes
 
     return (
-        <div className="flex min-h-0 flex-1 flex-col gap-4">
+        <div className="flex min-h-full flex-col space-y-4">
             {/* 标题 + 时间范围 */}
-            <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
                 <h1 className="text-xl font-bold">{t("analytics.title")}</h1>
                 <div className="ml-auto flex gap-0.5 rounded-md border p-0.5">
                     {DAY_OPTIONS.map((d) => (
@@ -176,7 +176,7 @@ export default function AnalyticsPage() {
             </div>
 
             {/* 汇总卡片 */}
-            <div className="grid shrink-0 grid-cols-2 gap-3 lg:grid-cols-3">
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
                 <StatCard
                     icon={<Film className="h-5 w-5" />}
                     label={t("analytics.sessionsLabel")}
@@ -243,7 +243,7 @@ export default function AnalyticsPage() {
                 />
             </div>
 
-            <div className="list-scroll min-h-0 flex-1 space-y-4 overflow-y-auto pr-0.5">
+            <>
                 {/* 磁盘水位 + 识别产出 */}
                 <div className="grid gap-4 lg:grid-cols-2">
                     <Card>
@@ -685,7 +685,7 @@ export default function AnalyticsPage() {
                         </CardContent>
                     </Card>
                 </div>
-            </div>
+            </>
         </div>
     )
 }

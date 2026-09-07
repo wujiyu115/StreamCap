@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { BarChart3, Home, Info, LogOut, Menu, Moon, Radio, Settings, Sun, Video } from "lucide-react"
 import { useEffect, useState } from "react"
-import { NavLink, useNavigate } from "react-router-dom"
+import { NavLink, useLocation, useNavigate } from "react-router-dom"
 import { authApi } from "@/api"
 import { Button } from "@/components/ui/button"
 import {
@@ -67,7 +67,9 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     const theme = useTheme()
     const queryClient = useQueryClient()
     const navigate = useNavigate()
+    const { pathname } = useLocation()
     const { t } = i18n
+    const isAnalytics = pathname.startsWith("/analytics")
 
     const logout = useMutation({
         mutationFn: authApi.logout,
@@ -178,10 +180,11 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                     </div>
                 </aside>
 
-                {/* 主内容区：移动端留出底部导航高度（含 iOS 底部安全区）；flex 让页面可实现
-                    「头部固定 + 仅列表滚动」布局 */}
+                {/* 主内容区：移动端留出底部导航高度（含 iOS 底部安全区）。
+                    内层 wrapper 默认 h-full 配合父级 overflow-auto，让各页面实现「头部固定 + 仅列表滚动」。
+                    数据分析页例外：整页随主区滚动（其根容器不带 flex-1 / h-full），所以这里按路由去掉 h-full */}
                 <main className="min-w-0 flex-1 overflow-auto pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-0">
-                    <div className="mx-auto flex h-full max-w-7xl flex-col p-4 md:p-6">{children}</div>
+                    <div className={`mx-auto flex max-w-7xl flex-col p-4 md:p-6${isAnalytics ? "" : " h-full"}`}>{children}</div>
                 </main>
 
                 {/* 移动端底部导航：整格可点（flex-1 + items-stretch）；
