@@ -97,6 +97,52 @@ class AnalyticsStore:
         if self._dirty and time.time() - self._last_flush >= FLUSH_DEBOUNCE_SECONDS:
             self.flush()
 
+    def purge_rec(self, rec_id: str) -> None:
+        """任务删除后清掉该 rec_id 的汇总数据（驻留当月、hours、磁盘各月度文件）。
+
+        历史月份文件「只读」惯例在此为删除场景破例：否则被删任务会以
+        rec_id 前缀的名字永久残留在排行/分布视图中。
+        """
+        with self._lock:
+            self._ensure_loaded()
+            removed = False
+            for day in self._daily.values():
+                if rec_id in day.get("t", {}):
+                    del day["t"][rec_id]
+                    removed = True
+            if self._hours.pop(rec_id, None) is not None:
+                removed = True
+            if not removed:
+                return
+            self._dirty = True
+            try:
+                if os.path.isdir(self.analytics_dir):
+                    for name in os.listdir(self.analytics_dir):
+                        if not (name.startswith("analytics_") and name.endswith(".json")):
+                            continue
+                        month = name[len("analytics_"):-len(".json")]
+                        if month == self._month:
+                            continue  # 驻留月随下方 flush 覆盖写入
+                        path = self._month_path(month)
+                        try:
+                            with open(path, encoding="utf-8") as f:
+                                data = json.load(f)
+                        except (FileNotFoundError, json.JSONDecodeError, OSError):
+                            continue
+                        changed = False
+                        for day in data.get("daily", {}).values():
+                            if rec_id in day.get("t", {}):
+                                del day["t"][rec_id]
+                                changed = True
+                        if changed:
+                            try:
+                                self._write_json(path, data)
+                            except OSError as e:
+                                logger.warning(f"Failed to purge analytics month file: {e}")
+                self.flush()
+            except Exception as e:
+                logger.warning(f"Failed to purge analytics for {rec_id}: {e}")
+
     # ── 埋点 ────────────────────────────────────────────
 
     def _month_bucket(self, ts: float) -> dict:

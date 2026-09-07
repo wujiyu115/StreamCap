@@ -223,6 +223,9 @@ class RecordingManager:
         with GlobalRecordingState.lock:
             GlobalRecordingState.recordings.remove(recording)
             await self.persist_recordings()
+        # 分析数据同步清理（所有删除路径的汇点）：否则被删任务会以 rec_id 前缀残留在排行/分布视图
+        if getattr(self, "analytics", None) is not None:
+            self.analytics.purge_rec(recording.rec_id)
 
     async def clear_all_recordings(self):
         with GlobalRecordingState.lock:

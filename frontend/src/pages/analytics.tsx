@@ -213,7 +213,7 @@ export default function AnalyticsPage() {
                                         >
                                             <div
                                                 className="absolute bottom-0 w-full rounded-t bg-blue-500/60 group-hover:bg-blue-500"
-                                                style={{ height: `${Math.max(2, (count / maxHistogram) * 100)}%` }}
+                                                style={{ height: `${(count / maxHistogram) * 100}%` }}
                                             />
                                         </div>
                                     ))}
@@ -235,46 +235,66 @@ export default function AnalyticsPage() {
                         {streamer_hours.length === 0 ? (
                             <div className="py-6 text-center text-sm text-muted-foreground">{t("analytics.noData")}</div>
                         ) : (
-                            <div className="max-h-96 space-y-2 overflow-y-auto pr-1">
-                                {streamer_hours.map((s) => {
-                                    const max = Math.max(...s.hours, 1)
-                                    return (
-                                        <div key={s.rec_id} className="flex items-center gap-3">
-                                            <div
-                                                className="w-24 shrink-0 truncate text-sm sm:w-32"
-                                                title={`${s.name} · ${s.total}`}
-                                            >
-                                                {s.name}
-                                            </div>
-                                            <div className="flex h-8 min-w-0 flex-1 items-end gap-px">
-                                                {s.hours.map((count, hour) => (
-                                                    <div
-                                                        key={hour}
-                                                        className="group relative h-full flex-1"
-                                                        title={`${hour}:00–${hour + 1}:00 · ${count}`}
-                                                    >
+                            <>
+                                {/* 时间刻度与柱列对齐（占位与行内名字/角标同宽），上下各一条 */}
+                                <div className="flex items-center gap-3 pb-1">
+                                    <div className="w-24 shrink-0 sm:w-32" />
+                                    <div className="flex min-w-0 flex-1 justify-between text-xs text-muted-foreground">
+                                        <span>0</span><span>6</span><span>12</span><span>18</span><span>23</span>
+                                    </div>
+                                    <div className="w-20 shrink-0" />
+                                </div>
+                                <div className="max-h-96 space-y-2 overflow-y-auto pr-1">
+                                    {streamer_hours.map((s) => {
+                                        const max = Math.max(...s.hours, 1)
+                                        return (
+                                            <div key={s.rec_id} className="flex items-center gap-3">
+                                                <div
+                                                    className="w-24 shrink-0 truncate text-sm sm:w-32"
+                                                    title={`${s.name} · ${s.total}`}
+                                                >
+                                                    {s.name}
+                                                </div>
+                                                <div className="flex h-8 min-w-0 flex-1 items-end gap-px">
+                                                    {s.hours.map((count, hour) => (
                                                         <div
-                                                            className={`absolute bottom-0 w-full rounded-t ${
-                                                                hour === s.peak_hour
-                                                                    ? "bg-blue-500"
-                                                                    : "bg-blue-500/35 group-hover:bg-blue-500/70"
-                                                            }`}
-                                                            style={{ height: `${Math.max(3, (count / max) * 100)}%` }}
-                                                        />
-                                                    </div>
-                                                ))}
+                                                            key={hour}
+                                                            className="group relative h-full flex-1"
+                                                            title={`${hour}:00–${hour + 1}:00 · ${count}`}
+                                                        >
+                                                            {/* 0 场次不渲染柱：无信息量的细线只会形成梳齿噪音 */}
+                                                            {count > 0 && (
+                                                                <div
+                                                                    className={`absolute bottom-0 w-full rounded-t ${
+                                                                        hour === s.peak_hour
+                                                                            ? "bg-blue-500"
+                                                                            : "bg-blue-500/35 group-hover:bg-blue-500/70"
+                                                                    }`}
+                                                                    style={{ height: `${(count / max) * 100}%` }}
+                                                                />
+                                                            )}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                                <Badge
+                                                    variant="secondary"
+                                                    className="w-20 shrink-0 justify-center text-xs"
+                                                    title={t("analytics.peakHourDesc")}
+                                                >
+                                                    {t("analytics.peakHour").replace("{h}", String(s.peak_hour))}
+                                                </Badge>
                                             </div>
-                                            <Badge
-                                                variant="secondary"
-                                                className="w-20 shrink-0 justify-center text-xs"
-                                                title={t("analytics.peakHourDesc")}
-                                            >
-                                                {t("analytics.peakHour").replace("{h}", String(s.peak_hour))}
-                                            </Badge>
-                                        </div>
-                                    )
-                                })}
-                            </div>
+                                        )
+                                    })}
+                                </div>
+                                <div className="flex items-center gap-3 pt-1">
+                                    <div className="w-24 shrink-0 sm:w-32" />
+                                    <div className="flex min-w-0 flex-1 justify-between text-xs text-muted-foreground">
+                                        <span>0</span><span>6</span><span>12</span><span>18</span><span>23</span>
+                                    </div>
+                                    <div className="w-20 shrink-0" />
+                                </div>
+                            </>
                         )}
                     </CardContent>
                 </Card>

@@ -79,6 +79,8 @@ async def get_overview(
         change_pct = round((sessions_cur - sessions_prev) / sessions_prev * 100, 1)
 
     name_of = {r.rec_id: (r.streamer_name or r.rec_id[:8]) for r in rm.recordings}
+    # 已删除任务的孤儿聚合数据不进任何按主播视图（任务删除时已清，防历史残留兜底）
+    current_ids = set(name_of)
 
     def name_of_any(rid: str) -> str:
         return name_of.get(rid) or f"{rid[:8]}…"
@@ -87,6 +89,7 @@ async def get_overview(
         (
             {"rec_id": rid, "name": name_of_any(rid), **{k: (round(v, 1) if k == "seconds" else v) for k, v in agg.items()}}
             for rid, agg in tasks_agg.items()
+            if rid in current_ids
         ),
         key=lambda x: x["seconds"],
         reverse=True,
@@ -96,7 +99,7 @@ async def get_overview(
         if not (start_str <= d <= end_str):
             continue
         for rid, v in (buckets.get("t") or {}).items():
-            if v[1] > 0:
+            if v[1] > 0 and rid in current_ids:
                 top_single_day.append({"rec_id": rid, "name": name_of_any(rid), "date": d, "seconds": _fmt_seconds(v[1])})
     top_single_day.sort(key=lambda x: x["seconds"], reverse=True)
     top_single_day = top_single_day[:10]
@@ -140,6 +143,8 @@ async def get_overview(
     # 每个主播的开播小时分布（数据本就按 rec_id 落盘，这里原样暴露）
     streamer_hours = []
     for rid, hours in hours_by_rec.items():
+        if rid not in current_ids:
+            continue
         total = sum(hours)
         if total <= 0:
             continue
