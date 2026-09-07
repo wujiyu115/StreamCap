@@ -86,30 +86,71 @@ export interface ValidityCheckResponse {
     pending: number
 }
 
+export type FailureReason = "transient" | "repeated" | "unsupported" | "invalid"
+
+export type FailureReasonCounts = Record<FailureReason, number>
+
 export interface AnalyticsOverview {
     days: number
     summary: {
         sessions: number
         seconds: number
         files: number
+        bytes: number
         active_anchors: number
         monitoring: number
         checks: number
         check_failures: number
         sessions_prev: number
         sessions_change_pct: number | null
+        starts: number
+        aborts: number
+        notify_only: number
+        recordable_sessions: number
+        record_coverage: number | null
+        abort_rate: number | null
     }
-    trend: { date: string; sessions: number; seconds: number; files: number }[]
+    trend: { date: string; sessions: number; seconds: number; files: number; bytes: number }[]
     rankings: {
-        top_sessions: { rec_id: string; name: string; sessions: number; seconds: number; files: number }[]
+        top_sessions: { rec_id: string; name: string; sessions: number; seconds: number; files: number; bytes: number }[]
         top_single_day: { rec_id: string; name: string; date: string; seconds: number }[]
         top_frequency: { rec_id: string; name: string; live_count: number; avg_interval_hours: number | null }[]
+        top_bytes: {
+            rec_id: string
+            name: string
+            bytes: number
+            files: number
+            seconds: number
+            bytes_per_hour: number | null
+        }[]
+        top_failures: { rec_id: string; name: string; checks: number; failures: number; failure_rate: number | null }[]
     }
     idle: { rec_id: string; name: string; idle_days: number; days_left: number | null }[]
     never_recorded: { rec_id: string; name: string }[]
     histogram: number[]
     streamer_hours: { rec_id: string; name: string; hours: number[]; total: number; peak_hour: number }[]
-    platform_checks: { platform: string; checks: number; failures: number; failure_rate: number }[]
+    platform_checks: {
+        platform: string
+        checks: number
+        failures: number
+        failure_rate: number
+        reasons: FailureReasonCounts
+    }[]
+    failure_reasons: FailureReasonCounts
+    pose: { output_bytes: number; deleted_bytes: number }
+    disk: {
+        path: string
+        total_bytes: number | null
+        used_bytes: number | null
+        free_bytes: number | null
+        recordings_bytes: number
+        recordings_files: number
+        recordings_video_files: number
+        sampled_at: number | null
+        cached: boolean
+        bytes_per_day: number
+        days_left_estimate: number | null
+    }
     storage: { total_bytes: number; files: { name: string; bytes: number }[] }
 }
 

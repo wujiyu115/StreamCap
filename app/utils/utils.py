@@ -130,6 +130,42 @@ def get_file_paths(directory: str) -> list:
     return file_paths
 
 
+def scan_segment_files(
+    directory: str, prefix: str, since_ts: float | None = None
+) -> list[tuple[str, int, float]]:
+    """扫一次目录，取出某次录制的分段文件及其大小与修改时间。
+
+    只扫单层：分段产物与 save_file_path 同目录，递归遍历（os.walk）会随
+    录制目录累积的历史文件线性变慢，且会误纳子目录里的识别/转码产物。
+    大小与 mtime 走 DirEntry.stat()，复用 scandir 已取的元数据，不做二次 stat。
+
+    since_ts：只要 mtime 不早于该时刻的文件。默认文件名带秒级时间戳，前缀天然唯一；
+    但自定义模板不含 {time} 时前缀会退化成主播名，历次录制共享同一前缀，不做时间
+    过滤就会把以往的分段重复计入本次统计。
+
+    返回 [(路径, 字节数, mtime)]，目录不存在或不可读时返回空列表。
+    """
+    results: list[tuple[str, int, float]] = []
+    try:
+        with os.scandir(directory) as it:
+            for entry in it:
+                if not entry.name.startswith(prefix):
+                    continue
+                try:
+                    if not entry.is_file():
+                        continue
+                    stat_result = entry.stat()
+                except OSError:
+                    continue
+                if since_ts is not None and stat_result.st_mtime < since_ts:
+                    continue
+                results.append((entry.path, stat_result.st_size, stat_result.st_mtime))
+    except (FileNotFoundError, NotADirectoryError, PermissionError, OSError) as e:
+        logger.debug(f"scan_segment_files failed for {directory}: {e}")
+    results.sort(key=lambda item: item[0])
+    return results
+
+
 def remove_emojis(text: str, replace_text: str = "") -> str:
     return EMOJI_PATTERN.sub(replace_text, text)
 

@@ -78,13 +78,44 @@ class RecordingManager:
             "recency_priority_enabled": bool(cfg.get("monitor_recency_priority_enabled", True)),
         }
 
-    def _record_request_result(self, ok: bool, platform_key: str | None = None) -> None:
+    def _classify_check_failure(self, recording: Recording | None) -> str | None:
+        """给一次取流失败分档，全程零 I/O。
+
+        只读内存里的 validity 缓存和任务自身的连续失败计数：抖音这类平台对
+        单 IP+cookie 有分钟级请求配额，为了归因再发一次探测请求会挤占正常
+        轮询的额度，所以宁可用状态派生的近似分档。
+        """
+        if recording is None:
+            return None
+        entry = self.validity_cache.get(recording.rec_id)
+        if (
+            entry
+            and entry.get("url") == recording.url
+            and entry.get("status") == room_validity.STATUS_INVALID
+        ):
+            return "invalid"
+        # 本方法在 _on_check_failed 自增之前调用，所以算上这次要 +1
+        failures = recording.consecutive_failures + 1
+        limit = self._monitor_config()["unsupported_limit"]
+        if limit and failures >= limit:
+            return "unsupported"
+        return "transient" if failures <= 1 else "repeated"
+
+    def _record_request_result(
+        self, ok: bool, platform_key: str | None = None, recording: Recording | None = None
+    ) -> None:
         with self._results_lock:
             self._request_results.append((ok, time.time()))
             if not ok:
                 self._round_failures += 1
         if platform_key:
-            self.analytics.record_check(platform_key, ok, time.time())
+            self.analytics.record_check(
+                platform_key,
+                ok,
+                time.time(),
+                rec_id=recording.rec_id if recording else None,
+                reason=None if ok else self._classify_check_failure(recording),
+            )
             self.analytics.maybe_flush()
 
     @asynccontextmanager
@@ -584,7 +615,9 @@ class RecordingManager:
             gap = now_ts - recording.last_live_time
             prev = recording.avg_live_interval
             recording.avg_live_interval = gap if prev is None else prev * 0.5 + gap * 0.5
-        self.analytics.record_session(recording.rec_id, now_ts)
+        self.analytics.record_session(
+            recording.rec_id, now_ts, notify_only=recording.only_notify_no_record
+        )
         self.analytics.maybe_flush()
 
     @staticmethod
@@ -821,7 +854,11 @@ class RecordingManager:
             recording.detection_time = datetime.now().time()
             stream_info = await recorder.fetch_stream()
             logger.info(f"Stream Data: {stream_info}")
-        self._record_request_result(ok=bool(stream_info and stream_info.anchor_name), platform_key=platform_key)
+        self._record_request_result(
+            ok=bool(stream_info and stream_info.anchor_name),
+            platform_key=platform_key,
+            recording=recording,
+        )
         # 过期守卫：排队期间任务可能被停止监控、编辑 URL 或删除。旧检查的
         # 结果必须作废——否则会用旧房间数据覆盖任务，甚至对已停止监控/已
         # 删除的任务启动录制（节奏门把这段竞态窗口从毫秒级放大到了分钟级）
@@ -892,6 +929,9 @@ class RecordingManager:
                 recording.status_info = RecordingStatus.PREPARING_RECORDING
                 recording.loop_time_seconds = self.loop_time_seconds
                 self.start_update(recording)
+                # check_if_live 对正在录制的任务提前返回，所以这里每次都是真正的一次开录
+                self.analytics.record_record_start(recording.rec_id, time.time())
+                self.analytics.maybe_flush()
                 self.services.run_coro(recorder.start_recording(stream_info))
             else:
                 if recording.notified_live_start:

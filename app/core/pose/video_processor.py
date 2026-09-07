@@ -90,7 +90,17 @@ class VideoProcessor:
         self.decode_backend = params.decode_backend
 
     def process_video_file(self, video_path, video_idx=0, total_videos=1, progress_cb=None, stop_check=None):
-        """处理单个视频，返回 (处理帧数, 采样帧数, 原始区间数, 合并区间数, 片段数)。"""
+        """处理单个视频。
+
+        返回 (处理帧数, 采样帧数, 原始区间数, 合并区间数, 片段数, 产物字节数, 删掉的原视频字节数)。
+        后两项供录制分析统计「识别到底省了多少盘」，原视频大小必须在处理前取，
+        因为 delete_original_video 打开时文件会被删掉。
+        """
+        try:
+            orig_bytes = os.path.getsize(video_path)
+        except OSError:
+            orig_bytes = 0
+
         model = self.detector.model
 
         frames, saved, person_segments = self.process_video(
@@ -123,7 +133,26 @@ class VideoProcessor:
         if self.delete_original_video:
             safe_remove_file(video_path)
 
-        return frames, saved, len(person_segments), len(merged_segments), len(clip_paths)
+        # 产物可能已被 _move_output_to_input 搬走，clip_paths 里的路径就失效了
+        output_bytes = 0
+        for path in moved_paths or clip_paths:
+            try:
+                output_bytes += os.path.getsize(path)
+            except OSError:
+                continue
+        # 不看 delete_original_video 开关而看文件是否还在：clip_video 合并分支里
+        # 也会删原视频，用实际状态判断能同时覆盖两个删除点
+        deleted_bytes = 0 if os.path.exists(video_path) else orig_bytes
+
+        return (
+            frames,
+            saved,
+            len(person_segments),
+            len(merged_segments),
+            len(clip_paths),
+            output_bytes,
+            deleted_bytes,
+        )
 
     def _move_output_to_input(self, video_path: str) -> list[str]:
         """把当前视频的剪辑产物按原目录结构移回视频所在目录。

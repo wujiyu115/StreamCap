@@ -38,6 +38,7 @@ def create_app(run_path: str | None = None) -> FastAPI:
         pose_task_manager = PoseTaskManager(run_path)
         app.state.pose_task_manager = pose_task_manager
         services.pose_task_manager = pose_task_manager
+        _bind_pose_analytics(services, pose_task_manager)
 
         services.start_background_loop()
         logger.info(f"StreamCap server started (run_path={run_path})")
@@ -60,6 +61,25 @@ def create_app(run_path: str | None = None) -> FastAPI:
     _mount_spa(app)
 
     return app
+
+
+def _bind_pose_analytics(services, pose_task_manager: PoseTaskManager) -> None:
+    """让识别任务管理器能把产出字节写进录制分析。
+
+    识别在独立子进程里跑，AnalyticsStore 只活在主进程，所以由管理器在任务落终态
+    后回调这里补记。管理器构造得比 recording_manager 早，因此走晚绑定。
+    """
+    rm = getattr(services, "recording_manager", None)
+    analytics = getattr(rm, "analytics", None)
+    if analytics is None:
+        logger.warning("Recording manager unavailable, pose analytics accounting disabled")
+        return
+
+    def sink(rec_id: str, ts: float, output_bytes: int, deleted_bytes: int) -> None:
+        analytics.record_pose(rec_id, ts, out_bytes=output_bytes, del_bytes=deleted_bytes)
+        analytics.maybe_flush()
+
+    pose_task_manager.set_analytics_sink(sink)
 
 
 def _mount_spa(app: FastAPI) -> None:

@@ -19,12 +19,16 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from ...utils.logger import logger
 
 LOG_CHUNK_LIMIT = 64 * 1024
 MAX_QUEUE = 20
+# 识别产出计入录制分析的补记间隔（秒）
+ACCOUNT_INTERVAL_SECONDS = 10
+# 单轮补记最多回看多少个任务目录
+ACCOUNT_SCAN_LIMIT = 40
 
 
 class TaskBusyError(Exception):
@@ -65,6 +69,8 @@ class PoseTaskManager:
         self._history_lock = threading.Lock()
         self._stop_worker = False
         self._worker: Optional[threading.Thread] = None
+        self._analytics_sink: Optional[Callable[[str, float, int, int], None]] = None
+        self._accounted: set[str] = set()
 
         self._adopt_orphans()
         self._prune_old_tasks()
@@ -104,6 +110,7 @@ class PoseTaskManager:
     def _start_worker(self):
         def worker():
             last_prune = 0.0
+            last_account = 0.0
             while not self._stop_worker:
                 next_spec = None
                 with self._lock:
@@ -114,6 +121,9 @@ class PoseTaskManager:
                     if time.time() - last_prune > 3600:
                         last_prune = time.time()
                         self._prune_old_tasks()
+                    if time.time() - last_account > ACCOUNT_INTERVAL_SECONDS:
+                        last_account = time.time()
+                        self._account_analytics()
                     time.sleep(2.0)
                     continue
                 try:
@@ -154,6 +164,72 @@ class PoseTaskManager:
         except Exception as e:
             logger.warning(f"清理人体识别任务目录失败: {e}")
 
+    # ── 识别产出计入录制分析 ────────────────────────────────
+
+    def set_analytics_sink(self, sink: Callable[[str, float, int, int], None]) -> None:
+        """晚绑定分析回调 sink(rec_id, ts, output_bytes, deleted_bytes)。
+
+        本管理器在 lifespan 里先于 recording_manager 可用时就构造好了，且识别跑在
+        真子进程里（进程内的锁跨不过进程边界），所以统计只能由父进程晚绑定后补记。
+        """
+        self._analytics_sink = sink
+        self._account_analytics()
+
+    @staticmethod
+    def _finished_ts(state: dict[str, Any]) -> float:
+        """终态时刻；缺失或格式坏了就退化成当下，宁可归错一天也别丢数。"""
+        for key in ("finished_at", "started_at"):
+            raw = state.get(key)
+            if raw:
+                try:
+                    return datetime.fromisoformat(raw).timestamp()
+                except (TypeError, ValueError):
+                    continue
+        return time.time()
+
+    def _account_analytics(self) -> None:
+        """把已落终态的自动识别任务产出补记进录制分析，每个任务只记一次。
+
+        幂等靠 state.json 里的 analytics_accounted 标记，服务重启后重扫也不会重复
+        计入。手动提交的任务没有归属 rec_id，记不到具体主播头上，直接打标记跳过。
+        """
+        sink = self._analytics_sink
+        if sink is None or not os.path.isdir(self.tasks_root):
+            return
+        try:
+            names = sorted(os.listdir(self.tasks_root), reverse=True)[:ACCOUNT_SCAN_LIMIT]
+        except OSError:
+            return
+        for name in names:
+            if name in self._accounted:
+                continue
+            state_path = os.path.join(self.tasks_root, name, "state.json")
+            if not os.path.isfile(state_path):
+                continue
+            try:
+                with open(state_path, encoding="utf-8") as f:
+                    state = json.load(f)
+            except (OSError, ValueError):
+                continue
+            if state.get("status") == "running":
+                continue
+            if state.get("analytics_accounted"):
+                self._accounted.add(name)
+                continue
+            rec_id = state.get("rec_id")
+            summary = state.get("summary") or {}
+            out_bytes = int(summary.get("output_bytes") or 0)
+            del_bytes = int(summary.get("deleted_bytes") or 0)
+            if rec_id and (out_bytes or del_bytes):
+                try:
+                    sink(rec_id, self._finished_ts(state), out_bytes, del_bytes)
+                except Exception as e:
+                    logger.warning(f"人体识别产出计入分析失败({name}): {e}")
+                    continue  # 不打标记，下一轮重试
+            state["analytics_accounted"] = True
+            _atomic_write_json(state_path, state)
+            self._accounted.add(name)
+
     def shutdown(self) -> None:
         self._stop_worker = True
         try:
@@ -170,8 +246,13 @@ class PoseTaskManager:
         params: dict[str, Any],
         trigger: str = "manual",
         wait_file: bool = False,
+        rec_id: str | None = None,
     ) -> dict[str, Any]:
-        """提交任务。manual 触发且忙时抛 TaskBusyError；auto 触发进队列。"""
+        """提交任务。manual 触发且忙时抛 TaskBusyError；auto 触发进队列。
+
+        rec_id 只有录制完成钩子会带，用于把识别产出计到对应主播头上；手动跑的
+        识别可能横跨多个主播的文件，无从归属，留空即可。
+        """
         videos = [os.path.abspath(v) for v in videos if os.path.isabs(v) or True]
         spec = {
             "params": params,
@@ -179,6 +260,7 @@ class PoseTaskManager:
             "media_root": media_root,
             "wait_file": wait_file,
             "trigger": trigger,
+            "rec_id": rec_id,
         }
 
         with self._lock:
@@ -231,6 +313,7 @@ class PoseTaskManager:
                 "state": "starting",
                 "pid": proc.pid,
                 "trigger": spec.get("trigger", "manual"),
+                "rec_id": spec.get("rec_id"),
                 "videos": spec.get("videos", []),
                 "started_at": datetime.now().isoformat(timespec="seconds"),
                 "message": "任务子进程启动中…",

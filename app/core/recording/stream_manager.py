@@ -444,22 +444,34 @@ class LiveStreamRecorder:
             return_code = process.returncode
             safe_return_codes = {0, 255}
 
-            # 录制分析：本次 ffmpeg 运行的时长与产出文件数计入开始日期
+            # 录制分析：本次 ffmpeg 运行的时长、产出文件数与毛字节数计入开始日期
             start_ts = getattr(self, "recording_start_time", None)
             if start_ts:
                 try:
                     if self.segment_record:
                         prefix = os.path.basename(save_file_path).rsplit("_", maxsplit=1)[0]
-                        files = sum(
-                            1 for p in utils.get_file_paths(os.path.dirname(save_file_path))
-                            if os.path.basename(p).startswith(prefix)
+                        # since_ts 留 1 秒余量：分段文件 mtime 可能略早于 Python 侧记下的开始时刻
+                        segments = utils.scan_segment_files(
+                            os.path.dirname(save_file_path), prefix, since_ts=start_ts - 1
                         )
+                        files = len(segments)
+                        raw_bytes = sum(size for _path, size, _mtime in segments)
                     else:
-                        files = 1 if os.path.exists(save_file_path) else 0
+                        try:
+                            raw_bytes = os.stat(save_file_path).st_size
+                            files = 1
+                        except OSError:
+                            raw_bytes = 0
+                            files = 0
                     analytics = getattr(self.services.recording_manager, "analytics", None)
                     if analytics is not None:
                         analytics.record_segment(
-                            self.recording.rec_id, start_ts, time.time() - start_ts, files
+                            self.recording.rec_id,
+                            start_ts,
+                            time.time() - start_ts,
+                            files,
+                            raw_bytes=raw_bytes,
+                            aborted=return_code not in safe_return_codes,
                         )
                         analytics.maybe_flush()
                 except Exception as e:
@@ -485,15 +497,15 @@ class LiveStreamRecorder:
 
                 if self.user_config.get("convert_to_mp4") and self.save_format == "ts":
                     if self.segment_record:
-                        file_paths = utils.get_file_paths(os.path.dirname(save_file_path))
                         prefix = os.path.basename(save_file_path).rsplit("_", maxsplit=1)[0]
-                        for path in file_paths:
-                            if prefix in path:
-                                try:
-                                    self.services.run_coro(self.converts_mp4(path, self.user_config["delete_original"]))
-                                except Exception as e:
-                                    logger.error(f"Failed to convert video: {e}")
-                                    await self.converts_mp4(path, self.user_config["delete_original"])
+                        for path, _size, _mtime in utils.scan_segment_files(
+                            os.path.dirname(save_file_path), prefix
+                        ):
+                            try:
+                                self.services.run_coro(self.converts_mp4(path, self.user_config["delete_original"]))
+                            except Exception as e:
+                                logger.error(f"Failed to convert video: {e}")
+                                await self.converts_mp4(path, self.user_config["delete_original"])
                     else:
                         try:
                             self.services.run_coro(
@@ -684,14 +696,14 @@ class LiveStreamRecorder:
             merged_suffix = pose_cfg.get("merged_suffix") or "_merged"
 
             if self.segment_record:
-                file_paths = utils.get_file_paths(os.path.dirname(save_file_path))
                 prefix = os.path.basename(save_file_path).rsplit("_", maxsplit=1)[0]
                 candidates = [
-                    p
-                    for p in file_paths
-                    if prefix in os.path.basename(p)
+                    path
+                    for path, _size, _mtime in utils.scan_segment_files(
+                        os.path.dirname(save_file_path), prefix
+                    )
                     # 历史识别产物（_merged）重处理会套娃，跳过
-                    and not os.path.splitext(os.path.basename(p))[0].endswith(merged_suffix)
+                    if not os.path.splitext(os.path.basename(path))[0].endswith(merged_suffix)
                 ]
             else:
                 candidates = [save_file_path]
@@ -711,6 +723,7 @@ class LiveStreamRecorder:
                 params=params,
                 trigger="auto",
                 wait_file=True,
+                rec_id=self.recording.rec_id,
             )
             logger.info(f"Pose task submitted after recording: {result.get('status')} ({len(candidates)} files)")
         except Exception as e:

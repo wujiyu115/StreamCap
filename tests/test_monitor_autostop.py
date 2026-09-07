@@ -6,11 +6,13 @@ from app.core.platforms import room_validity
 
 from helpers import make_manager, make_recording, set_recordings
 
-NOW = time.time()
+# 每个用例现取时间：模块级常量在 import 时求值，前面的测试稍慢就会吃掉
+# 「宽限期从首次观察时刻起算」那条断言的 5s 容差
 
 
 def test_days_disabled_only_invalid_stops():
     """auto_stop_monitor_days=0：只按失效停，不按天数停；录制中跳过"""
+    NOW = time.time()
     mgr = make_manager({"auto_stop_monitor_days": 0})
     dead = make_recording(rec_id="dead")
     offline_long = make_recording(rec_id="ok")
@@ -29,6 +31,7 @@ def test_days_disabled_only_invalid_stops():
 
 
 def test_days_seven_grace_expiry_and_invalid():
+    NOW = time.time()
     mgr = make_manager({"auto_stop_monitor_days": 7})
     fresh_task = make_recording(rec_id="new")            # 升级迁移：从未有 last_live_time
     fresh_task.last_live_time = None
@@ -66,7 +69,7 @@ def test_invalid_cache_url_mismatch_ignored():
 def test_no_persist_when_nothing_changed():
     mgr = make_manager({"auto_stop_monitor_days": 0})
     rec = make_recording()
-    rec.last_live_time = NOW
+    rec.last_live_time = time.time()
     set_recordings([rec])
     before = mgr.services.persist_calls
     mgr._auto_stop_stale_monitors(mgr._monitor_config())

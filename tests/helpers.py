@@ -68,9 +68,16 @@ class FakeRecorder:
         FakeRecorder.calls += 1
         return FakeRecorder.stream_info
 
+    async def start_recording(self, stream_info):
+        """仅供开录分支调用求值；FakeServices.run_coro 不会真正驱动它。"""
+
 
 def offline_stream_info(anchor="某主播"):
     return type("StreamData", (), {"anchor_name": anchor, "is_live": False, "title": "t"})()
+
+
+def live_stream_info(anchor="某主播", title="标题"):
+    return type("StreamData", (), {"anchor_name": anchor, "is_live": True, "title": title})()
 
 
 class FakeAnalytics:
@@ -78,18 +85,26 @@ class FakeAnalytics:
 
     def __init__(self):
         self.sessions = []
+        self.record_starts = []
         self.segments = []
         self.checks = []
+        self.poses = []
         self.flushes = 0
 
-    def record_session(self, rec_id, ts):
-        self.sessions.append((rec_id, ts))
+    def record_session(self, rec_id, ts, notify_only=False):
+        self.sessions.append((rec_id, ts, notify_only))
 
-    def record_segment(self, rec_id, start_ts, duration_seconds, files):
-        self.segments.append((rec_id, start_ts, duration_seconds, files))
+    def record_record_start(self, rec_id, ts):
+        self.record_starts.append((rec_id, ts))
 
-    def record_check(self, platform_key, ok, ts):
-        self.checks.append((platform_key, ok, ts))
+    def record_segment(self, rec_id, start_ts, duration_seconds, files, raw_bytes=0, aborted=False):
+        self.segments.append((rec_id, start_ts, duration_seconds, files, raw_bytes, aborted))
+
+    def record_check(self, platform_key, ok, ts, rec_id=None, reason=None):
+        self.checks.append((platform_key, ok, ts, rec_id, reason))
+
+    def record_pose(self, rec_id, ts, out_bytes=0, del_bytes=0):
+        self.poses.append((rec_id, ts, out_bytes, del_bytes))
 
     def maybe_flush(self):
         self.flushes += 1

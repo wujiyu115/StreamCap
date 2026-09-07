@@ -76,6 +76,10 @@ def main(argv=None) -> int:
         base = {
             "pid": os.getpid(),
             "updated_at": datetime.now().isoformat(timespec="seconds"),
+            # 每次写状态都是整文件覆盖，spec 里的归属信息得跟着一起写回，否则父进程
+            # 拉起时写的 trigger/rec_id 会被子进程第一次状态更新抹掉
+            "trigger": spec.get("trigger", "manual"),
+            "rec_id": spec.get("rec_id"),
         }
         base.update(payload)
         _atomic_write_json(state_path, base)
@@ -107,6 +111,9 @@ def main(argv=None) -> int:
         "segments": 0,
         "merged_segments": 0,
         "clips": 0,
+        # 识别产物 / 被删掉的原视频字节数，父进程读 state.json 后计入录制分析
+        "output_bytes": 0,
+        "deleted_bytes": 0,
     }
 
     try:
@@ -188,7 +195,7 @@ def main(argv=None) -> int:
             )
 
             try:
-                frames, saved, segments, merged, clips = processor.process_video_file(
+                frames, saved, segments, merged, clips, out_bytes, del_bytes = processor.process_video_file(
                     video_path,
                     idx,
                     total,
@@ -210,6 +217,8 @@ def main(argv=None) -> int:
                 summary["segments"] += segments
                 summary["merged_segments"] += merged
                 summary["clips"] += clips
+                summary["output_bytes"] += out_bytes
+                summary["deleted_bytes"] += del_bytes
 
                 write_state(
                     status="running",

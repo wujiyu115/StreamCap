@@ -1,5 +1,19 @@
 import { useQuery } from "@tanstack/react-query"
-import { CalendarDays, Clock, Film, Loader2, Radio, TrendingDown, TrendingUp, Users } from "lucide-react"
+import {
+    AlertTriangle,
+    CalendarDays,
+    Clock,
+    Database,
+    Film,
+    HardDrive,
+    Loader2,
+    Radio,
+    Scissors,
+    Target,
+    TrendingDown,
+    TrendingUp,
+    Users,
+} from "lucide-react"
 import { useState } from "react"
 import { analyticsApi } from "@/api"
 import { Badge } from "@/components/ui/badge"
@@ -81,14 +95,31 @@ function BarList({
 }
 
 function fmtBytes(bytes: number): string {
-    if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
-    if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`
-    return `${bytes} B`
+    const units = ["KB", "MB", "GB", "TB"]
+    if (bytes < 1024) return `${bytes} B`
+    let size = bytes / 1024
+    for (const unit of units) {
+        if (size < 1024 || unit === "TB") return `${size.toFixed(1)} ${unit}`
+        size /= 1024
+    }
+    return `${size.toFixed(1)} TB`
+}
+
+function fmtClock(ts: number | null): string {
+    if (!ts) return "-"
+    return new Date(ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+}
+
+const FAILURE_REASONS = ["transient", "repeated", "unsupported", "invalid"] as const
+
+function reasonLabel(reason: string, t: (k: string) => string): string {
+    return t(`analytics.reason_${reason}`)
 }
 
 export default function AnalyticsPage() {
     const { t } = useI18n()
     const [days, setDays] = useState(30)
+    const [trendMetric, setTrendMetric] = useState<"sessions" | "bytes">("sessions")
     const { data, isLoading } = useQuery({
         queryKey: ["analytics-overview", days],
         queryFn: () => analyticsApi.overview(days),
@@ -103,10 +134,26 @@ export default function AnalyticsPage() {
         )
     }
 
-    const { summary, trend, rankings, idle, never_recorded, histogram, streamer_hours, platform_checks, storage } = data
-    const maxTrendSessions = Math.max(...trend.map((d) => d.sessions), 1)
+    const {
+        summary,
+        trend,
+        rankings,
+        idle,
+        never_recorded,
+        histogram,
+        streamer_hours,
+        platform_checks,
+        failure_reasons,
+        pose,
+        disk,
+        storage,
+    } = data
+    const trendValue = (d: (typeof trend)[number]) => (trendMetric === "bytes" ? d.bytes : d.sessions)
+    const maxTrend = Math.max(...trend.map(trendValue), 1)
     const maxHistogram = Math.max(...histogram, 1)
     const changePct = summary.sessions_change_pct
+    const failureTotal = FAILURE_REASONS.reduce((sum, r) => sum + failure_reasons[r], 0)
+    const poseSaved = pose.deleted_bytes - pose.output_bytes
 
     return (
         <div className="flex min-h-0 flex-1 flex-col gap-4">
@@ -129,7 +176,7 @@ export default function AnalyticsPage() {
             </div>
 
             {/* 汇总卡片 */}
-            <div className="grid shrink-0 grid-cols-2 gap-3 lg:grid-cols-4">
+            <div className="grid shrink-0 grid-cols-2 gap-3 lg:grid-cols-3">
                 <StatCard
                     icon={<Film className="h-5 w-5" />}
                     label={t("analytics.sessionsLabel")}
@@ -148,11 +195,46 @@ export default function AnalyticsPage() {
                     icon={<Clock className="h-5 w-5" />}
                     label={t("analytics.durationLabel")}
                     value={fmtDurationI18n(summary.seconds, t)}
+                    sub={
+                        <span className="cursor-help" title={t("analytics.durationHint")}>
+                            ⓘ
+                        </span>
+                    }
                 />
                 <StatCard
                     icon={<CalendarDays className="h-5 w-5" />}
                     label={t("analytics.filesLabel")}
                     value={String(summary.files)}
+                />
+                <StatCard
+                    icon={<Database className="h-5 w-5" />}
+                    label={t("analytics.sizeLabel")}
+                    value={fmtBytes(summary.bytes)}
+                />
+                <StatCard
+                    icon={<Target className="h-5 w-5" />}
+                    label={t("analytics.coverageLabel")}
+                    value={
+                        summary.record_coverage === null
+                            ? "-"
+                            : `${(summary.record_coverage * 100).toFixed(0)}%`
+                    }
+                    sub={
+                        <span
+                            className="cursor-help"
+                            title={[
+                                t("analytics.coverageDetail")
+                                    .replace("{starts}", String(summary.starts))
+                                    .replace("{sessions}", String(summary.recordable_sessions)),
+                                t("analytics.notifyOnlyDetail").replace("{n}", String(summary.notify_only)),
+                                t("analytics.abortDetail")
+                                    .replace("{aborts}", String(summary.aborts))
+                                    .replace("{starts}", String(summary.starts)),
+                            ].join("\n")}
+                        >
+                            ⓘ
+                        </span>
+                    }
                 />
                 <StatCard
                     icon={<Users className="h-5 w-5" />}
@@ -162,10 +244,121 @@ export default function AnalyticsPage() {
             </div>
 
             <div className="list-scroll min-h-0 flex-1 space-y-4 overflow-y-auto pr-0.5">
-                {/* 趋势：每日场次 */}
+                {/* 磁盘水位 + 识别产出 */}
+                <div className="grid gap-4 lg:grid-cols-2">
+                    <Card>
+                        <CardHeader>
+                            <CardTitle className="flex items-center gap-1.5 text-base">
+                                <HardDrive className="h-4 w-4" />
+                                {t("analytics.diskTitle")}
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-2 text-sm">
+                            {disk.total_bytes === null || disk.free_bytes === null ? (
+                                <div className="py-4 text-center text-sm text-muted-foreground">
+                                    {t("analytics.diskUnknown")}
+                                </div>
+                            ) : (
+                                <>
+                                    <div className="h-2 overflow-hidden rounded-full bg-muted">
+                                        <div
+                                            className={`h-full rounded-full ${
+                                                disk.free_bytes / disk.total_bytes < 0.1 ? "bg-destructive" : "bg-primary/70"
+                                            }`}
+                                            style={{
+                                                width: `${Math.min(100, ((disk.total_bytes - disk.free_bytes) / disk.total_bytes) * 100)}%`,
+                                            }}
+                                        />
+                                    </div>
+                                    <div className="flex justify-between text-xs text-muted-foreground">
+                                        <span>
+                                            {t("analytics.diskFree")
+                                                .replace("{free}", fmtBytes(disk.free_bytes))
+                                                .replace("{total}", fmtBytes(disk.total_bytes))}
+                                        </span>
+                                        {disk.days_left_estimate !== null && (
+                                            <span title={t("analytics.diskPerDay").replace("{size}", fmtBytes(disk.bytes_per_day))}>
+                                                {t("analytics.diskDaysLeft").replace("{d}", String(disk.days_left_estimate))}
+                                            </span>
+                                        )}
+                                    </div>
+                                </>
+                            )}
+                            <div className="border-t pt-2 text-xs text-muted-foreground" title={disk.path}>
+                                {t("analytics.diskRecordings")
+                                    .replace("{size}", fmtBytes(disk.recordings_bytes))
+                                    .replace("{n}", String(disk.recordings_files))}
+                                <span className="ml-1">
+                                    · {t("analytics.diskSampled").replace("{time}", fmtClock(disk.sampled_at))}
+                                </span>
+                            </div>
+                            {storage.files.length > 0 && (
+                                <div
+                                    className="text-xs text-muted-foreground"
+                                    title={storage.files.map((f) => `${f.name}: ${fmtBytes(f.bytes)}`).join("\n")}
+                                >
+                                    {t("analytics.storageSize")
+                                        .replace("{size}", fmtBytes(storage.total_bytes))
+                                        .replace("{n}", String(storage.files.length))}
+                                </div>
+                            )}
+                        </CardContent>
+                    </Card>
+                    <Card>
+                        <CardHeader>
+                            <CardTitle className="flex items-center gap-1.5 text-base">
+                                <Scissors className="h-4 w-4" />
+                                {t("analytics.poseTitle")}
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-2 text-sm">
+                            {pose.output_bytes === 0 && pose.deleted_bytes === 0 ? (
+                                <div className="py-4 text-center text-sm text-muted-foreground">
+                                    {t("analytics.poseEmpty")}
+                                </div>
+                            ) : (
+                                <>
+                                    <div className="flex items-center justify-between gap-2">
+                                        <span className="text-muted-foreground">{t("analytics.poseOutput")}</span>
+                                        <span className="tabular-nums">{fmtBytes(pose.output_bytes)}</span>
+                                    </div>
+                                    <div className="flex items-center justify-between gap-2">
+                                        <span className="text-muted-foreground">{t("analytics.poseDeleted")}</span>
+                                        <span className="tabular-nums">{fmtBytes(pose.deleted_bytes)}</span>
+                                    </div>
+                                    <div className="flex items-center justify-between gap-2 border-t pt-2">
+                                        <span className="text-muted-foreground">{t("analytics.poseSaved")}</span>
+                                        <span className="tabular-nums">
+                                            {poseSaved >= 0 ? "" : "-"}
+                                            {fmtBytes(Math.abs(poseSaved))}
+                                        </span>
+                                    </div>
+                                </>
+                            )}
+                            <div className="text-xs text-muted-foreground">{t("analytics.poseHint")}</div>
+                        </CardContent>
+                    </Card>
+                </div>
+
+                {/* 趋势：每日场次 / 每日体积 */}
                 <Card>
-                    <CardHeader>
-                        <CardTitle className="text-base">{t("analytics.trendTitle")}</CardTitle>
+                    <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
+                        <CardTitle className="text-base">
+                            {t(trendMetric === "bytes" ? "analytics.trendBytesTitle" : "analytics.trendTitle")}
+                        </CardTitle>
+                        <div className="flex gap-0.5 rounded-md border p-0.5">
+                            {(["sessions", "bytes"] as const).map((m) => (
+                                <button
+                                    key={m}
+                                    className={`rounded px-2 py-0.5 text-xs transition-colors ${
+                                        trendMetric === m ? "bg-primary text-primary-foreground" : "text-muted-foreground"
+                                    }`}
+                                    onClick={() => setTrendMetric(m)}
+                                >
+                                    {t(m === "bytes" ? "analytics.metricBytes" : "analytics.metricSessions")}
+                                </button>
+                            ))}
+                        </div>
                     </CardHeader>
                     <CardContent>
                         {trend.length === 0 || summary.sessions + summary.sessions_prev === 0 ? (
@@ -176,11 +369,11 @@ export default function AnalyticsPage() {
                                     <div
                                         key={d.date}
                                         className="group relative h-full flex-1"
-                                        title={`${fmtDateShort(d.date)}: ${d.sessions} · ${fmtDuration(d.seconds)}`}
+                                        title={`${fmtDateShort(d.date)}: ${d.sessions} · ${fmtDuration(d.seconds)} · ${fmtBytes(d.bytes)}`}
                                     >
                                         <div
                                             className="absolute bottom-0 w-full rounded-t bg-primary/70 group-hover:bg-primary"
-                                            style={{ height: `${Math.max(2, (d.sessions / maxTrendSessions) * 100)}%` }}
+                                            style={{ height: `${Math.max(2, (trendValue(d) / maxTrend) * 100)}%` }}
                                         />
                                     </div>
                                 ))}
@@ -188,7 +381,7 @@ export default function AnalyticsPage() {
                         )}
                         <div className="mt-1 flex justify-between text-xs text-muted-foreground">
                             <span>{trend.length ? fmtDateShort(trend[0].date) : ""}</span>
-                            <span>{t("analytics.trendUnit")}</span>
+                            <span>{t(trendMetric === "bytes" ? "analytics.trendUnitBytes" : "analytics.trendUnit")}</span>
                             <span>{trend.length ? fmtDateShort(trend[trend.length - 1].date) : ""}</span>
                         </div>
                     </CardContent>
@@ -223,6 +416,7 @@ export default function AnalyticsPage() {
                                 </div>
                             </>
                         )}
+                        <div className="mt-2 text-xs text-muted-foreground">{t("analytics.cumulativeHint")}</div>
                     </CardContent>
                 </Card>
 
@@ -294,6 +488,7 @@ export default function AnalyticsPage() {
                                 </div>
                             </>
                         )}
+                        <div className="mt-2 text-xs text-muted-foreground">{t("analytics.cumulativeHint")}</div>
                     </CardContent>
                 </Card>
 
@@ -343,6 +538,57 @@ export default function AnalyticsPage() {
                                     sub:
                                         r.avg_interval_hours !== null
                                             ? t("analytics.avgInterval").replace("{h}", String(r.avg_interval_hours))
+                                            : undefined,
+                                }))}
+                            />
+                        </CardContent>
+                    </Card>
+                </div>
+
+                {/* 最吃盘 + 检测失败最多 */}
+                <div className="grid gap-4 lg:grid-cols-2">
+                    <Card>
+                        <CardHeader>
+                            <CardTitle className="flex items-center gap-1.5 text-base">
+                                <Database className="h-4 w-4" />
+                                {t("analytics.topBytesTitle")}
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                            <BarList
+                                emptyText={t("analytics.noData")}
+                                rows={rankings.top_bytes.map((r) => ({
+                                    label: r.name,
+                                    value: r.bytes,
+                                    valueText: fmtBytes(r.bytes),
+                                    sub:
+                                        r.bytes_per_hour !== null
+                                            ? t("analytics.bytesPerHour").replace("{size}", fmtBytes(r.bytes_per_hour))
+                                            : undefined,
+                                }))}
+                            />
+                        </CardContent>
+                    </Card>
+                    <Card>
+                        <CardHeader>
+                            <CardTitle className="flex items-center gap-1.5 text-base">
+                                <AlertTriangle className="h-4 w-4" />
+                                {t("analytics.topFailuresTitle")}
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                            <BarList
+                                emptyText={t("analytics.topFailuresEmpty")}
+                                rows={rankings.top_failures.map((r) => ({
+                                    label: r.name,
+                                    value: r.failures,
+                                    valueText: `${r.failures}/${r.checks}`,
+                                    sub:
+                                        r.failure_rate !== null
+                                            ? t("analytics.failureRate").replace(
+                                                  "{r}",
+                                                  (r.failure_rate * 100).toFixed(1),
+                                              )
                                             : undefined,
                                 }))}
                             />
@@ -401,23 +647,39 @@ export default function AnalyticsPage() {
                             ) : (
                                 <div className="space-y-2 text-sm">
                                     {platform_checks.map((p) => (
-                                        <div key={p.platform} className="flex items-center justify-between gap-2">
-                                            <span className="min-w-0 truncate">{p.platform}</span>
-                                            <span className="shrink-0 tabular-nums text-muted-foreground">
-                                                {p.checks} · {t("analytics.failureRate").replace("{r}", String((p.failure_rate * 100).toFixed(2)))}
-                                            </span>
+                                        <div key={p.platform} className="space-y-1">
+                                            <div className="flex items-center justify-between gap-2">
+                                                <span className="min-w-0 truncate">{p.platform}</span>
+                                                <span className="shrink-0 tabular-nums text-muted-foreground">
+                                                    {p.checks} · {t("analytics.failureRate").replace("{r}", String((p.failure_rate * 100).toFixed(2)))}
+                                                </span>
+                                            </div>
+                                            {p.failures > 0 && (
+                                                <div className="flex flex-wrap gap-1">
+                                                    {FAILURE_REASONS.filter((r) => p.reasons[r] > 0).map((r) => (
+                                                        <Badge
+                                                            key={r}
+                                                            variant={r === "invalid" || r === "unsupported" ? "destructive" : "secondary"}
+                                                            className="px-1.5 py-0 text-xs font-normal"
+                                                        >
+                                                            {reasonLabel(r, t)} {p.reasons[r]}
+                                                        </Badge>
+                                                    ))}
+                                                </div>
+                                            )}
                                         </div>
                                     ))}
                                 </div>
                             )}
-                            {storage.files.length > 0 && (
-                                <div
-                                    className="mt-3 border-t pt-2 text-xs text-muted-foreground"
-                                    title={storage.files.map((f) => `${f.name}: ${fmtBytes(f.bytes)}`).join("\n")}
-                                >
-                                    {t("analytics.storageSize")
-                                        .replace("{size}", fmtBytes(storage.total_bytes))
-                                        .replace("{n}", String(storage.files.length))}
+                            {failureTotal > 0 && (
+                                <div className="mt-3 border-t pt-2 text-xs text-muted-foreground">
+                                    <div>
+                                        {t("analytics.failureReasonsTitle")}:{" "}
+                                        {FAILURE_REASONS.filter((r) => failure_reasons[r] > 0)
+                                            .map((r) => `${reasonLabel(r, t)} ${failure_reasons[r]}`)
+                                            .join(" · ")}
+                                    </div>
+                                    <div className="mt-1">{t("analytics.reasonHint")}</div>
                                 </div>
                             )}
                         </CardContent>
