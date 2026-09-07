@@ -118,7 +118,9 @@ export function RecordingDialog({
     const { data: settingsData } = useQuery({
         queryKey: ["settings"],
         queryFn: settingsApi.get,
-        enabled: open,
+        // 页面挂载即预取：若等弹窗打开才拉，首次打开时表单会按空 defaults 初始化
+        // （分段录制等开关落成关），且 effect 不随数据到达重跑，开关就错下去了
+        enabled: true,
         staleTime: 30_000,
     })
 
