@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Depends
 
 from ...core.update.update_checker import UpdateChecker
@@ -37,7 +39,8 @@ async def system_stats(user: str = Depends(get_current_user), services=Depends(g
 
     storage = {"total_files": 0, "video_files": 0, "total_bytes": 0, "total_size": "0 B"}
     try:
-        storage = media_service.stats("", services.settings_config.get_video_save_path())
+        # 递归统计整个录制目录（NAS 共享上是秒级），别占着事件循环——这个接口是首页轮询的
+        storage = await asyncio.to_thread(media_service.stats, "", services.settings_config.get_video_save_path())
     except (PermissionError, FileNotFoundError):
         pass
 

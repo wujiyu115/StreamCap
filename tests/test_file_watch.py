@@ -31,6 +31,10 @@ class TestIsFileReady(unittest.TestCase):
     def setUp(self):
         import tempfile
 
+        # 就绪判定必过一轮 mtime 采样，单测里压到 50ms
+        self._interval = mock.patch.object(file_watch, "MTIME_SAMPLE_INTERVAL", 0.05)
+        self._interval.start()
+        self.addCleanup(self._interval.stop)
         self.tmp = tempfile.mkdtemp()
         self.path = os.path.join(self.tmp, "video.mp4")
         with open(self.path, "wb") as f:
@@ -62,6 +66,9 @@ class TestWaitUntilReady(unittest.TestCase):
     def setUp(self):
         import tempfile
 
+        self._interval = mock.patch.object(file_watch, "MTIME_SAMPLE_INTERVAL", 0.05)
+        self._interval.start()
+        self.addCleanup(self._interval.stop)
         self.tmp = tempfile.mkdtemp()
         self.log = _Log()
 
@@ -179,6 +186,79 @@ class TestHandleDetectionReal(unittest.TestCase):
             if proc.poll() is None:
                 proc.kill()
 
+
+
+class TestFilterReady(unittest.TestCase):
+    """批量判定的 sleep 必须是共享一轮，不是 O(N) 轮。"""
+
+    def setUp(self):
+        import tempfile
+
+        self.tmp = tempfile.mkdtemp()
+        self.paths = []
+        for i in range(6):
+            p = os.path.join(self.tmp, f"v{i}.mp4")
+            with open(p, "wb") as f:
+                f.write(b"x" * 128)
+            self.paths.append(p)
+
+    def tearDown(self):
+        import shutil
+
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_mtime_sampling_sleeps_once_for_all_files(self):
+        with mock.patch.object(file_watch, "_has_open_handle", return_value=None), \
+             mock.patch.object(file_watch.time, "sleep") as slept:
+            ready, not_ready = file_watch.filter_ready(self.paths)
+        self.assertEqual(ready, self.paths)
+        self.assertEqual(not_ready, [])
+        self.assertEqual(slept.call_count, 1, "6 个文件只该睡一轮采样")
+
+    def test_handle_released_still_confirms_mtime(self):
+        # 句柄检查只否决不放行：句柄已释放仍要过一轮 mtime 采样（外部写入看不到句柄）
+        with mock.patch.object(file_watch, "_has_open_handle", return_value=False), \
+             mock.patch.object(file_watch.time, "sleep") as slept:
+            ready, not_ready = file_watch.filter_ready(self.paths)
+        self.assertEqual(ready, self.paths)
+        self.assertEqual(slept.call_count, 1)
+
+    def test_open_handle_rejects_without_sampling(self):
+        # 反过来：攥着句柄的文件直接否，不用等采样（录制卡住时文件静止也能兜住）
+        with mock.patch.object(file_watch, "_has_open_handle", return_value=True), \
+             mock.patch.object(file_watch.time, "sleep") as slept:
+            ready, not_ready = file_watch.filter_ready(self.paths)
+        self.assertEqual(ready, [])
+        self.assertEqual(not_ready, self.paths)
+        self.assertEqual(slept.call_count, 0)
+
+    def test_mtime_changed_not_ready(self):
+        def _touch(_interval):
+            with open(self.paths[0], "ab") as f:
+                f.write(b"more")
+
+        with mock.patch.object(file_watch, "_has_open_handle", return_value=False), \
+             mock.patch.object(file_watch.time, "sleep", side_effect=_touch):
+            ready, not_ready = file_watch.filter_ready(self.paths[:2])
+        self.assertEqual(not_ready, [self.paths[0]])
+        self.assertEqual(ready, [self.paths[1]])
+
+    def test_order_preserved_and_missing_not_ready(self):
+        missing = os.path.join(self.tmp, "gone.mp4")
+        mixed = [self.paths[0], missing, self.paths[1]]
+        with mock.patch.object(file_watch, "_has_open_handle", return_value=False), \
+             mock.patch.object(file_watch, "MTIME_SAMPLE_INTERVAL", 0):
+            ready, not_ready = file_watch.filter_ready(mixed)
+        self.assertEqual(ready, [self.paths[0], self.paths[1]])
+        self.assertEqual(not_ready, [missing])
+
+    def test_duplicate_paths_checked_once(self):
+        dup = [self.paths[0], self.paths[0]]
+        with mock.patch.object(file_watch, "_has_open_handle", return_value=False) as h, \
+             mock.patch.object(file_watch, "MTIME_SAMPLE_INTERVAL", 0):
+            ready, _ = file_watch.filter_ready(dup)
+        self.assertEqual(h.call_count, 1)
+        self.assertEqual(ready, dup)  # 判定复用，但输出仍对应每个入参位置
 
 if __name__ == "__main__":
     unittest.main()

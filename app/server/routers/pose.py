@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -46,6 +47,39 @@ def _expand_videos(paths: list[str], merged_suffix: str, output_dir: str) -> lis
     return videos
 
 
+def _prepare_and_submit(manager, media_root: str, params: PoseParams, paths: list[str], trigger: str) -> dict:
+    """展开目录 + 就绪判定 + 起子进程。全程阻塞 I/O，只能在线程里跑。"""
+    merged_suffix = params.merged_suffix or "_merged"
+    videos = _expand_videos(paths, merged_suffix, params.video_output_dir or "pose_output")
+    if not videos:
+        raise HTTPException(status_code=400, detail=errors.POSE_NO_VIDEOS)
+
+    if trigger != "auto":
+        from ...core.pose.file_watch import filter_ready
+
+        _, pending = filter_ready(videos)
+        if pending:
+            names = [os.path.basename(p) for p in pending]
+            shown = "; ".join(names[:5])
+            if len(names) > 5:
+                shown += f" (+{len(names) - 5})"
+            raise HTTPException(
+                status_code=400,
+                detail=f"{errors.POSE_FILES_WRITING}|{shown}",
+            )
+
+    try:
+        return manager.submit(
+            videos=videos,
+            media_root=media_root,
+            params=params.to_dict(),
+            trigger=trigger,
+            wait_file=False,
+        )
+    except TaskBusyError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
 @router.post("/tasks")
 async def submit_task(
     request: Request,
@@ -65,36 +99,9 @@ async def submit_task(
         {**(services.settings_config.user_config.get("pose_detection") or {}), **(body.overrides or {})}
     )
 
-    merged_suffix = params.merged_suffix or "_merged"
-    videos = _expand_videos(paths, merged_suffix, params.video_output_dir or "pose_output")
-    if not videos:
-        raise HTTPException(status_code=400, detail=errors.POSE_NO_VIDEOS)
-
-    if body.trigger != "auto":
-        from ...core.pose.file_watch import is_file_ready
-
-        not_ready = [os.path.basename(p) for p in videos if not is_file_ready(p)]
-        if not_ready:
-            shown = "; ".join(not_ready[:5])
-            if len(not_ready) > 5:
-                shown += f" (+{len(not_ready) - 5})"
-            raise HTTPException(
-                status_code=400,
-                detail=f"{errors.POSE_FILES_WRITING}|{shown}",
-            )
-
-    try:
-        result = manager.submit(
-            videos=videos,
-            media_root=media_root,
-            params=params.to_dict(),
-            trigger=body.trigger,
-            wait_file=False,
-        )
-    except TaskBusyError as e:
-        raise HTTPException(status_code=409, detail=str(e))
-
-    return result
+    # os.walk 走的是 NAS 共享、fuser 是子进程、无句柄工具时还要 sleep 采样 mtime：
+    # 留在事件循环里跑会把整个 WebUI 卡死到提交返回为止。
+    return await asyncio.to_thread(_prepare_and_submit, manager, media_root, params, paths, body.trigger)
 
 
 @router.get("/tasks")
@@ -104,8 +111,10 @@ async def list_tasks(request: Request, user: str = Depends(get_current_user)):
 
 @router.post("/tasks/{task_id}/stop")
 async def stop_task(request: Request, task_id: str, user: str = Depends(get_current_user)):
+    manager = _task_manager(request)
     try:
-        return _task_manager(request).stop()
+        # stop() 要等子进程退出（SIGTERM 后最多 13s），同样不能占着事件循环
+        return await asyncio.to_thread(manager.stop)
     except TaskBusyError as e:
         raise HTTPException(status_code=409, detail=str(e))
 

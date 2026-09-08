@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import mimetypes
 import os
 from email.utils import formatdate
@@ -98,7 +99,8 @@ async def tree(path: str = Query(""), user: str = Depends(get_current_user), ser
 @router.get("/stats")
 async def stats(path: str = Query(""), user: str = Depends(get_current_user), services=Depends(get_services)):
     try:
-        result = media_service.stats(path, _root(services))
+        # 递归统计，同样丢线程池（见 system.py /stats）
+        result = await asyncio.to_thread(media_service.stats, path, _root(services))
     except PermissionError:
         raise HTTPException(status_code=403, detail=errors.ACCESS_DENIED)
     except FileNotFoundError:

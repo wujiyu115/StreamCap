@@ -1,8 +1,15 @@
 """文件就绪判定：识别视频文件是否仍在被写入（录制/转码中）。
 
-事实判定替代旧的「mtime 距今 N 分钟」猜测：
-1. 写句柄检查（fuser/lsof）：有进程持有该文件句柄 = 正在写入
-2. 两轮 mtime 采样兜底（无 fuser/lsof 可用时）
+事实判定替代旧的「mtime 距今 N 分钟」猜测，两个信号都要过：
+1. 写句柄检查（fuser/lsof）：有进程持有该文件句柄 = 正在写入，直接否
+2. 两轮 mtime 采样：变动 = 仍在写
+
+句柄检查只用来「否决」，不用来「放行」——它只看得到本容器 PID 命名空间里的
+进程，从 SMB 之类外部途径拷进来的文件看不到任何句柄，光凭这一条会把写了一半
+的文件当成就绪。反过来 mtime 也不能单独用：录制中途卡住（断流/转码停顿）时
+文件静止但 ffmpeg 还攥着句柄，这时得靠句柄检查兜住。
+代价是就绪判定至少要 MTIME_SAMPLE_INTERVAL 秒——所以批量判定共享这一轮采样
+（见 filter_ready），别逐个文件调。
 
 自动触发的任务用 wait_until_ready 循环复查未就绪文件（就绪即处理，
 无需用户配置任何等待时长）；手动提交用单次检查直接拒绝未就绪文件。
@@ -63,19 +70,39 @@ def _mtime(path: str) -> float | None:
         return None
 
 
+def filter_ready(paths: list[str]) -> tuple[list[str], list[str]]:
+    """批量单次就绪判定（不等待），返回 (ready, not_ready)，保持入参顺序。
+
+    关键点：无句柄工具时的两轮 mtime 采样**只睡一轮**，所有待采样文件共享这
+    MTIME_SAMPLE_INTERVAL 秒。逐个文件调 is_file_ready 是 O(N) 个 sleep，
+    提交一个目录（几十个文件）就要睡几十秒。
+    """
+    verdict: dict[str, bool] = {}
+    sampling: dict[str, float] = {}
+    for path in paths:
+        if path in verdict or path in sampling:
+            continue
+        m = _mtime(path)
+        if m is None:
+            verdict[path] = False  # 文件不存在直接未就绪
+        elif _has_open_handle(path) is True:
+            verdict[path] = False  # 有进程持有句柄 = 正在写
+        else:
+            sampling[path] = m  # 句柄已释放或无从判定，都再用 mtime 确认一轮
+
+    if sampling:
+        time.sleep(MTIME_SAMPLE_INTERVAL)
+        for path, m in sampling.items():
+            verdict[path] = _mtime(path) == m  # mtime 变动即视为仍在写
+
+    ready = [p for p in paths if verdict.get(p)]
+    not_ready = [p for p in paths if not verdict.get(p)]
+    return ready, not_ready
+
+
 def is_file_ready(path: str) -> bool:
     """单次就绪判定（不等待）。文件不存在直接未就绪。"""
-    m = _mtime(path)
-    if m is None:
-        return False
-    handle = _has_open_handle(path)
-    if handle is True:
-        return False
-    if handle is False:
-        return True
-    # 无句柄工具：两轮 mtime 采样，变动即视为仍在写
-    time.sleep(MTIME_SAMPLE_INTERVAL)
-    return _mtime(path) == m
+    return bool(filter_ready([path])[0])
 
 
 def wait_until_ready(
@@ -100,23 +127,11 @@ def wait_until_ready(
             log.info("收到停止请求，中止等待文件")
             break
 
-        for path in pending[:]:
-            m = _mtime(path)
-            if m is None:
-                continue  # 尚不存在，保持等待
-            handle = _has_open_handle(path)
-            if handle is True:
-                continue  # 仍被写入
-            if handle is False:
-                # 句柄已释放：录制/转码进程已结束，文件完整
-                pending.remove(path)
-                ready.append(path)
-                continue
-            # 无句柄工具：两轮 mtime 采样
-            time.sleep(MTIME_SAMPLE_INTERVAL)
-            if _mtime(path) == m:
-                pending.remove(path)
-                ready.append(path)
+        # 句柄已释放（录制/转码进程已结束）或 mtime 两轮不变 = 文件完整
+        newly_ready, _ = filter_ready(pending)
+        for path in newly_ready:
+            pending.remove(path)
+            ready.append(path)
 
         if not pending:
             break

@@ -39,12 +39,14 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# 运行时系统依赖：headless OpenCV 不需要 libGL；curl 供 healthcheck
+# 运行时系统依赖：headless OpenCV 不需要 libGL；curl 供 healthcheck；
+# psmisc 提供 fuser——文件就绪判定的快路径，没它就退化成 sleep 采样 mtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     tzdata \
     curl \
     libglib2.0-0 \
+    psmisc \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
