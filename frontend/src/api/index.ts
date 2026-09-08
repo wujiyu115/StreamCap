@@ -42,8 +42,15 @@ export const authApi = {
 
 export const settingsApi = {
     get: () => api.get<import("./types").SettingsData>("/settings"),
-    update: (userSettings: Record<string, unknown>) =>
-        api.put<{ ok: boolean }>("/settings", { user_settings: userSettings }),
+    /** 只发用户改过的键（构造式稀疏）；version 用于乐观并发，不匹配后端返回 409 */
+    update: (patch: Record<string, unknown>, version?: string) =>
+        api.put<import("./types").SettingsWriteResult>("/settings", { patch, version }),
+    /** 删掉一个覆盖项，让该键恢复跟随默认层。keyPath 支持点号路径 */
+    resetKey: (keyPath: string, version?: string) =>
+        api.del<import("./types").SettingsResetResult>(
+            `/settings/keys/${keyPath}`,
+            version ? { version } : {},
+        ),
     getCookies: () => api.get<{ cookies: Record<string, string> }>("/settings/cookies"),
     updateCookies: (cookies: Record<string, string>) =>
         api.put<{ ok: boolean }>("/settings/cookies", { cookies }),

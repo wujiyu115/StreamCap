@@ -7,19 +7,23 @@ import threading
 from typing import TypeVar
 
 from ...utils.logger import logger
+from .layering import strip_defaults
 
 T = TypeVar("T")
 
 
 class ConfigManager:
     # 镜像内置的配置模板目录（打包在 /app/config_templates）。
-    # 容器把 config/ 挂载为空卷时，首启从模板初始化。
+    # `default_settings.json` 就地当默认层读，**不复制进挂载卷**；
+    # language.json / version.json 仍在缺失时初始化一份到 config/。
     TEMPLATE_DIR_NAME = "config_templates"
+    # 覆盖层稀疏化迁移的标记：放 sidecar，不污染 user_settings.json
+    MIGRATIONS_FILE_NAME = ".config_migrations.json"
+    SPARSE_MIGRATION_KEY = "sparse_user_settings"
 
     def __init__(self, run_path):
         self.config_path = os.path.join(run_path, "config")
         self.language_config_path = os.path.join(self.config_path, "language.json")
-        self.default_config_path = os.path.join(self.config_path, "default_settings.json")
         self.user_config_path = os.path.join(self.config_path, "user_settings.json")
         self.cookies_config_path = os.path.join(self.config_path, "cookies.json")
         self.about_config_path = os.path.join(self.config_path, "version.json")
@@ -28,60 +32,107 @@ class ConfigManager:
         self.accounts_config_path = os.path.join(self.config_path, "accounts.json")
         self.web_auth_config_path = os.path.join(self.config_path, "web_auth.json")
         self.analytics_dir = os.path.join(self.config_path, "analytics")
+        self.migrations_path = os.path.join(self.config_path, self.MIGRATIONS_FILE_NAME)
+
+        os.makedirs(self.config_path, exist_ok=True)
 
         template_dir = os.path.join(run_path, self.TEMPLATE_DIR_NAME)
-        if os.path.isdir(template_dir):
-            for name in ("default_settings.json", "language.json", "version.json"):
-                src = os.path.join(template_dir, name)
+        self.template_dir = template_dir if os.path.isdir(template_dir) else None
+        # 默认层路径：镜像模板优先，开发态回落到仓库 config/default_settings.json。
+        # 两种情况都是只读来源——运行期从不写它，所以老键不会停留在首次部署时的值。
+        self.default_config_path = os.path.join(self.config_path, "default_settings.json")
+        if self.template_dir:
+            template_default = os.path.join(self.template_dir, "default_settings.json")
+            if os.path.isfile(template_default):
+                self.default_config_path = template_default
+                self._retire_legacy_default_copy()
+            for name in ("language.json", "version.json"):
+                src = os.path.join(self.template_dir, name)
                 dst = os.path.join(self.config_path, name)
                 if os.path.isfile(src) and (not os.path.exists(dst) or os.path.getsize(dst) == 0):
                     shutil.copy(src, dst)
                     logger.info(f"Initialized {dst} from image template")
-                elif os.path.isfile(src) and name == "default_settings.json":
-                    # 升级部署：已存在的副本补齐镜像模板里的新增键（不覆盖用户已有值）
-                    try:
-                        self._merge_template_defaults(src, dst)
-                    except Exception as e:
-                        logger.warning(f"Failed to merge template defaults into {dst}: {e}")
 
-        os.makedirs(os.path.dirname(self.default_config_path), exist_ok=True)
         self.init()
+        self._migrate_sparse_user_settings()
 
     def init(self):
-        self.init_default_config()
         self.init_user_config()
         self.init_cookies_config()
         self.init_accounts_config()
         self.init_recordings_config()
         self.init_web_auth_config()
 
-    @staticmethod
-    def _merge_template_defaults(src: str, dst: str) -> None:
-        """把镜像模板的默认设置合并进已部署的 config 副本。
+    def _retire_legacy_default_copy(self) -> None:
+        """把历史版本复制进挂载卷的 default_settings.json 挪走。
 
-        深度合并：仅补齐副本中缺失的键，不覆盖已有值——升级镜像新增
-        默认键（如 pose_detection.inference_threads）才能生效，同时
-        用户对副本的任何修改都保留。
+        它已经不是默认层了（默认层在镜像模板里），留着只会让人误以为改它
+        有用——而且因为老实现「只补缺键、不覆盖已有键」，那份副本对老键会
+        永久停留在首次部署时的值。
         """
-        with open(src, encoding="utf-8") as f:
-            template = json.load(f)
-        with open(dst, encoding="utf-8") as f:
-            deployed = json.load(f)
+        stale = os.path.join(self.config_path, "default_settings.json")
+        if not os.path.isfile(stale):
+            return
+        retired = stale + ".legacy"
+        try:
+            os.replace(stale, retired)
+            logger.info(f"Retired stale default settings copy: {stale} -> {retired} (defaults now read from image)")
+        except OSError as e:
+            logger.warning(f"Failed to retire stale {stale}: {e}")
 
-        def merge(base: dict, override: dict) -> bool:
-            changed = False
-            for key, value in override.items():
-                if key not in base:
-                    base[key] = value
-                    changed = True
-                elif isinstance(value, dict) and isinstance(base.get(key), dict):
-                    changed = merge(base[key], value) or changed
-            return changed
+    def _load_migrations(self) -> dict:
+        if not os.path.isfile(self.migrations_path):
+            return {}
+        try:
+            with open(self.migrations_path, encoding="utf-8") as f:
+                return json.load(f) or {}
+        except Exception:
+            return {}
 
-        if merge(deployed, template):
-            with open(dst, "w", encoding="utf-8") as f:
-                json.dump(deployed, f, ensure_ascii=False, indent=4)
-            logger.info(f"Merged new template defaults into {dst}")
+    def _mark_migration_done(self, key: str) -> None:
+        state = self._load_migrations()
+        state[key] = True
+        try:
+            with open(self.migrations_path, "w", encoding="utf-8") as f:
+                json.dump(state, f, ensure_ascii=False, indent=4)
+        except OSError as e:
+            logger.warning(f"Failed to record migration {key}: {e}")
+
+    def _migrate_sparse_user_settings(self) -> None:
+        """一次性把全量物化的 user_settings.json 收敛成稀疏覆盖层。
+
+        历史实现的 PUT 会把 `default ∪ user` 的合并视图整体写回用户层，
+        默认层因此被物化、永久失效。这里按当前默认层剥离等值键，让用户层
+        只留真正偏离默认的部分。
+
+        **只跑一次**（sidecar 标记）：旧文件里已经无法区分「用户显式设成与
+        默认相同」和「继承默认」，每次启动都剥离会反复吃掉用户显式的选择。
+        """
+        if self._load_migrations().get(self.SPARSE_MIGRATION_KEY):
+            return
+        defaults = self.load_default_config()
+        user = self.load_user_config()
+        if not defaults or not user:
+            # 没有默认层可比，或用户层本来就是空的：没什么可迁移，直接落标记
+            self._mark_migration_done(self.SPARSE_MIGRATION_KEY)
+            return
+
+        sparse, dropped = strip_defaults(user, defaults)
+        if dropped:
+            backup = self.user_config_path + ".pre-sparse.bak"
+            try:
+                shutil.copy(self.user_config_path, backup)
+                with open(self.user_config_path, "w", encoding="utf-8") as f:
+                    json.dump(sparse, f, ensure_ascii=False, indent=4)
+            except OSError as e:
+                logger.error(f"Sparse user settings migration failed, keeping file as-is: {e}")
+                return
+            logger.info(
+                f"Sparse user settings migration: dropped {len(dropped)} key(s) equal to defaults "
+                f"({', '.join(dropped[:12])}{' ...' if len(dropped) > 12 else ''}); "
+                f"{len(sparse)} override(s) kept; backup at {backup}"
+            )
+        self._mark_migration_done(self.SPARSE_MIGRATION_KEY)
 
     @staticmethod
     def _init_config(config_path, default_config=None):
@@ -96,14 +147,13 @@ class ConfigManager:
             except Exception as e:
                 logger.error(f"Failed to initialize configuration file {config_path}: {e}")
 
-    def init_default_config(self):
-        default_config = {}
-        self._init_config(self.default_config_path, default_config)
-
     def init_user_config(self):
-        if os.path.exists(self.user_config_path) and self.load_user_config():
-            return
-        shutil.copy(self.default_config_path, self.user_config_path)
+        """用户覆盖层：缺失时建一份空的 `{}`。
+
+        不再从默认层复制——复制出来的就是物化的合并视图，之后镜像里改默认值
+        对这台机器永久失效。空文件 = 全部跟随默认层。
+        """
+        self._init_config(self.user_config_path, {})
 
     def init_cookies_config(self):
         cookies_config = {}

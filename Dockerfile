@@ -54,7 +54,8 @@ ENV PATH="/opt/venv/bin:$PATH"
 # 后端 i18n 语言包（config 挂载卷不覆盖它）
 COPY --from=builder /app/locales ./locales
 
-# 配置模板：config 挂载为空卷时首启自动初始化（default_settings/language/version）
+# 配置默认层 + 模板：default_settings.json 就地被当默认层读取（不复制进挂载卷，
+# 否则老键会永久停留在首次部署时的值）；language/version 仅在缺失时初始化一份
 COPY --from=builder /app/config/ ./config_templates/
 
 COPY --from=builder /app/ ./

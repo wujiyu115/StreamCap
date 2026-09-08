@@ -85,7 +85,16 @@ class ValidityCheckRequest(BaseModel):
 
 
 class SettingsUpdate(BaseModel):
-    user_settings: dict
+    """设置写入：只带「用户改过的键」，深度合并进稀疏覆盖层。
+
+    ``version`` 是 GET 下发的覆盖层指纹，用于乐观并发（不匹配 409）。
+    ``user_settings`` 是旧客户端字段（整份合并视图），收到直接 409 让它刷新——
+    写进去等于把默认层重新物化一遍。
+    """
+
+    patch: Optional[dict] = None
+    version: Optional[str] = None
+    user_settings: Optional[dict] = None
 
 
 class CookiesUpdate(BaseModel):

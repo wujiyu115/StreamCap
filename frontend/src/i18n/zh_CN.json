@@ -250,6 +250,10 @@
         "saved": "设置已保存",
         "saveFailed": "保存失败",
         "restoreDefaults": "恢复默认",
+        "overridden": "已覆盖",
+        "resetHint": "点击恢复默认值：{value}",
+        "resetDone": "已恢复默认值",
+        "emptyValue": "（空）",
         "language": "程序语言",
         "themeMode": "主题模式",
         "themeLight": "浅色",
@@ -409,7 +413,9 @@
         "poseTaskRunning": "已有任务在运行，请先停止或等待完成",
         "poseQueueFull": "等待队列已满",
         "poseNoRunningTask": "没有正在运行的任务",
-        "requestTimeout": "请求超时，请重试"
+        "requestTimeout": "请求超时，请重试",
+        "settingsVersionMismatch": "配置已被其他窗口修改，已重新载入",
+        "settingsStaleClient": "页面版本过旧，请刷新后重试"
     },
     "analytics": {
         "title": "录制分析",

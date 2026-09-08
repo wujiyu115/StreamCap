@@ -20,14 +20,14 @@ DECODE_BACKEND_OPTIONS = ("auto", "pyav", "opencv")
 # 参数默认值也用于 default_settings.json 的 pose_detection 段，
 # 两处保持一致（设置读取时 user→default 回退）。
 DEFAULTS: dict[str, Any] = {
-    "enabled": False,
+    "enabled": True,
     "frame_seconds": 10.0,
     "imgsz": 416,
     "batch_size": 8,
     "inference_threads": 0,
     "confidence_threshold": 0.5,
     "enable_pose_detection": True,
-    "pose_filter": "none",
+    "pose_filter": "standing",
     "standing_angle": 45.0,
     "person_min_ratio": 0.2,
     "merge_threshold_seconds": 12.0,
@@ -51,7 +51,7 @@ class PoseParams:
     inference_threads: int = 0
     confidence_threshold: float = 0.5
     enable_pose_detection: bool = True
-    pose_filter: str = "none"
+    pose_filter: str = "standing"
     standing_angle: float = 45.0
     person_min_ratio: float = 0.2
     merge_threshold_seconds: float = 12.0

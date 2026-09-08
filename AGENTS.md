@@ -80,6 +80,31 @@ StreamCap 的生产部署目标是 Unraid 7.x 服务器 **tank**（`192.168.31.1
 - **不要凭"已拉新镜像"就宣布完成**：对比 `docker inspect streamcap --format '{{.Image}}'` 与 `docker images wujiyu115/streamcap:latest --format '{{.ID}}'` 的 image ID 是否一致，确认新镜像已经跑起来
 - **重建后 `docker ps` 看不到 streamcap 别慌**：先看 `docker ps -a`，如果 `Exited (137)` 就是 autostart 行为，`docker start` 即可；只有 `Created`（从未跑过）才需要排查 template 或镜像问题
 
+### 配置分层（默认层在镜像里，用户层只存改过的键）
+
+配置有两层，**生效值只在内存里合并，永不落盘**：
+
+| 层 | 位置 | 谁写 | 内容 |
+| --- | --- | --- | --- |
+| 默认层 | 镜像内 `/app/config_templates/default_settings.json`（开发时 `config/default_settings.json`） | git | 全量键 |
+| 用户层 | 挂载卷 `config/user_settings.json` | UI / 手改 | **只有被显式改过的键**（稀疏） |
+
+- `SettingsConfig.user_overrides` 是稀疏用户层（持久化的那份），`SettingsConfig.user_config` 是 `deep_merge(default, overrides)` 的生效字典。业务代码继续读 `user_config`（`StreamManager` 等在构造时按引用捕获它，所以刷新用 `rebuild_effective` 原地 `clear()/update()`，别重新赋值）。
+- 只有 `user_overrides` 会被 `save_user_config` 写盘。`app/core/config/layering.py` 里全是纯函数（`deep_merge` / `rebuild_effective` / `apply_patch` / `unset_path` / `strip_defaults` / `config_hash`），改配置语义先看那儿。
+- `PUT /api/settings` 收 `{patch, version}`：patch 是**前端 diff 出来的增量**（只含用户这次真正改动的键），`version` 是 `config_hash(user_overrides)`，不匹配返回 409 `err.settingsVersionMismatch`；没带 `patch` 的老前端一律 409 `err.settingsStaleClient`（宁可让旧标签页报错，也不接受整体写回）。
+- `DELETE /api/settings/keys/{path}` 从用户层删键（回落到默认值），设置页里"已覆盖"徽章后面的按钮就是它。
+- 稀疏性来自**写入路径**（前端只发 diff），不是保存时"把等于默认值的键剔掉"——后者会把"显式设成和默认值相同"和"继承默认值"混为一谈，以后改默认值时前者会被静默跟着改。唯一的例外是一次性迁移。
+
+**所以新增设置项时**：往 `config/default_settings.json` 加键随便加，加错默认值也不会顶掉生产上已有的用户值（那些键在用户层里，合并时优先）。要注意的只有反过来的方向——**改一个用户从没在 UI 上动过的键的默认值，等于给所有部署改行为**，这是有意为之才行。
+
+`app/core/pose/pose_params.py` 的 `DEFAULTS` 是 `default_settings.json` 里 `pose_detection` 的镜像副本，改一处要同步另一处。
+
+#### 一次性迁移（老部署的 user_settings.json 是全量的）
+
+`ConfigManager._migrate_sparse_user_settings` 在启动时跑一次：把等于默认值的键剔掉（这次是有意的有损操作），备份到 `user_settings.json.pre-sparse.bak`，被剔掉的键打日志，然后在 `config/.config_migrations.json` 里记 `sparse_user_settings: true`，不会重复跑。挂载卷里那份历史遗留的 `default_settings.json`（老代码复制过去的，对老键永久停留在首次部署时的值）会被重命名成 `default_settings.json.legacy`，之后默认层只从镜像读。
+
+排查配置问题时看 `GET /api/settings` 的三个字段：`default_settings`（镜像默认层）、`user_overrides`（稀疏用户层）、`user_settings`（合并后的生效值）。
+
 ### 回滚
 
 - template 每次更新前备份到 `/tmp/my-streamcap.xml.bak`

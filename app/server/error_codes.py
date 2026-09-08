@@ -28,3 +28,7 @@ POSE_FILES_WRITING = "err.poseFilesWriting"
 POSE_TASK_RUNNING = "err.poseTaskRunning"
 POSE_QUEUE_FULL = "err.poseQueueFull"
 POSE_NO_RUNNING_TASK = "err.poseNoRunningTask"
+
+# 设置
+SETTINGS_VERSION_MISMATCH = "err.settingsVersionMismatch"
+SETTINGS_STALE_CLIENT = "err.settingsStaleClient"

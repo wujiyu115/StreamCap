@@ -250,6 +250,10 @@
         "saved": "Settings saved",
         "saveFailed": "Failed to save",
         "restoreDefaults": "Restore defaults",
+        "overridden": "Overridden",
+        "resetHint": "Click to restore the default: {value}",
+        "resetDone": "Restored to default",
+        "emptyValue": "(empty)",
         "language": "Language",
         "themeMode": "Theme",
         "themeLight": "Light",
@@ -409,7 +413,9 @@
         "poseTaskRunning": "A task is already running, stop it or wait",
         "poseQueueFull": "Wait queue is full",
         "poseNoRunningTask": "No running task",
-        "requestTimeout": "Request timed out, please retry"
+        "requestTimeout": "Request timed out, please retry",
+        "settingsVersionMismatch": "Settings were changed elsewhere; reloaded",
+        "settingsStaleClient": "This page is outdated, please refresh and retry"
     },
     "analytics": {
         "title": "Analytics",

@@ -198,9 +198,31 @@ export interface SystemInfo {
 }
 
 export interface SettingsData {
+    /** 有效配置：默认层 ⊕ 用户覆盖层，后端在内存里派生，不落盘 */
     user_settings: Record<string, unknown>
+    /** 默认层（镜像内只读模板），用于展示「默认值」和判断是否已覆盖 */
     default_settings: Record<string, unknown>
+    /** 稀疏覆盖层：只含用户显式改过的键，落盘的就是这份 */
+    user_overrides: Record<string, unknown>
+    /** 覆盖层指纹，写入时带回做乐观并发 */
+    version: string
     language_code: string
+}
+
+export interface SettingsWriteResult {
+    ok: boolean
+    changed: boolean
+    version: string
+    user_overrides: Record<string, unknown>
+}
+
+export interface SettingsResetResult {
+    ok: boolean
+    removed: boolean
+    /** 恢复默认后该键的有效值 */
+    value: unknown
+    version: string
+    user_overrides: Record<string, unknown>
 }
 
 export interface PoseTaskState {
