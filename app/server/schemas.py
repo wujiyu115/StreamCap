@@ -32,6 +32,7 @@ class RecordingCreate(BaseModel):
     flv_use_direct_download: Optional[bool] = None
     video_bitrate: Optional[int] = None
     pose_enabled: Optional[bool] = None
+    special_attention: bool = False
 
 
 class RecordingUpdate(BaseModel):
@@ -51,6 +52,7 @@ class RecordingUpdate(BaseModel):
     flv_use_direct_download: Optional[bool] = None
     video_bitrate: Optional[int] = None
     pose_enabled: Optional[bool] = None
+    special_attention: Optional[bool] = None
 
 
 class BatchCreateRequest(BaseModel):

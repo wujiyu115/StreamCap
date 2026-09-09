@@ -74,3 +74,21 @@ def test_no_persist_when_nothing_changed():
     before = mgr.services.persist_calls
     mgr._auto_stop_stale_monitors(mgr._monitor_config())
     assert mgr.services.persist_calls == before, "无变更不触发持久化"
+
+
+def test_special_attention_skips_days_but_not_invalid():
+    """特别关注：豁免按天数停监控，但不豁免失效房间自动停"""
+    NOW = time.time()
+    mgr = make_manager({"auto_stop_monitor_days": 7})
+    starred_stale = make_recording(rec_id="star-stale")
+    starred_stale.special_attention = True
+    starred_stale.last_live_time = NOW - 30 * 86400
+    starred_invalid = make_recording(rec_id="star-dead")
+    starred_invalid.special_attention = True
+    set_recordings([starred_stale, starred_invalid])
+    mgr.validity_cache = {"star-dead": {"url": starred_invalid.url, "status": room_validity.STATUS_INVALID}}
+
+    mgr._auto_stop_stale_monitors(mgr._monitor_config())
+
+    assert starred_stale.monitor_status is True, "特别关注应忽略按天数停监控"
+    assert starred_invalid.monitor_status is False, "特别关注不豁免失效房间自动停"

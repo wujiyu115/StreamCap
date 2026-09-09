@@ -56,6 +56,7 @@ interface FormState {
     monitor_hours_2: string
     enabled_message_push: boolean
     only_notify_no_record: boolean
+    special_attention: boolean
     pose_enabled: "" | "global" | "on" | "off"
     monitor_status: boolean
 }
@@ -87,6 +88,7 @@ function initialState(rec: Recording | null, defaults: Record<string, unknown>):
         monitor_hours_2: hours[1]?.trim() ?? "",
         enabled_message_push: rec?.enabled_message_push ?? false,
         only_notify_no_record: rec?.only_notify_no_record ?? false,
+        special_attention: rec?.special_attention ?? false,
         pose_enabled:
             rec == null
                 ? "global"
@@ -220,6 +222,7 @@ export function RecordingDialog({
             monitor_hours: hours || null,
             enabled_message_push: form.enabled_message_push,
             only_notify_no_record: form.only_notify_no_record,
+            special_attention: form.special_attention,
             monitor_status: form.monitor_status,
             pose_enabled:
                 form.pose_enabled === "global"
@@ -541,6 +544,7 @@ function SingleForm({
                     [
                         ["enabled_message_push", "recordingDialog.messagePush"],
                         ["only_notify_no_record", "recordingDialog.onlyNotify"],
+                        ["special_attention", "recordingDialog.specialAttention"],
                         ["monitor_status", "recordings.startMonitor"],
                     ] as const
                 ).map(([key, label]) => (
@@ -550,7 +554,11 @@ function SingleForm({
                             checked={form[key] as boolean}
                             onCheckedChange={(v) => onChange(key, Boolean(v))}
                         />
-                        <Label htmlFor={key} className="cursor-pointer text-sm font-normal">
+                        <Label
+                            htmlFor={key}
+                            className="cursor-pointer text-sm font-normal"
+                            title={key === "special_attention" ? t("recordingDialog.specialAttentionHint") : undefined}
+                        >
                             {t(label)}
                         </Label>
                     </div>

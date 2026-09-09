@@ -104,6 +104,7 @@ class Recording:
         self.use_proxy = None
         self.record_url = None
         self.preview_url = None
+        self.special_attention = False
         # 上次开播时刻（epoch 秒，持久化）："N 天未开播自动停监控"的计时基准。
         # 新建任务从创建时刻起算宽限期；开播检测与开启监控时会刷新
         self.last_live_time = time.time()
@@ -136,6 +137,7 @@ class Recording:
             "flv_use_direct_download": self.flv_use_direct_download,
             "video_bitrate": self.video_bitrate,
             "pose_enabled": self.pose_enabled,
+            "special_attention": self.special_attention,
             "last_live_time": self.last_live_time,
             "live_count": self.live_count,
             "avg_live_interval": self.avg_live_interval,
@@ -169,6 +171,7 @@ class Recording:
         recording.last_duration_str = data.get("last_duration")
         recording.platform = data.get("platform")
         recording.platform_key = data.get("platform_key")
+        recording.special_attention = bool(data.get("special_attention", False))
         # 旧数据无此字段时保持 None，由监控循环首次观察到时初始化宽限期
         recording.last_live_time = data.get("last_live_time")
         recording.live_count = data.get("live_count") or 0

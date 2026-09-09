@@ -12,6 +12,7 @@ import {
     RefreshCw,
     ScanSearch,
     Square,
+    Star,
     Table2,
     Trash2,
 } from "lucide-react"
@@ -160,6 +161,18 @@ export default function RecordingsPage() {
             recordingsApi.setMonitor(id, enabled),
         onSuccess: (_d, vars) =>
             toast.success(vars.enabled ? t("recordings.startMonitorTip") : t("recordings.stopMonitorTip")),
+        onSettled: invalidate,
+    })
+
+    const specialAttentionMutation = useMutation({
+        mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
+            recordingsApi.update(id, { special_attention: enabled }),
+        onSuccess: (_d, vars) =>
+            toast.success(
+                vars.enabled
+                    ? t("recordings.specialAttentionOnTip")
+                    : t("recordings.specialAttentionOffTip"),
+            ),
         onSettled: invalidate,
     })
 
@@ -581,6 +594,29 @@ export default function RecordingsPage() {
                                                 variant="ghost"
                                                 size="icon"
                                                 title={
+                                                    r.special_attention
+                                                        ? t("recordings.specialAttentionOff")
+                                                        : t("recordings.specialAttentionOn")
+                                                }
+                                                onClick={() =>
+                                                    specialAttentionMutation.mutate({
+                                                        id: r.rec_id,
+                                                        enabled: !r.special_attention,
+                                                    })
+                                                }
+                                            >
+                                                <Star
+                                                    className={`h-4 w-4 ${
+                                                        r.special_attention
+                                                            ? "fill-yellow-400 text-yellow-500"
+                                                            : "text-muted-foreground"
+                                                    }`}
+                                                />
+                                            </Button>
+                                            <Button
+                                                variant="ghost"
+                                                size="icon"
+                                                title={
                                                     r.monitor_status
                                                         ? t("recordings.stopMonitor")
                                                         : t("recordings.startMonitor")
@@ -648,6 +684,12 @@ export default function RecordingsPage() {
                             onMonitor={(enabled) => monitorMutation.mutate({ id: r.rec_id, enabled })}
                             onStop={() => stopMutation.mutate(r.rec_id)}
                             onOpenMedia={() => gotoMedia(r)}
+                            onToggleSpecialAttention={() =>
+                                specialAttentionMutation.mutate({
+                                    id: r.rec_id,
+                                    enabled: !r.special_attention,
+                                })
+                            }
                         />
                     ))}
                 </div>
@@ -730,6 +772,7 @@ function RecordingCardView({
     onMonitor,
     onStop,
     onOpenMedia,
+    onToggleSpecialAttention,
 }: {
     rec: Recording
     selected: boolean
@@ -739,6 +782,7 @@ function RecordingCardView({
     onMonitor: (enabled: boolean) => void
     onStop: () => void
     onOpenMedia: () => void
+    onToggleSpecialAttention: () => void
 }) {
     const { t } = useI18n()
     return (
@@ -801,6 +845,22 @@ function RecordingCardView({
                         <Play className="h-3.5 w-3.5" />
                     </Button>
                 )}
+                <Button
+                    variant="outline"
+                    size="sm"
+                    title={
+                        rec.special_attention
+                            ? t("recordings.specialAttentionOff")
+                            : t("recordings.specialAttentionOn")
+                    }
+                    onClick={onToggleSpecialAttention}
+                >
+                    <Star
+                        className={`h-3.5 w-3.5 ${
+                            rec.special_attention ? "fill-yellow-400 text-yellow-500" : ""
+                        }`}
+                    />
+                </Button>
                 <Button variant="outline" size="sm" onClick={() => onMonitor(!rec.monitor_status)}>
                     {rec.monitor_status ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
                 </Button>

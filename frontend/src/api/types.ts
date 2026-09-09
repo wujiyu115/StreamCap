@@ -14,6 +14,7 @@ export interface Recording {
     media_path: string | null
     enabled_message_push: boolean
     only_notify_no_record: boolean
+    special_attention: boolean
     flv_use_direct_download: boolean
     video_bitrate: number | null
     pose_enabled: boolean | null

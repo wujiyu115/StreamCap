@@ -116,6 +116,7 @@ def _build_recording(services, body: RecordingCreate) -> Recording:
         video_bitrate=body.video_bitrate,
         pose_enabled=body.pose_enabled,
     )
+    recording.special_attention = bool(body.special_attention)
     platform, platform_key = get_platform_info(recording.url)
     if platform and platform_key:
         recording.platform = platform

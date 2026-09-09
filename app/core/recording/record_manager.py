@@ -686,6 +686,8 @@ class RecordingManager:
             if self._auto_stop_invalid(recording):
                 changed = True
                 continue
+            if recording.special_attention:
+                continue
             if days <= 0:
                 continue
             if recording.last_live_time is None:
