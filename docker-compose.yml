@@ -12,6 +12,8 @@ services:
       - ./logs:/app/logs
       - ./config:/app/config
       - ./downloads:/app/downloads
+      # CLIP 服装分类权重（约 580MB，外置不进镜像；下载: python scripts/download_clip_model.py models）
+      - ./models:/app/models
       - ./.env:/app/.env
     healthcheck:
       test: ["CMD", "sh", "-c", "curl -sf http://localhost:${PORT:-6006}/api/system/info || exit 1"]

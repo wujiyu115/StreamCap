@@ -3,3 +3,4 @@ opencv-python-headless
 numpy>=1.26.4,<2.3
 ffmpeg-python
 av
+open_clip_torch>=2.20.0

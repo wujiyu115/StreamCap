@@ -180,3 +180,10 @@ backup_config/
 ffmpeg.exe
 ffplay.exe
 ffprobe.exe
+
+# CLIP 服装分类本地测试数据（视频与报告，不入库）
+clip_test/
+
+# 外置模型目录（挂载卷，不进镜像不进 git；目前只有 CLIP，见
+# scripts/download_clip_model.py）
+models/

@@ -360,6 +360,28 @@ function PoseSettings() {
         { key: "video_output_dir", label: t("settings.outputDir"), type: "text" },
     ]
 
+    const clipFilterFields: FieldDef[] = [
+        { key: "clip_filter_enabled", label: t("settings.clipFilterEnabled"), type: "switch" },
+        {
+            key: "clip_min_positive_ratio",
+            label: t("settings.clipMinPositiveRatio"),
+            type: "number",
+            hint: t("settings.clipMinPositiveRatioHint"),
+        },
+        {
+            key: "clip_sample_seconds",
+            label: t("settings.clipSampleSeconds"),
+            type: "number",
+            hint: t("settings.clipSampleSecondsHint"),
+        },
+        {
+            key: "clip_save_reports",
+            label: t("settings.clipSaveReports"),
+            type: "switch",
+            hint: t("settings.clipSaveReportsHint"),
+        },
+    ]
+
     return (
         <div className="space-y-4">
             <div className="rounded-lg border bg-card p-4">
@@ -390,6 +412,20 @@ function PoseSettings() {
                 <h3 className="mb-3 font-semibold">{t("settings.clipOptions")}</h3>
                 <div className="grid grid-cols-1 gap-x-6 gap-y-4 md:grid-cols-2">
                     {segmentFields.map((field) => (
+                        <FieldRow key={field.key} field={field} form={form} scope="pose_detection" />
+                    ))}
+                </div>
+            </div>
+
+            <div className="rounded-lg border bg-card p-4">
+                <div className="mb-3">
+                    <h3 className="font-semibold">{t("settings.clipClothingFilter")}</h3>
+                    <p className="text-xs text-muted-foreground">
+                        {t("settings.clipClothingFilterDesc")}
+                    </p>
+                </div>
+                <div className="grid grid-cols-1 gap-x-6 gap-y-4 md:grid-cols-2">
+                    {clipFilterFields.map((field) => (
                         <FieldRow key={field.key} field={field} form={form} scope="pose_detection" />
                     ))}
                 </div>

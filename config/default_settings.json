@@ -96,6 +96,28 @@
         "delete_original_video": true,
         "move_output_to_input": true,
         "video_output_dir": "pose_output",
-        "merged_suffix": "_merged"
+        "merged_suffix": "_merged",
+        "clip_filter_enabled": false,
+        "clip_min_positive_ratio": 0.5,
+        "clip_sample_seconds": 30.0,
+        "clip_save_reports": false,
+        "clip_positive_prompts": [
+            "a photo of a person wearing tight leggings",
+            "a photo of a person wearing yoga pants",
+            "a photo of a person wearing skin-tight athletic pants",
+            "a photo of a person wearing tight-fitting pants",
+            "a photo of a person wearing tight-fitting shorts",
+            "a photo of a person wearing skin-tight athletic shorts"
+        ],
+        "clip_negative_prompts": [
+            "a photo of a person wearing loose pants",
+            "a photo of a person wearing baggy sweatpants",
+            "a photo of a person wearing jeans",
+            "a photo of a person wearing a skirt",
+            "a photo of a person wearing loose shorts",
+            "a photo of a person wearing baggy shorts",
+            "a photo of a person wearing a dress",
+            "a photo of bare legs"
+        ]
     }
 }
