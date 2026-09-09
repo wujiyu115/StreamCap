@@ -9,7 +9,7 @@ import {
     Pencil,
     Play,
     Plus,
-    RefreshCw,
+    RotateCcw,
     ScanSearch,
     Square,
     Star,
@@ -71,6 +71,7 @@ export default function RecordingsPage() {
         const f = searchParams.get("filter")
         return FILTERS.includes(f as StatusFilter) ? (f as StatusFilter) : "all"
     })
+    // 列表切片维度：平台名 / 全部 / 特别关注（占位值 "special"）
     const [platform, setPlatform] = useState<string>("all")
     const [search, setSearch] = useState("")
     const [viewMode, setViewMode] = useState<"table" | "card">("table")
@@ -83,7 +84,7 @@ export default function RecordingsPage() {
     const [validityProgress, setValidityProgress] = useState<{ done: number; total: number } | null>(null)
     const validityAbortRef = useRef<AbortController | null>(null)
 
-    const { data, isLoading, refetch } = useQuery({
+    const { data, isLoading } = useQuery({
         queryKey: ["recordings"],
         queryFn: recordingsApi.list,
         refetchInterval: 5000,
@@ -107,6 +108,11 @@ export default function RecordingsPage() {
 
     const platforms = useMemo(
         () => Array.from(new Set(recordings.map((r) => r.platform).filter(Boolean))) as string[],
+        [recordings],
+    )
+
+    const specialCount = useMemo(
+        () => recordings.filter((r) => r.special_attention).length,
         [recordings],
     )
 
@@ -137,7 +143,9 @@ export default function RecordingsPage() {
             if (filter === "offline" && r.state !== "offline") return false
             if (filter === "error" && r.state !== "error") return false
             if (filter === "stopped" && r.state !== "stopped") return false
-            if (platform !== "all" && r.platform !== platform) return false
+            if (platform === "special") {
+                if (!r.special_attention) return false
+            } else if (platform !== "all" && r.platform !== platform) return false
             if (search) {
                 const q = search.toLowerCase()
                 if (
@@ -383,14 +391,28 @@ export default function RecordingsPage() {
                     <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                             <Button variant="outline" size="sm">
+                                {platform === "special" && (
+                                    <Star className="h-4 w-4 fill-yellow-400 text-yellow-500" />
+                                )}
                                 <span className="max-w-24 truncate">
-                                    {platform === "all" ? t("common.all") : platform}
+                                    {platform === "all"
+                                        ? t("common.all")
+                                        : platform === "special"
+                                          ? t("recordingDialog.specialAttention")
+                                          : platform}
                                 </span>
                             </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
                             <DropdownMenuItem onClick={() => setPlatform("all")}>
                                 {t("common.all")}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => setPlatform("special")}>
+                                <Star className="mr-2 h-4 w-4" />
+                                {t("recordingDialog.specialAttention")}
+                                <span className="ml-auto text-xs tabular-nums text-muted-foreground">
+                                    {specialCount}
+                                </span>
                             </DropdownMenuItem>
                             {platforms.map((p) => (
                                 <DropdownMenuItem key={p} onClick={() => setPlatform(p)}>
@@ -455,8 +477,18 @@ export default function RecordingsPage() {
                             </DropdownMenuItem>
                         </DropdownMenuContent>
                     </DropdownMenu>
-                    <Button variant="outline" size="sm" onClick={() => refetch()}>
-                        <RefreshCw className="h-4 w-4" />
+                    {/* 重置筛选与搜索；数据新鲜度由 5s 自动轮询兜底，无需手动刷新 */}
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        title={t("common.reset")}
+                        onClick={() => {
+                            setFilter("all")
+                            setPlatform("all")
+                            setSearch("")
+                        }}
+                    >
+                        <RotateCcw className="h-4 w-4" />
                     </Button>
                     <Button
                         variant="outline"

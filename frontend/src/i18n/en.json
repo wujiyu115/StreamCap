@@ -19,7 +19,8 @@
         "never": "Never",
         "language": "Language",
         "theme": "Theme",
-        "logout": "Logout"
+        "logout": "Logout",
+        "reset": "Reset"
     },
     "nav": {
         "home": "Home",
