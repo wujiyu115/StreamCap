@@ -278,11 +278,11 @@ async def get_overview(
         key=lambda x: (-x["live_count"], x["avg_interval_hours"] if x["avg_interval_hours"] is not None else 1e9),
     )[:10]
 
-    # ── 低效清单（监控中的任务） ──
+    # ── 低效清单（监控中的任务；特别关注豁免自动停，列出只会误导） ──
     auto_stop_days = cfg["auto_stop_monitor_days"]
     idle, never_recorded = [], []
     for r in rm.recordings:
-        if not r.monitor_status:
+        if not r.monitor_status or r.special_attention:
             continue
         if r.live_count == 0:
             never_recorded.append({"rec_id": r.rec_id, "name": r.streamer_name or r.rec_id[:8]})

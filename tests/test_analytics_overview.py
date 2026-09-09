@@ -187,3 +187,19 @@ def test_orphan_rec_id_excluded_from_rankings(overview):
     assert data["rankings"]["top_bytes"] == []
     # 汇总仍算在内（总量口径不因任务删除而缩水）
     assert data["summary"]["bytes"] == 500
+
+
+def test_special_attention_excluded_from_idle_list(overview):
+    """特别关注豁免自动停监控，出现在低效清单里只会误导（不会被停）。"""
+    store, recordings, call = overview
+    stale = make_recording(rec_id="rid-stale")
+    stale.last_live_time = time.time() - 20 * 86400  # 20 天未开播
+    starred = make_recording(rec_id="rid-star")
+    starred.last_live_time = time.time() - 20 * 86400
+    starred.special_attention = True
+    recordings.extend([stale, starred])
+
+    data = call()
+
+    idle_ids = [r["rec_id"] for r in data["idle"]]
+    assert idle_ids == ["rid-stale"]
