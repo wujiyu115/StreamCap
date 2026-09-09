@@ -70,7 +70,9 @@ DEFAULTS: dict[str, Any] = {
     "clip_negative_prompts": list(DEFAULT_NEGATIVE_PROMPTS),
     "clip_min_positive_ratio": 0.5,
     "clip_sample_seconds": 30.0,
-    "clip_save_crops": True,
+    # 分类明细报告（json/html/缩略图）默认关闭——只用于人工核对判定效果，
+    # 生产不需要；开启时落在任务目录 clip_reports/，随任务目录 7 天自动清理
+    "clip_save_reports": False,
 }
 
 
@@ -106,7 +108,7 @@ class PoseParams:
     )
     clip_min_positive_ratio: float = 0.5
     clip_sample_seconds: float = 30.0
-    clip_save_crops: bool = True
+    clip_save_reports: bool = False
 
     @classmethod
     def from_user_config(cls, config: dict[str, Any] | None) -> PoseParams:

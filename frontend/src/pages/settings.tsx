@@ -375,10 +375,10 @@ function PoseSettings() {
             hint: t("settings.clipSampleSecondsHint"),
         },
         {
-            key: "clip_save_crops",
-            label: t("settings.clipSaveCrops"),
+            key: "clip_save_reports",
+            label: t("settings.clipSaveReports"),
             type: "switch",
-            hint: t("settings.clipSaveCropsHint"),
+            hint: t("settings.clipSaveReportsHint"),
         },
     ]
 

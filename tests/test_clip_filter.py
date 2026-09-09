@@ -187,7 +187,8 @@ class TestPoseParams:
         assert params.clip_filter_enabled is False
         assert params.clip_sample_seconds == 30.0
         assert params.clip_min_positive_ratio == 0.5
-        assert params.clip_save_crops is True
+        # 报告默认关闭：分类明细只用于人工核对，生产不落盘
+        assert params.clip_save_reports is False
 
     def test_from_user_config_reads_clip_keys(self):
         params = PoseParams.from_user_config(

@@ -168,9 +168,12 @@ def main(argv=None) -> int:
 
         detector = Detector(params)
         detector.load_models()
-        # CLIP 分类明细报告：开启过滤时落在任务目录，WebUI 能直接翻看
+        # CLIP 分类明细报告（json/html/缩略图）默认不落盘，只在
+        # clip_save_reports 显式开启时写入任务目录，随任务目录自动清理
         report_dir = (
-            os.path.join(task_dir, "clip_reports") if params.clip_filter_enabled else None
+            os.path.join(task_dir, "clip_reports")
+            if (params.clip_filter_enabled and params.clip_save_reports)
+            else None
         )
         processor = VideoProcessor(detector, params, media_root=media_root, report_dir=report_dir)
 

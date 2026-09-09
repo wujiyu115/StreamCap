@@ -100,7 +100,7 @@
         "clip_filter_enabled": false,
         "clip_min_positive_ratio": 0.5,
         "clip_sample_seconds": 30.0,
-        "clip_save_crops": true,
+        "clip_save_reports": false,
         "clip_positive_prompts": [
             "a photo of a person wearing tight leggings",
             "a photo of a person wearing yoga pants",

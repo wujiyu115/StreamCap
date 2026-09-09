@@ -100,11 +100,8 @@ class VideoProcessor:
         self.clip_min_positive_ratio = float(params.clip_min_positive_ratio)
         self._clip_filter: ClipFilter | None = None
         self._clip_state = "pending"  # pending / ready / failed / off
-        self._report = (
-            ClipReport(report_dir, save_crops=bool(params.clip_save_crops))
-            if (report_dir and self.clip_filter_enabled)
-            else None
-        )
+        # 报告只在 task_runner 侧（clip_save_reports 开启时）传入 report_dir
+        self._report = ClipReport(report_dir) if (report_dir and self.clip_filter_enabled) else None
 
     def _clip_gate_ready(self) -> bool:
         """闸门可用性（惰性加载；加载失败后本任务内不再重试，按保留处理）。"""

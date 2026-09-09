@@ -201,13 +201,13 @@ class ClipFilter:
 class ClipReport:
     """逐视频落盘分类明细：<report_dir>/<视频名_hash>/crops/*.jpg + report.json + report.html。
 
-    html 内嵌 base64 crop，单文件可直接打开人工核对。report_dir 为 None 时
-    所有方法均为空操作。
+    html 内嵌 base64 缩略图，单文件可直接打开人工核对。report_dir 为 None 时
+    所有方法均为空操作（生产默认路径——报告只用于人工核对判定，由
+    clip_save_reports 显式开启）。
     """
 
-    def __init__(self, report_dir: Optional[str], save_crops: bool = True):
+    def __init__(self, report_dir: Optional[str]):
         self.report_dir = report_dir
-        self.save_crops = save_crops
         self._video_dir: Optional[str] = None
         self._video_path: Optional[str] = None
         self._frames: list[dict[str, Any]] = []
@@ -229,7 +229,7 @@ class ClipReport:
         if self._video_dir is None:
             return
         record = {"t": round(ts, 1), **score}
-        if self.save_crops and frame_bgr is not None:
+        if frame_bgr is not None:
             name = f"{len(self._frames) + 1:04d}_t{ts:.1f}s.jpg"
             path = os.path.join(self._video_dir, "crops", name)
             try:
