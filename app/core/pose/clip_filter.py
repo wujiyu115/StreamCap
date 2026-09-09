@@ -2,11 +2,15 @@
 
 pose 命中帧整帧送 CLIP 做图文相似度打分（正/负 prompt 组类均值对比）；
 视频级聚合正例占比低于阈值时整段丢弃（不切割不合并，原视频走既有删除
-路径）。无成功分类帧（模型加载失败）按保留处理，宁可漏删不错删。
+路径）。无成功分类帧（模型加载失败/权重缺失）按保留处理，宁可漏删不错删。
 
 不裁腿部区域：实测 8 段视频整帧的正例帧 47/56，优于髋→踝裁剪的 35/56
 ——CLIP 在网页图上预训练，擅长整图语义；裁剪反而丢失场景上下文，还会
 把器械护垫等碎片框进画面稀释服装信号。
+
+权重是外置的（约 580MB，不进镜像也不进 git）：默认在 <run_path>/models/clip，
+下载见 scripts/download_clip_model.py。目录缺失或无缓存权重时 CLIP 闸门
+自动跳过（日志 + 任务 state.json 提示下载方法），判定按保留处理。
 
 纯逻辑（打分、聚合、报告）不依赖 torch，可单测；模型加载与推理封装在
 ClipFilter 里，open_clip 惰性导入——未开启过滤的任务完全不碰重依赖。
@@ -21,18 +25,40 @@ import json
 import logging
 import math
 import os
+from pathlib import Path
 from typing import Any, Optional
 
 from .pose_params import (
     DEFAULT_NEGATIVE_PROMPTS,
     DEFAULT_POSITIVE_PROMPTS,
-    MODELS_DIR,
 )
 
 logger = logging.getLogger("video_pose")
 
-# CLIP 权重缓存目录（镜像内 /app/app/core/pose/models/clip，重建镜像后重下）
-CLIP_CACHE_DIR = str(MODELS_DIR / "clip")
+# CLIP 权重缓存目录（外置挂载：<run_path>/models/clip；开发环境在项目根）
+CLIP_CACHE_DIR = str(Path(os.environ.get("STREAMCAP_MODELS_DIR", "models")) / "clip")
+
+# 权重缺失时随日志/提示一起给出的下载方法
+DOWNLOAD_HINT = (
+    "CLIP 权重未下载，服装分类已跳过（按保留处理）。"
+    "下载: python scripts/download_clip_model.py（或容器内 "
+    "python /app/scripts/download_clip_model.py），权重目录: {cache_dir}"
+)
+
+
+def weights_available(cache_dir: Optional[str] = None) -> bool:
+    """权重目录里是否存在可用的离线缓存（open_clip 的 hub cache 结构）。
+
+    未下载时提前探测，避免任务中途才失败——open_clip 拿不到权重会尝试
+    联网下载，离线容器里直接抛错。
+    """
+    cache = Path(cache_dir or CLIP_CACHE_DIR)
+    if not cache.is_dir():
+        return False
+    # hub cache 结构: models--*--*/snapshots/*/<file>（open_clip 也会读旧式 *.bin）
+    return any(cache.glob("models--*")) or any(cache.glob("*.bin")) or any(
+        cache.glob("*.safetensors")
+    )
 
 
 # 紧身修饰词命中的 prompt 权重：tightness 是本分类的核心信号，长裤/短裤
@@ -148,9 +174,17 @@ class ClipFilter:
         return self._model is not None
 
     def load(self) -> bool:
-        """加载模型并预编码 prompt。失败置 load_error 返回 False（闸门失效，按保留处理）。"""
+        """加载模型并预编码 prompt。失败置 load_error 返回 False（闸门失效，按保留处理）。
+
+        权重目录不存在/无缓存时不会尝试联网——直接返回带下载提示的失败，
+        离线容器里 open_clip 联网下载必然超时挂起，宁可秒失败。
+        """
         if self._model is not None:
             return True
+        if not weights_available(self.cache_dir):
+            self.load_error = "weights_missing"
+            logger.warning(DOWNLOAD_HINT.format(cache_dir=self.cache_dir))
+            return False
         try:
             import open_clip
             import torch

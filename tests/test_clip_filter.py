@@ -13,8 +13,33 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from app.core.pose.clip_filter import (
     aggregate_verdict,
     score_frame,
+    weights_available,
 )
 from app.core.pose.pose_params import DEFAULTS, PoseParams
+
+
+# ── 外置权重探测 ──────────────────────────────────────────
+
+
+class TestWeightsAvailable:
+    def test_missing_dir(self, tmp_path):
+        assert weights_available(str(tmp_path / "nope")) is False
+
+    def test_empty_dir(self, tmp_path):
+        assert weights_available(str(tmp_path)) is False
+
+    def test_hub_cache_layout(self, tmp_path):
+        (tmp_path / "models--timm--vit_base_patch32_clip_224.openai" / "blobs").mkdir(parents=True)
+        assert weights_available(str(tmp_path)) is True
+
+    def test_legacy_bin_layout(self, tmp_path):
+        (tmp_path / "open_clip_pytorch_model.bin").touch()
+        assert weights_available(str(tmp_path)) is True
+
+    def test_only_locks_or_tags_not_weights(self, tmp_path):
+        (tmp_path / ".locks").mkdir()
+        (tmp_path / "CACHEDIR.TAG").touch()
+        assert weights_available(str(tmp_path)) is False
 
 
 # ── prompt 打分 ───────────────────────────────────────────

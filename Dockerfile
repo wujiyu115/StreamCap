@@ -20,8 +20,8 @@ COPY requirements.txt requirements-pose.txt ./
 
 # 先从 CPU 专用源装 torch/torchvision，避免 ultralytics 拉取数 GB 的 CUDA 版本；
 # venv 在 PATH 上，后续安装 ultralytics 时能识别已装的 CPU torch，不会回退到 CUDA 版。
-# open_clip 的权重烧进镜像（app/core/pose/models/clip），运行环境连不上
-# huggingface.co 时 CLIP 服装分类闸门照常可用。
+# CLIP 权重不进镜像：外置挂载到 /app/models/clip（宿主机模型 share），
+# 用 scripts/download_clip_model.py 下载；未下载时 CLIP 闸门自动跳过并提示。
 RUN HF_ENDPOINT=https://hf-mirror.com pip install --no-cache-dir --root-user-action=ignore \
         --index-url https://download.pytorch.org/whl/cpu \
         torch torchvision \
@@ -35,9 +35,6 @@ RUN HF_ENDPOINT=https://hf-mirror.com pip install --no-cache-dir --root-user-act
 
 COPY . .
 COPY --from=frontend-build /build/dist ./frontend/dist
-
-# CLIP 权重缓存（build 上下文带不过来，单独从开发机目录拷入）
-COPY --from=builder /app/app/core/pose/models/clip ./app/core/pose/models/clip
 
 # ── Stage 3: runtime ─────────────────────────────────────
 FROM python:3.12-slim

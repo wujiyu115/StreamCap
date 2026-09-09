@@ -137,7 +137,7 @@ class VideoProcessor:
         clip_frames.append(score)
         if self._report is not None:
             self._report.add_frame(ts, score, img)
-        logger.debug(
+        logger.info(
             f"  - CLIP 服装分类 t={ts:.1f}s: pos_prob={score['pos_prob']:.3f} "
             f"({'命中' if score['is_positive'] else '未命中'})"
         )
