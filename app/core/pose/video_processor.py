@@ -21,6 +21,11 @@ try:
 except ImportError:  # PyAV 为可选依赖，缺失时退回 OpenCV 精确 seek
     av = None
 
+from .clip_filter import (
+    ClipFilter,
+    ClipReport,
+    aggregate_verdict,
+)
 from .pose_params import PoseParams
 
 logger = logging.getLogger("video_pose")
@@ -76,7 +81,7 @@ def get_output_subdir(file_path: str, media_root: str | None, sub_output_dir: st
 
 
 class VideoProcessor:
-    def __init__(self, detector, params: PoseParams, media_root: str | None = None):
+    def __init__(self, detector, params: PoseParams, media_root: str | None = None, report_dir: str | None = None):
         self.detector = detector
         self.params = params
         self.media_root = media_root
@@ -88,13 +93,65 @@ class VideoProcessor:
         self.move_output_to_input = bool(params.move_output_to_input)
         self.merged_suffix = params.merged_suffix or "_merged"
         self.decode_backend = params.decode_backend
+        # CLIP 服装分类闸门（默认关闭）。模型在第一帧需要分类时才惰性加载，
+        # 全程没人体的视频不碰 CLIP。
+        self.clip_filter_enabled = bool(params.clip_filter_enabled)
+        self.clip_sample_seconds = max(1.0, float(params.clip_sample_seconds))
+        self.clip_min_positive_ratio = float(params.clip_min_positive_ratio)
+        self._clip_filter: ClipFilter | None = None
+        self._clip_state = "pending"  # pending / ready / failed / off
+        self._report = (
+            ClipReport(report_dir, save_crops=bool(params.clip_save_crops))
+            if (report_dir and self.clip_filter_enabled)
+            else None
+        )
+
+    def _clip_gate_ready(self) -> bool:
+        """闸门可用性（惰性加载；加载失败后本任务内不再重试，按保留处理）。"""
+        if not self.clip_filter_enabled:
+            return False
+        if self._clip_state == "ready":
+            return True
+        if self._clip_state == "pending":
+            filt = ClipFilter(
+                model_name=getattr(self.params, "clip_model_name", "ViT-B-32"),
+                pretrained=getattr(self.params, "clip_pretrained", "openai"),
+                positive_prompts=getattr(self.params, "clip_positive_prompts", None),
+                negative_prompts=getattr(self.params, "clip_negative_prompts", None),
+            )
+            if filt.load():
+                self._clip_filter = filt
+                self._clip_state = "ready"
+            else:
+                self._clip_state = "failed"
+        return self._clip_state == "ready"
+
+    def _clip_check_frame(self, img, ts, clip_frames, clip_skipped):
+        """单帧服装分类：整帧送 CLIP 打分，结果记入 clip_frames。
+
+        不裁腿部区域——实测整帧语义信号更强（CLIP 网页图预训练背景），
+        详见 clip_filter 模块头注释。
+        """
+        score = self._clip_filter.classify(img)
+        if score is None:
+            clip_skipped.append({"t": round(ts, 1), "reason": "classify_error"})
+            return
+        score["t"] = round(ts, 1)
+        clip_frames.append(score)
+        if self._report is not None:
+            self._report.add_frame(ts, score, img)
+        logger.debug(
+            f"  - CLIP 服装分类 t={ts:.1f}s: pos_prob={score['pos_prob']:.3f} "
+            f"({'命中' if score['is_positive'] else '未命中'})"
+        )
 
     def process_video_file(self, video_path, video_idx=0, total_videos=1, progress_cb=None, stop_check=None):
         """处理单个视频。
 
-        返回 (处理帧数, 采样帧数, 原始区间数, 合并区间数, 片段数, 产物字节数, 删掉的原视频字节数)。
-        后两项供录制分析统计「识别到底省了多少盘」，原视频大小必须在处理前取，
-        因为 delete_original_video 打开时文件会被删掉。
+        返回 (处理帧数, 采样帧数, 原始区间数, 合并区间数, 片段数, 产物字节数,
+        删掉的原视频字节数, CLIP 判定)。中间两项供录制分析统计「识别到底省了
+        多少盘」，原视频大小必须在处理前取，因为 delete_original_video 打开时
+        文件会被删掉。
         """
         try:
             orig_bytes = os.path.getsize(video_path)
@@ -102,8 +159,10 @@ class VideoProcessor:
             orig_bytes = 0
 
         model = self.detector.model
+        if self._report is not None:
+            self._report.start_video(video_path)
 
-        frames, saved, person_segments = self.process_video(
+        frames, saved, person_segments, clip_frames, clip_skipped = self.process_video(
             video_path,
             model,
             person_cls=0,
@@ -122,8 +181,29 @@ class VideoProcessor:
             f"时序聚合完成，原始区间数: {len(person_segments)}，合并后区间数: {len(merged_segments)}"
         )
 
+        clip_verdict = {"verdict": "disabled", "classified": 0, "positive": 0, "ratio": None}
+        if self.clip_filter_enabled:
+            clip_verdict = aggregate_verdict(clip_frames, self.clip_min_positive_ratio)
+            if clip_verdict["verdict"] == "insufficient":
+                logger.warning(
+                    f"服装分类无成功分类帧（跳过 {len(clip_skipped)} 帧），"
+                    f"证据不足按保留处理: {video_path}"
+                )
+
+        # 停止请求下采样不完整，判定会失真，跳过闸门走既有流程
+        stopped = stop_check is not None and stop_check()
+        skip_clipping = (
+            clip_verdict["verdict"] == "reject" and not stopped
+        )
+        if skip_clipping:
+            logger.info(
+                f"服装分类未通过（正例 {clip_verdict['positive']}/{clip_verdict['classified']}"
+                f" = {clip_verdict['ratio']:.0%} < {self.clip_min_positive_ratio:.0%}），"
+                f"整段不切割不合并: {video_path}"
+            )
+
         clip_paths = []
-        if merged_segments:
+        if merged_segments and not skip_clipping:
             clip_paths = self.clip_video(video_path, merged_segments)
 
         moved_paths = []
@@ -132,6 +212,18 @@ class VideoProcessor:
 
         if self.delete_original_video:
             safe_remove_file(video_path)
+
+        if self._report is not None:
+            self._report.finish_video(
+                clip_verdict,
+                extra={
+                    "segments": len(person_segments),
+                    "merged_segments": len(merged_segments),
+                    "clips": len(clip_paths),
+                    "skipped_frames": len(clip_skipped),
+                    "stopped": stopped,
+                },
+            )
 
         # 产物可能已被 _move_output_to_input 搬走，clip_paths 里的路径就失效了
         output_bytes = 0
@@ -152,6 +244,7 @@ class VideoProcessor:
             len(clip_paths),
             output_bytes,
             deleted_bytes,
+            clip_verdict,
         )
 
     def _move_output_to_input(self, video_path: str) -> list[str]:
@@ -271,7 +364,7 @@ class VideoProcessor:
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             logger.error(f"无法打开视频: {video_path}")
-            return 0, 0, []
+            return 0, 0, [], [], []
 
         fps = cap.get(cv2.CAP_PROP_FPS)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -285,6 +378,9 @@ class VideoProcessor:
         person_segments = []
         current_segment = None
         last_person_frame = None
+        clip_frames: list[dict] = []
+        clip_skipped: list[dict] = []
+        last_clip_t: float | None = None
 
         av_ctx = self._open_av_container(video_path)
 
@@ -293,7 +389,7 @@ class VideoProcessor:
             cap.release()
             if av_ctx is not None:
                 av_ctx[0].close()
-            return 0, 0, []
+            return 0, 0, [], [], []
 
         frame_interval = max(1, int(frame_seconds * fps))
         frame_indices = list(range(0, total_frames, frame_interval))
@@ -383,6 +479,15 @@ class VideoProcessor:
                         last_person_frame = frame_idx
                         logger.debug(f"  - 检测到人，最大边界框占比: {max_box_ratio:.2%}")
 
+                        if self._clip_gate_ready():
+                            now_t = frame_idx / fps
+                            if (
+                                last_clip_t is None
+                                or now_t - last_clip_t >= self.clip_sample_seconds
+                            ):
+                                last_clip_t = now_t
+                                self._clip_check_frame(_img, now_t, clip_frames, clip_skipped)
+
                     saved_count += 1
             except Exception as e:
                 logger.error(f"批处理帧时发生错误: {e}")
@@ -403,7 +508,7 @@ class VideoProcessor:
             f"视频 {video_name} 处理完成，处理了 {saved_count} 个采样帧，"
             f"检测到 {len(person_segments)} 个人物区间，处理时长: {format_duration(process_duration)}"
         )
-        return frame_idx, saved_count, person_segments
+        return frame_idx, saved_count, person_segments, clip_frames, clip_skipped
 
     def clip_video(self, video_path, segments, video_format="mp4"):
         """根据人物区间切割视频。输出保持相对 media_root 的目录结构。"""

@@ -180,3 +180,6 @@ backup_config/
 ffmpeg.exe
 ffplay.exe
 ffprobe.exe
+
+# CLIP 服装分类本地测试数据（视频与报告，不入库）
+clip_test/

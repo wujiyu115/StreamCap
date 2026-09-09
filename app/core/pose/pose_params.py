@@ -17,6 +17,28 @@ DEFAULT_POSE_MODEL = str(MODELS_DIR / "yolov8n-pose.pt")
 POSE_FILTER_OPTIONS = ("none", "standing", "sitting")
 DECODE_BACKEND_OPTIONS = ("auto", "pyav", "opencv")
 
+# CLIP 零样本服装分类的 prompt 模板：正类=紧身下装（长裤与短裤都算），
+# 负类=宽松及其他下装。负类的短裤必须带 loose/baggy 限定词——裸 "shorts"
+# 会同时吸走紧身短裤帧（CLIP 对服装类型词比对剪裁修饰词敏感）。
+DEFAULT_POSITIVE_PROMPTS: list[str] = [
+    "a photo of a person wearing tight leggings",
+    "a photo of a person wearing yoga pants",
+    "a photo of a person wearing skin-tight athletic pants",
+    "a photo of a person wearing tight-fitting pants",
+    "a photo of a person wearing tight-fitting shorts",
+    "a photo of a person wearing skin-tight athletic shorts",
+]
+DEFAULT_NEGATIVE_PROMPTS: list[str] = [
+    "a photo of a person wearing loose pants",
+    "a photo of a person wearing baggy sweatpants",
+    "a photo of a person wearing jeans",
+    "a photo of a person wearing a skirt",
+    "a photo of a person wearing loose shorts",
+    "a photo of a person wearing baggy shorts",
+    "a photo of a person wearing a dress",
+    "a photo of bare legs",
+]
+
 # 参数默认值也用于 default_settings.json 的 pose_detection 段，
 # 两处保持一致（设置读取时 user→default 回退）。
 DEFAULTS: dict[str, Any] = {
@@ -40,6 +62,15 @@ DEFAULTS: dict[str, Any] = {
     "model_path": DEFAULT_DETECTION_MODEL,
     "pose_model_path": DEFAULT_POSE_MODEL,
     "decode_backend": "auto",
+    "clip_filter_enabled": False,
+    # openai 权重必须配 quickgelu 架构变体，否则激活函数不匹配（有 UserWarning、精度下降）
+    "clip_model_name": "ViT-B-32-quickgelu",
+    "clip_pretrained": "openai",
+    "clip_positive_prompts": list(DEFAULT_POSITIVE_PROMPTS),
+    "clip_negative_prompts": list(DEFAULT_NEGATIVE_PROMPTS),
+    "clip_min_positive_ratio": 0.5,
+    "clip_sample_seconds": 30.0,
+    "clip_save_crops": True,
 }
 
 
@@ -64,6 +95,18 @@ class PoseParams:
     model_path: str = field(default_factory=lambda: DEFAULT_DETECTION_MODEL)
     pose_model_path: str = field(default_factory=lambda: DEFAULT_POSE_MODEL)
     decode_backend: str = "auto"
+    clip_filter_enabled: bool = False
+    clip_model_name: str = "ViT-B-32-quickgelu"
+    clip_pretrained: str = "openai"
+    clip_positive_prompts: list[str] = field(
+        default_factory=lambda: list(DEFAULT_POSITIVE_PROMPTS)
+    )
+    clip_negative_prompts: list[str] = field(
+        default_factory=lambda: list(DEFAULT_NEGATIVE_PROMPTS)
+    )
+    clip_min_positive_ratio: float = 0.5
+    clip_sample_seconds: float = 30.0
+    clip_save_crops: bool = True
 
     @classmethod
     def from_user_config(cls, config: dict[str, Any] | None) -> PoseParams:
@@ -78,6 +121,9 @@ class PoseParams:
                 POSE_FILTER_OPTIONS if key == "pose_filter" else DECODE_BACKEND_OPTIONS
             ):
                 value = default
+            # prompt 清空（UI 里删光）回退默认组，全空组会导致分类完全失真
+            if key in ("clip_positive_prompts", "clip_negative_prompts") and not value:
+                value = list(default)
             kwargs[key] = value
         try:
             return cls(**kwargs)

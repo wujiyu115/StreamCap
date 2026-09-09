@@ -114,6 +114,11 @@ def main(argv=None) -> int:
         # 识别产物 / 被删掉的原视频字节数，父进程读 state.json 后计入录制分析
         "output_bytes": 0,
         "deleted_bytes": 0,
+        # CLIP 服装分类闸门（开启时才有意义）
+        "clip_enabled": bool(params.clip_filter_enabled),
+        "clip_pass": 0,
+        "clip_reject": 0,
+        "clip_insufficient": 0,
     }
 
     try:
@@ -163,7 +168,11 @@ def main(argv=None) -> int:
 
         detector = Detector(params)
         detector.load_models()
-        processor = VideoProcessor(detector, params, media_root=media_root)
+        # CLIP 分类明细报告：开启过滤时落在任务目录，WebUI 能直接翻看
+        report_dir = (
+            os.path.join(task_dir, "clip_reports") if params.clip_filter_enabled else None
+        )
+        processor = VideoProcessor(detector, params, media_root=media_root, report_dir=report_dir)
 
         total = len(videos)
         log.info(f"任务开始：处理 {total} 个视频")
@@ -195,7 +204,16 @@ def main(argv=None) -> int:
             )
 
             try:
-                frames, saved, segments, merged, clips, out_bytes, del_bytes = processor.process_video_file(
+                (
+                    frames,
+                    saved,
+                    segments,
+                    merged,
+                    clips,
+                    out_bytes,
+                    del_bytes,
+                    clip_verdict,
+                ) = processor.process_video_file(
                     video_path,
                     idx,
                     total,
@@ -219,6 +237,18 @@ def main(argv=None) -> int:
                 summary["clips"] += clips
                 summary["output_bytes"] += out_bytes
                 summary["deleted_bytes"] += del_bytes
+                verdict_key = {
+                    "pass": "clip_pass",
+                    "reject": "clip_reject",
+                    "insufficient": "clip_insufficient",
+                }.get(clip_verdict.get("verdict"))
+                if verdict_key:
+                    summary[verdict_key] += 1
+
+                if clip_verdict.get("verdict") == "reject":
+                    log.info(
+                        f"{os.path.basename(video_path)} 服装分类未通过，整段跳过截取合并"
+                    )
 
                 write_state(
                     status="running",

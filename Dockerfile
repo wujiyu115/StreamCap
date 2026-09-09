@@ -20,11 +20,13 @@ COPY requirements.txt requirements-pose.txt ./
 
 # 先从 CPU 专用源装 torch/torchvision，避免 ultralytics 拉取数 GB 的 CUDA 版本；
 # venv 在 PATH 上，后续安装 ultralytics 时能识别已装的 CPU torch，不会回退到 CUDA 版。
-RUN pip install --no-cache-dir --root-user-action=ignore \
+# open_clip 的权重烧进镜像（app/core/pose/models/clip），运行环境连不上
+# huggingface.co 时 CLIP 服装分类闸门照常可用。
+RUN HF_ENDPOINT=https://hf-mirror.com pip install --no-cache-dir --root-user-action=ignore \
         --index-url https://download.pytorch.org/whl/cpu \
         torch torchvision \
-    && pip install --no-cache-dir --root-user-action=ignore -r requirements.txt \
-    && pip install --no-cache-dir --root-user-action=ignore -r requirements-pose.txt \
+    && HF_ENDPOINT=https://hf-mirror.com pip install --no-cache-dir --root-user-action=ignore -r requirements.txt \
+    && HF_ENDPOINT=https://hf-mirror.com pip install --no-cache-dir --root-user-action=ignore -r requirements-pose.txt \
     # ultralytics 会拉入非 headless 的 opencv-python（依赖 libGL 且与 headless 重复），
     # 统一只保留 headless 版：省约 230MB，运行时也不需要 libGL。
     # 卸载目标不存在时 pip 报错，忽略后只装 headless 版即可。
@@ -33,6 +35,9 @@ RUN pip install --no-cache-dir --root-user-action=ignore \
 
 COPY . .
 COPY --from=frontend-build /build/dist ./frontend/dist
+
+# CLIP 权重缓存（build 上下文带不过来，单独从开发机目录拷入）
+COPY --from=builder /app/app/core/pose/models/clip ./app/core/pose/models/clip
 
 # ── Stage 3: runtime ─────────────────────────────────────
 FROM python:3.12-slim
