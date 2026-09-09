@@ -387,6 +387,21 @@ export default function RecordingsPage() {
                     className="w-full sm:w-56"
                 />
 
+                {/* 重置筛选（状态/平台/搜索）：作用于本排筛选控件，就近收尾 */}
+                <Button
+                    variant="outline"
+                    size="sm"
+                    title={t("common.reset")}
+                    className="shrink-0"
+                    onClick={() => {
+                        setFilter("all")
+                        setPlatform("all")
+                        setSearch("")
+                    }}
+                >
+                    <RotateCcw className="h-4 w-4" />
+                </Button>
+
                 <div className="ml-auto flex items-center gap-1.5">
                     <DropdownMenu>
                         <DropdownMenuTrigger asChild>
@@ -477,19 +492,6 @@ export default function RecordingsPage() {
                             </DropdownMenuItem>
                         </DropdownMenuContent>
                     </DropdownMenu>
-                    {/* 重置筛选与搜索；数据新鲜度由 5s 自动轮询兜底，无需手动刷新 */}
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        title={t("common.reset")}
-                        onClick={() => {
-                            setFilter("all")
-                            setPlatform("all")
-                            setSearch("")
-                        }}
-                    >
-                        <RotateCcw className="h-4 w-4" />
-                    </Button>
                     <Button
                         variant="outline"
                         size="sm"
