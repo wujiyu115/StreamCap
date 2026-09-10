@@ -14,7 +14,7 @@ import {
     TrendingUp,
     Users,
 } from "lucide-react"
-import { useState } from "react"
+import { memo, useState } from "react"
 import { analyticsApi } from "@/api"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -93,6 +93,59 @@ function BarList({
         </div>
     )
 }
+
+/**
+ * 主播开播分布行：约 50 个 DOM 节点/行，行数≈任务数（生产 150+），
+ * 全量渲染进 max-h-96 滚动容器会让移动端滚动到这里时卡顿——
+ * memo 让轮询刷新时未变化的行跳过 vdom 重建，content-visibility 让
+ * 视口外的行跳过 layout/paint（首屏与滚动都只处理可见行）。
+ */
+const StreamerHoursRow = memo(function StreamerHoursRow({
+    name,
+    hours,
+    total,
+    peakHour,
+    peakLabel,
+    peakDesc,
+}: {
+    name: string
+    hours: number[]
+    total: number
+    peakHour: number
+    peakLabel: string
+    peakDesc: string
+}) {
+    const max = Math.max(...hours, 1)
+    return (
+        <div
+            className="flex items-center gap-3 [contain-intrinsic-size:auto_32px] [content-visibility:auto]"
+        >
+            <div className="w-24 shrink-0 truncate text-sm sm:w-32" title={`${name} · ${total}`}>
+                {name}
+            </div>
+            <div className="flex h-8 min-w-0 flex-1 items-end gap-px">
+                {hours.map((count, hour) => (
+                    <div
+                        key={hour}
+                        className="group relative h-full flex-1"
+                        title={`${hour}:00–${hour + 1}:00 · ${count}`}
+                    >
+                        {/* 0 场次渲染最小高度细线（保留整点刻度感） */}
+                        <div
+                            className={`absolute bottom-0 w-full rounded-t ${
+                                hour === peakHour ? "bg-blue-500" : "bg-blue-500/35 group-hover:bg-blue-500/70"
+                            }`}
+                            style={{ height: `${Math.max(3, (count / max) * 100)}%` }}
+                        />
+                    </div>
+                ))}
+            </div>
+            <Badge variant="secondary" className="w-20 shrink-0 justify-center text-xs" title={peakDesc}>
+                {peakLabel}
+            </Badge>
+        </div>
+    )
+})
 
 function fmtBytes(bytes: number): string {
     const units = ["KB", "MB", "GB", "TB"]
@@ -439,45 +492,17 @@ export default function AnalyticsPage() {
                                     <div className="w-20 shrink-0" />
                                 </div>
                                 <div className="max-h-96 space-y-2 overflow-y-auto pr-1">
-                                    {streamer_hours.map((s) => {
-                                        const max = Math.max(...s.hours, 1)
-                                        return (
-                                            <div key={s.rec_id} className="flex items-center gap-3">
-                                                <div
-                                                    className="w-24 shrink-0 truncate text-sm sm:w-32"
-                                                    title={`${s.name} · ${s.total}`}
-                                                >
-                                                    {s.name}
-                                                </div>
-                                                <div className="flex h-8 min-w-0 flex-1 items-end gap-px">
-                                                    {s.hours.map((count, hour) => (
-                                                        <div
-                                                            key={hour}
-                                                            className="group relative h-full flex-1"
-                                                            title={`${hour}:00–${hour + 1}:00 · ${count}`}
-                                                        >
-                                                            {/* 0 场次渲染最小高度细线（保留整点刻度感） */}
-                                                            <div
-                                                                className={`absolute bottom-0 w-full rounded-t ${
-                                                                    hour === s.peak_hour
-                                                                        ? "bg-blue-500"
-                                                                        : "bg-blue-500/35 group-hover:bg-blue-500/70"
-                                                                }`}
-                                                                style={{ height: `${Math.max(3, (count / max) * 100)}%` }}
-                                                            />
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                                <Badge
-                                                    variant="secondary"
-                                                    className="w-20 shrink-0 justify-center text-xs"
-                                                    title={t("analytics.peakHourDesc")}
-                                                >
-                                                    {t("analytics.peakHour").replace("{h}", String(s.peak_hour))}
-                                                </Badge>
-                                            </div>
-                                        )
-                                    })}
+                                    {streamer_hours.map((s) => (
+                                        <StreamerHoursRow
+                                            key={s.rec_id}
+                                            name={s.name}
+                                            hours={s.hours}
+                                            total={s.total}
+                                            peakHour={s.peak_hour}
+                                            peakLabel={t("analytics.peakHour").replace("{h}", String(s.peak_hour))}
+                                            peakDesc={t("analytics.peakHourDesc")}
+                                        />
+                                    ))}
                                 </div>
                                 <div className="flex items-center gap-3 pt-1">
                                     <div className="w-24 shrink-0 sm:w-32" />
