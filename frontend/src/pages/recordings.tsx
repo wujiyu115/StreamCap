@@ -44,6 +44,7 @@ import { toast } from "sonner"
 import { CopyIdButton } from "@/components/copy-id-button"
 import { RecordingDialog } from "@/components/recording-dialog"
 import { ValidityCheckDialog } from "@/components/validity-check-dialog"
+import { useConfirm } from "@/components/confirm-dialog"
 
 type StatusFilter = "all" | "recording" | "live" | "offline" | "error" | "stopped"
 
@@ -63,6 +64,7 @@ const FILTER_LABEL_KEY: Record<StatusFilter, string> = {
 
 export default function RecordingsPage() {
     const { t, tf } = useI18n()
+    const confirmBox = useConfirm()
     const navigate = useNavigate()
     const queryClient = useQueryClient()
     const [searchParams] = useSearchParams()
@@ -267,9 +269,13 @@ export default function RecordingsPage() {
         [validityResults],
     )
 
-    const handleDeleteInvalid = () => {
+    const handleDeleteInvalid = async () => {
         if (invalidRecIds.length === 0) return
-        if (confirm(tf("recordings.validityDeleteConfirm", { count: invalidRecIds.length }))) {
+        const ok = await confirmBox({
+            description: tf("recordings.validityDeleteConfirm", { count: invalidRecIds.length }),
+            destructive: true,
+        })
+        if (ok) {
             batchDelete.mutate(invalidRecIds, {
                 onSuccess: () => {
                     setValidityOpen(false)
@@ -280,8 +286,12 @@ export default function RecordingsPage() {
         }
     }
 
-    const handleDeleteInvalidOne = (r: ValidityCheckResult) => {
-        if (confirm(tf("recordings.deleteOneConfirm", { name: r.streamer_name || r.url }))) {
+    const handleDeleteInvalidOne = async (r: ValidityCheckResult) => {
+        const ok = await confirmBox({
+            description: tf("recordings.deleteOneConfirm", { name: r.streamer_name || r.url }),
+            destructive: true,
+        })
+        if (ok) {
             deleteMutation.mutate(r.rec_id, {
                 onSuccess: () => {
                     setValidityResults((prev) => (prev ?? []).filter((x) => x.rec_id !== r.rec_id))
@@ -302,8 +312,12 @@ export default function RecordingsPage() {
 
     const allSelected = filtered.length > 0 && filtered.every((r) => selected.has(r.rec_id))
 
-    const handleDelete = (rec: Recording) => {
-        if (confirm(tf("recordings.deleteOneConfirm", { name: rec.streamer_name || rec.url }))) {
+    const handleDelete = async (rec: Recording) => {
+        const ok = await confirmBox({
+            description: tf("recordings.deleteOneConfirm", { name: rec.streamer_name || rec.url }),
+            destructive: true,
+        })
+        if (ok) {
             deleteMutation.mutate(rec.rec_id)
         }
     }
@@ -314,9 +328,13 @@ export default function RecordingsPage() {
         navigate(p ? `/media?path=${encodeURIComponent(p)}` : "/media")
     }
 
-    const handleBatchDelete = () => {
+    const handleBatchDelete = async () => {
         if (selected.size === 0) return
-        if (confirm(tf("recordings.deleteConfirm", { count: selected.size }))) {
+        const ok = await confirmBox({
+            description: tf("recordings.deleteConfirm", { count: selected.size }),
+            destructive: true,
+        })
+        if (ok) {
             batchDelete.mutate(Array.from(selected))
         }
     }

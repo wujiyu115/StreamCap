@@ -244,7 +244,8 @@
         "waitingFiles": "等待 {count} 个文件写入完成",
         "log": "日志",
         "output": "输出目录",
-        "notEnabled": "人体识别未启用，请先在设置中开启"
+        "notEnabled": "人体识别未启用，请先在设置中开启",
+        "submitConfirmAction": "开始处理"
     },
     "settings": {
         "title": "设置",

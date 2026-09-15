@@ -33,11 +33,13 @@ import { PlayerDialog } from "@/components/player-dialog"
 import { PoseTaskPanel } from "@/components/pose-task-panel"
 import { useVideoMeta } from "@/hooks/use-video-meta"
 import { useI18n , translateError } from "@/i18n"
+import { useConfirm } from "@/components/confirm-dialog"
 import { toast } from "sonner"
 import { useSearchParams } from "react-router-dom"
 
 export default function MediaPage() {
     const { t, tf } = useI18n()
+    const confirmBox = useConfirm()
     const queryClient = useQueryClient()
     // 录制管理「打开目录」跳转带 ?path=；导航内切换时同步更新 URL。
     // 切 tab 会卸载本页组件，目录与滚动位置持久化到 localStorage，挂载时恢复
@@ -207,14 +209,18 @@ export default function MediaPage() {
         onError: (e: Error) => toast.error(translateError(e.message)),
     })
 
-    const submitPose = () => {
+    const submitPose = async () => {
         // 文件夹也允许提交（后端递归展开为目录内全部视频）
         const targets = Array.from(selected).filter((rel) => {
             const item = items.find((i) => i.rel_path === rel)
             return item && (item.type === "video" || item.type === "folder")
         })
         if (targets.length === 0) return
-        if (confirm(tf("pose.submitConfirm", { count: targets.length }))) {
+        const ok = await confirmBox({
+            description: tf("pose.submitConfirm", { count: targets.length }),
+            confirmText: t("pose.submitConfirmAction"),
+        })
+        if (ok) {
             poseMutation.mutate(targets)
         }
     }
@@ -243,15 +249,23 @@ export default function MediaPage() {
     const allSelected =
         selectableFiles.length > 0 && items.every((i) => i.type !== "folder" || selected.has(i.rel_path))
 
-    const handleDelete = (item: MediaItem) => {
-        if (confirm(tf("media.deleteFileConfirm", { name: item.name }))) {
+    const handleDelete = async (item: MediaItem) => {
+        const ok = await confirmBox({
+            description: tf("media.deleteFileConfirm", { name: item.name }),
+            destructive: true,
+        })
+        if (ok) {
             deleteMutation.mutate(item.rel_path)
         }
     }
 
-    const handleBatchDelete = () => {
+    const handleBatchDelete = async () => {
         if (selected.size === 0) return
-        if (confirm(tf("media.deleteBatchConfirm", { count: selected.size }))) {
+        const ok = await confirmBox({
+            description: tf("media.deleteBatchConfirm", { count: selected.size }),
+            destructive: true,
+        })
+        if (ok) {
             batchDeleteMutation.mutate(Array.from(selected))
         }
     }

@@ -244,7 +244,8 @@
         "waitingFiles": "Waiting for {count} file(s) to finish writing",
         "log": "Log",
         "output": "Output directory",
-        "notEnabled": "Pose detection is disabled. Enable it in Settings first"
+        "notEnabled": "Pose detection is disabled. Enable it in Settings first",
+        "submitConfirmAction": "Start"
     },
     "settings": {
         "title": "Settings",

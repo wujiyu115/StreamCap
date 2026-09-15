@@ -11,6 +11,7 @@ import {
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { I18nContext, format, getDict, resolveDictValue, setCurrentLang, type LangCode } from "@/i18n"
+import { ConfirmProvider } from "@/components/confirm-dialog"
 
 const LANG_KEY = "streamcap.lang"
 const THEME_KEY = "streamcap.theme"
@@ -81,6 +82,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
 
     return (
         <I18nContext.Provider value={i18n}>
+            <ConfirmProvider>
             <div className="flex h-dvh flex-col overflow-hidden bg-background md:flex-row">
                 {/* 移动端顶栏 */}
                 <header className="flex h-12 shrink-0 items-center justify-between border-b bg-sidebar px-3 md:hidden">
@@ -206,6 +208,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                     ))}
                 </nav>
             </div>
+            </ConfirmProvider>
         </I18nContext.Provider>
     )
 }
