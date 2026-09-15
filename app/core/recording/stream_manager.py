@@ -73,16 +73,22 @@ class LiveStreamRecorder:
 
     def _get_filename(self, stream_info: StreamData) -> str:
         live_title = None
-        stream_info.title = utils.clean_name(stream_info.title, None)
+        strip_emoji = self.user_config.get("remove_emojis")
+        stream_info.title = utils.clean_name(stream_info.title, None, remove_emoji=strip_emoji)
         if self.user_config.get("filename_includes_title") and stream_info.title:
             stream_info.title = self._clean_and_truncate_title(stream_info.title) or stream_info.title
             live_title = stream_info.title
 
         # 空名（只填房间号创建）或占位名时用接口返回的主播名，避免空目录/空文件名
         if self.recording.streamer_name.strip() and self.recording.streamer_name != self._["live_room"]:
-            stream_info.anchor_name = utils.clean_name(self.recording.streamer_name)
+            # 兜底 default 必须带：纯 emoji/纯标点名清洗后为空会返回 None，下游 os.path.join 直接抛 TypeError
+            stream_info.anchor_name = utils.clean_name(
+                self.recording.streamer_name, self._["live_room"], remove_emoji=strip_emoji
+            )
         else:
-            stream_info.anchor_name = utils.clean_name(stream_info.anchor_name, self._["live_room"])
+            stream_info.anchor_name = utils.clean_name(
+                stream_info.anchor_name, self._["live_room"], remove_emoji=strip_emoji
+            )
 
         now = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
 

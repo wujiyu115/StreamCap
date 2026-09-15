@@ -280,12 +280,19 @@ def is_time_interval_exceeded(last_check_time, interval_seconds=60):
     return time_diff.total_seconds() > interval_seconds
 
 
-def clean_name(input_text, default=None):
+def clean_name(input_text, default=None, remove_emoji=True):
+    """清理文件/目录名里的非法字符。
+
+    remove_emoji=False 时保留 emoji（Linux 文件系统支持 UTF-8 emoji 文件名，
+    由「文件名去除表情符号」设置决定）；纯标点等清洗后为空的名字回落 default。
+    """
     if input_text and input_text.strip():
         rstr = r"[\/\\\:：\*\？?\"\<\>\|&#.。,， ~！· ]"
         cleaned_name = input_text.strip().replace("（", "(").replace("）", ")")
         cleaned_name = re.sub(rstr, "_", cleaned_name)
-        cleaned_name = remove_emojis(cleaned_name, "_").replace("__", "_").strip("_")
+        if remove_emoji:
+            cleaned_name = remove_emojis(cleaned_name, "_")
+        cleaned_name = cleaned_name.replace("__", "_").strip("_")
         return cleaned_name or default
     return default
 
