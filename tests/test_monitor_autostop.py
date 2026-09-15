@@ -92,3 +92,42 @@ def test_special_attention_skips_days_but_not_invalid():
 
     assert starred_stale.monitor_status is True, "特别关注应忽略按天数停监控"
     assert starred_invalid.monitor_status is False, "特别关注不豁免失效房间自动停"
+
+
+def test_auto_stop_records_timestamp_and_reason():
+    """自动停监控记下时刻与原因：idle_days / invalid 两条路径各记各的"""
+    NOW = time.time()
+    mgr = make_manager({"auto_stop_monitor_days": 7})
+    stale = make_recording(rec_id="stale")
+    stale.last_live_time = NOW - 8 * 86400
+    gone = make_recording(rec_id="gone")
+    live_now = make_recording(rec_id="live")
+    live_now.last_live_time = NOW
+    set_recordings([stale, gone, live_now])
+    mgr.validity_cache = {"gone": {"url": gone.url, "status": room_validity.STATUS_INVALID}}
+
+    mgr._auto_stop_stale_monitors(mgr._monitor_config())
+
+    assert stale.auto_stopped_at is not None and abs(stale.auto_stopped_at - NOW) < 5
+    assert stale.auto_stop_reason == "idle_days"
+    assert gone.auto_stopped_at is not None and abs(gone.auto_stopped_at - NOW) < 5
+    assert gone.auto_stop_reason == "invalid"
+    assert live_now.auto_stopped_at is None, "未被动过的任务不应有记录"
+
+
+def test_auto_stop_overwrites_with_latest_time():
+    """多次自动停止只记最近一次：重新开启后再次被停，时间戳覆盖为最新"""
+    NOW = time.time()
+    mgr = make_manager({"auto_stop_monitor_days": 7})
+    rec = make_recording(rec_id="twice")
+    # 第一次被停（模拟历史记录）
+    rec.auto_stopped_at = NOW - 10 * 86400
+    rec.auto_stop_reason = "invalid"
+    rec.monitor_status = True  # 用户重新开启了监控
+    rec.last_live_time = NOW - 8 * 86400  # 又连续 8 天没开播
+    set_recordings([rec])
+
+    mgr._auto_stop_stale_monitors(mgr._monitor_config())
+
+    assert abs(rec.auto_stopped_at - NOW) < 5, "时间戳应为最近一次"
+    assert rec.auto_stop_reason == "idle_days", "原因同样取最近一次"

@@ -114,6 +114,11 @@ class Recording:
         self.avg_live_interval = None
         # 任务添加时刻（epoch 秒，持久化）；旧数据无此字段保持 None，前端显示「—」
         self.created_at = time.time()
+        # 最近一次自动停止监控的时刻与原因（持久化）：reason 为 "idle_days"
+        # （连续 N 天未开播）或 "invalid"（直播间失效）。多次自动停止只记
+        # 最近一次（每次覆盖写）；手动停止/重启监控不改写此记录
+        self.auto_stopped_at = None
+        self.auto_stop_reason = None
 
     def to_dict(self):
         """Convert the Recording instance to a dictionary for saving."""
@@ -142,6 +147,8 @@ class Recording:
             "live_count": self.live_count,
             "avg_live_interval": self.avg_live_interval,
             "created_at": self.created_at,
+            "auto_stopped_at": self.auto_stopped_at,
+            "auto_stop_reason": self.auto_stop_reason,
         }
 
     @classmethod
@@ -177,6 +184,8 @@ class Recording:
         recording.live_count = data.get("live_count") or 0
         recording.avg_live_interval = data.get("avg_live_interval")
         recording.created_at = data.get("created_at")
+        recording.auto_stopped_at = data.get("auto_stopped_at")
+        recording.auto_stop_reason = data.get("auto_stop_reason")
         if recording.last_duration_str is not None:
             recording.last_duration = timedelta(seconds=float(recording.last_duration_str))
         return recording

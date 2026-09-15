@@ -699,6 +699,8 @@ class RecordingManager:
                 recording.status_info = RecordingStatus.STOPPED_MONITORING
                 recording.display_title = f"[{self._['monitor_stopped']}] {recording.title}"
                 recording.is_checking = False
+                recording.auto_stopped_at = now
+                recording.auto_stop_reason = "idle_days"
                 logger.warning(f"{days:g} 天未开播，自动停止监控: {recording.url}")
                 self.services.broadcast_card_update(recording)
                 changed = True
@@ -716,6 +718,8 @@ class RecordingManager:
         recording.status_info = RecordingStatus.STOPPED_MONITORING
         recording.display_title = f"[{self._['monitor_stopped']}] {recording.title}"
         recording.is_checking = False
+        recording.auto_stopped_at = time.time()
+        recording.auto_stop_reason = "invalid"
         logger.warning(f"直播间已失效，自动停止监控: {recording.url}")
         self.services.broadcast_card_update(recording)
         return True
@@ -884,6 +888,7 @@ class RecordingManager:
 
         self._on_check_succeeded(recording)
         if self.settings.user_config.get("remove_emojis"):
+            # 开关开的语义：任务名也清洗（剥 emoji）；关的时候由 _get_filename 按同开关决定文件名是否保留 emoji
             stream_info.anchor_name = utils.clean_name(stream_info.anchor_name, self._["live_room"])
 
         if stream_info.is_live:

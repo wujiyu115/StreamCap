@@ -128,6 +128,13 @@ export interface AnalyticsOverview {
     }
     idle: { rec_id: string; name: string; idle_days: number; days_left: number | null }[]
     never_recorded: { rec_id: string; name: string }[]
+    auto_stopped: {
+        rec_id: string
+        name: string
+        stopped_at: number
+        reason: string | null
+        re_enabled: boolean
+    }[]
     histogram: number[]
     streamer_hours: { rec_id: string; name: string; hours: number[]; total: number; peak_hour: number }[]
     platform_checks: {

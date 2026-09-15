@@ -495,6 +495,12 @@
         "reason_repeated": "连续失败",
         "reason_unsupported": "已停轮询",
         "reason_invalid": "房间失效",
-        "reasonHint": "归因由监控状态派生，不额外发探测请求"
+        "reasonHint": "归因由监控状态派生，不额外发探测请求",
+        "autoStoppedTitle": "自动停止监控记录",
+        "autoStoppedEmpty": "没有自动停止监控的任务",
+        "autoStopReasonIdle": "长期未开播",
+        "autoStopReasonInvalid": "直播间失效",
+        "reEnabled": "已重新开启",
+        "autoStoppedHint": "多次自动停止只记最近一次时间；重新开启监控后记录保留"
     }
 }

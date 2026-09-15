@@ -203,3 +203,29 @@ def test_special_attention_excluded_from_idle_list(overview):
 
     idle_ids = [r["rec_id"] for r in data["idle"]]
     assert idle_ids == ["rid-stale"]
+
+
+def test_auto_stopped_list_latest_first_with_reason_and_reenabled(overview):
+    """自动停止监控记录：按最近一次时间倒序；原因与重新开启状态如实暴露。"""
+    _store, recordings, call = overview
+    now = time.time()
+    older = make_recording(rec_id="rid-old", monitor=False)
+    older.auto_stopped_at = now - 5 * 86400
+    older.auto_stop_reason = "idle_days"
+    newer = make_recording(rec_id="rid-new", monitor=False)
+    newer.auto_stopped_at = now - 100
+    newer.auto_stop_reason = "invalid"
+    re_enabled = make_recording(rec_id="rid-re")
+    re_enabled.auto_stopped_at = now - 86400
+    re_enabled.auto_stop_reason = "idle_days"
+    re_enabled.monitor_status = True  # 用户重新开启了监控
+    untouched = make_recording(rec_id="rid-clean")
+    recordings.extend([older, newer, re_enabled, untouched])
+
+    data = call()["auto_stopped"]
+
+    assert [r["rec_id"] for r in data] == ["rid-new", "rid-re", "rid-old"]
+    assert data[0]["reason"] == "invalid"
+    assert data[1]["re_enabled"] is True
+    assert data[2]["re_enabled"] is False
+    assert all("rid-clean" != r["rec_id"] for r in data), "没有被自动停过的任务不出现"

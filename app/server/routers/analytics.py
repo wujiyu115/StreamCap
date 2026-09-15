@@ -294,6 +294,25 @@ async def get_overview(
     idle.sort(key=lambda x: -x["idle_days"])
     idle = idle[:20]
 
+    # ── 自动停止监控记录（低效清单是「将被停」，这里是「已被系统停」） ──
+    # auto_stopped_at 每次自动停止覆盖写 → 多次停止只记最近一次；
+    # 手动重新开启监控不清除记录（re_enabled 标记当前状态）
+    auto_stopped = sorted(
+        (
+            {
+                "rec_id": r.rec_id,
+                "name": r.streamer_name or r.rec_id[:8],
+                "stopped_at": r.auto_stopped_at,
+                "reason": r.auto_stop_reason,
+                "re_enabled": bool(r.monitor_status),
+            }
+            for r in rm.recordings
+            if r.auto_stopped_at
+        ),
+        key=lambda x: x["stopped_at"],
+        reverse=True,
+    )[:20]
+
     histogram = [0] * 24
     hours_by_rec = rm.analytics.read_hours()
     for hours in hours_by_rec.values():
@@ -396,6 +415,7 @@ async def get_overview(
         },
         "idle": idle,
         "never_recorded": never_recorded[:20],
+        "auto_stopped": auto_stopped,
         "histogram": histogram,
         "streamer_hours": streamer_hours,
         "platform_checks": platform_checks,

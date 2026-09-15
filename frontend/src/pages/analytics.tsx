@@ -163,6 +163,12 @@ function fmtClock(ts: number | null): string {
     return new Date(ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
 }
 
+function fmtDateTimeShort(ts: number): string {
+    const d = new Date(ts * 1000)
+    const pad = (n: number) => String(n).padStart(2, "0")
+    return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
 const FAILURE_REASONS = ["transient", "repeated", "unsupported", "invalid"] as const
 
 function reasonLabel(reason: string, t: (k: string) => string): string {
@@ -193,6 +199,7 @@ export default function AnalyticsPage() {
         rankings,
         idle,
         never_recorded,
+        auto_stopped,
         histogram,
         streamer_hours,
         platform_checks,
@@ -710,6 +717,51 @@ export default function AnalyticsPage() {
                         </CardContent>
                     </Card>
                 </div>
+
+                {/* 自动停止监控记录：低效清单是「将被系统停」，这里是「已被系统停」 */}
+                <Card>
+                    <CardHeader>
+                        <CardTitle className="text-base">{t("analytics.autoStoppedTitle")}</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-2">
+                        {auto_stopped.length === 0 ? (
+                            <div className="py-6 text-center text-sm text-muted-foreground">
+                                {t("analytics.autoStoppedEmpty")}
+                            </div>
+                        ) : (
+                            <>
+                                {auto_stopped.map((r) => (
+                                    <div key={r.rec_id} className="flex items-center justify-between gap-2 text-sm">
+                                        <span className="min-w-0 truncate" title={r.name}>
+                                            {r.name}
+                                        </span>
+                                        <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+                                            {fmtDateTimeShort(r.stopped_at)}
+                                            {r.reason && (
+                                                <Badge
+                                                    variant={r.reason === "invalid" ? "destructive" : "outline"}
+                                                    className="px-1.5 py-0 text-xs font-normal"
+                                                >
+                                                    {r.reason === "invalid"
+                                                        ? t("analytics.autoStopReasonInvalid")
+                                                        : t("analytics.autoStopReasonIdle")}
+                                                </Badge>
+                                            )}
+                                            {r.re_enabled && (
+                                                <Badge variant="secondary" className="px-1.5 py-0 text-xs font-normal">
+                                                    {t("analytics.reEnabled")}
+                                                </Badge>
+                                            )}
+                                        </span>
+                                    </div>
+                                ))}
+                                <div className="mt-2 text-xs text-muted-foreground">
+                                    {t("analytics.autoStoppedHint")}
+                                </div>
+                            </>
+                        )}
+                    </CardContent>
+                </Card>
             </>
         </div>
     )

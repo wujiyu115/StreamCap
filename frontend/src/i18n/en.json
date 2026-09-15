@@ -495,6 +495,12 @@
         "reason_repeated": "repeated",
         "reason_unsupported": "polling stopped",
         "reason_invalid": "room invalid",
-        "reasonHint": "Derived from monitoring state — no extra probe requests are sent"
+        "reasonHint": "Derived from monitoring state — no extra probe requests are sent",
+        "autoStoppedTitle": "Auto-Stopped Monitors",
+        "autoStoppedEmpty": "No auto-stopped monitors",
+        "autoStopReasonIdle": "Idle too long",
+        "autoStopReasonInvalid": "Room invalid",
+        "reEnabled": "Re-enabled",
+        "autoStoppedHint": "Only the most recent auto-stop time is kept; records persist after re-enabling"
     }
 }
