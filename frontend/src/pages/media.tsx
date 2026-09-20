@@ -72,9 +72,8 @@ export default function MediaPage() {
     const [sortBy, setSortBy] = useState<"name" | "mtime" | "size">(
         () => (localStorage.getItem("media-sort-by") as "name" | "mtime" | "size") || "name",
     )
-    const [sortAsc, setSortAsc] = useState(
-        () => (localStorage.getItem("media-sort-asc") ?? "1") === "1",
-    )
+    // 仅显式存过 "0" 才降序，未设置/脏值都回落默认升序
+    const [sortAsc, setSortAsc] = useState(() => localStorage.getItem("media-sort-asc") !== "0")
 
     // 各目录滚动位置记忆（Frostcast 同款）：离开时存，回来时恢复。
     // 滚动容器是本页文件区的独立滚动 div（class="list-scroll"）
@@ -201,11 +200,14 @@ export default function MediaPage() {
     const allItems = tree?.items ?? []
     // 排序在搜索过滤之前做（搜索结果也按当前规则排序）
     const sortedItems = useMemo(() => {
+        // 脏 localStorage 值（旧版本/手改）回落到默认名称排序，避免落进 size 分支
+        const key: "name" | "mtime" | "size" =
+            sortBy === "mtime" || sortBy === "size" ? sortBy : "name"
         const cmp = (a: MediaItem, b: MediaItem) => {
             let d = 0
-            if (sortBy === "name") {
+            if (key === "name") {
                 d = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" })
-            } else if (sortBy === "mtime") {
+            } else if (key === "mtime") {
                 d = (a.mtime ?? 0) - (b.mtime ?? 0)
             } else {
                 // 文件夹按条目数、文件按字节数
