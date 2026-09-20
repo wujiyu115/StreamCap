@@ -224,7 +224,10 @@
         "subdirs": "子目录",
         "select": "选择",
         "noResults": "没有匹配项",
-        "listView": "列表模式"
+        "listView": "列表模式",
+        "sortBy": "排序",
+        "sortAsc": "切换为降序",
+        "sortDesc": "切换为升序"
     },
     "pose": {
         "title": "人体识别处理",

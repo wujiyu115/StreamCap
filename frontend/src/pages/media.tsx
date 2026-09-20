@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
     ArrowLeft,
+    ArrowDownUp,
+    ArrowDownNarrowWide,
     Eraser,
     ChevronRight,
     FileVideo,
@@ -28,6 +30,7 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { formatTimestamp } from "@/components/status"
 import { PlayerDialog } from "@/components/player-dialog"
 import { PoseTaskPanel } from "@/components/pose-task-panel"
@@ -63,6 +66,14 @@ export default function MediaPage() {
     const [search, setSearch] = useState("")
     const [viewMode, setViewMode] = useState<"list" | "grid">(
         () => (localStorage.getItem("media-view") as "list" | "grid") || "list",
+    )
+    // 排序规则：字段（名称/修改时间/大小）+ 升降序，与 viewMode 同款 localStorage 持久化
+    // 文件夹恒排文件前；名称用 localeCompare（中文友好），大小排序时文件夹用 count、文件用 bytes
+    const [sortBy, setSortBy] = useState<"name" | "mtime" | "size">(
+        () => (localStorage.getItem("media-sort-by") as "name" | "mtime" | "size") || "name",
+    )
+    const [sortAsc, setSortAsc] = useState(
+        () => (localStorage.getItem("media-sort-asc") ?? "1") === "1",
     )
 
     // 各目录滚动位置记忆（Frostcast 同款）：离开时存，回来时恢复。
@@ -135,6 +146,14 @@ export default function MediaPage() {
     }, [viewMode])
 
     useEffect(() => {
+        localStorage.setItem("media-sort-by", sortBy)
+    }, [sortBy])
+
+    useEffect(() => {
+        localStorage.setItem("media-sort-asc", sortAsc ? "1" : "0")
+    }, [sortAsc])
+
+    useEffect(() => {
         localStorage.setItem("media-clean-mb", cleanMb)
     }, [cleanMb])
 
@@ -180,10 +199,30 @@ export default function MediaPage() {
     })
 
     const allItems = tree?.items ?? []
+    // 排序在搜索过滤之前做（搜索结果也按当前规则排序）
+    const sortedItems = useMemo(() => {
+        const cmp = (a: MediaItem, b: MediaItem) => {
+            let d = 0
+            if (sortBy === "name") {
+                d = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" })
+            } else if (sortBy === "mtime") {
+                d = (a.mtime ?? 0) - (b.mtime ?? 0)
+            } else {
+                // 文件夹按条目数、文件按字节数
+                d =
+                    (a.type === "folder" ? (a.count ?? 0) : (a.bytes ?? 0)) -
+                    (b.type === "folder" ? (b.count ?? 0) : (b.bytes ?? 0))
+            }
+            return sortAsc ? d : -d
+        }
+        const folders = allItems.filter((i) => i.type === "folder").sort(cmp)
+        const media = allItems.filter((i) => i.type !== "folder").sort(cmp)
+        return folders.concat(media)
+    }, [allItems, sortBy, sortAsc])
     const items = useMemo(() => {
         const q = search.trim().toLowerCase()
-        return q ? allItems.filter((it) => it.name.toLowerCase().includes(q)) : allItems
-    }, [allItems, search])
+        return q ? sortedItems.filter((it) => it.name.toLowerCase().includes(q)) : sortedItems
+    }, [sortedItems, search])
     const protectedFiles = new Set((stats?.protected_files ?? []).map((p) => p))
     const segments = path ? path.split("/") : []
 
@@ -289,6 +328,35 @@ export default function MediaPage() {
                         onChange={(e) => setSearch(e.target.value)}
                         className="hidden w-44 md:block"
                     />
+                    <div className="flex items-center gap-1.5">
+                        <Select
+                            value={sortBy}
+                            onValueChange={(v) => setSortBy(v as "name" | "mtime" | "size")}
+                        >
+                            <SelectTrigger className="h-8 w-[110px]" title={t("media.sortBy")}>
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="name">{t("media.columnName")}</SelectItem>
+                                <SelectItem value="mtime">{t("media.columnModified")}</SelectItem>
+                                <SelectItem value="size">{t("media.columnSize")}</SelectItem>
+                            </SelectContent>
+                        </Select>
+                        <button
+                            type="button"
+                            className={`flex h-8 w-8 items-center justify-center rounded-md border ${
+                                sortAsc ? "text-muted-foreground" : "bg-primary text-primary-foreground"
+                            }`}
+                            title={sortAsc ? t("media.sortDesc") : t("media.sortAsc")}
+                            onClick={() => setSortAsc((v) => !v)}
+                        >
+                            {sortAsc ? (
+                                <ArrowDownNarrowWide className="h-4 w-4" />
+                            ) : (
+                                <ArrowDownUp className="h-4 w-4" />
+                            )}
+                        </button>
+                    </div>
                     <div className="flex gap-0.5 rounded-md border p-0.5">
                         <button
                             className={`rounded px-2 py-1 ${viewMode === "list" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}

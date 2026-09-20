@@ -224,7 +224,10 @@
         "subdirs": "Subfolders",
         "select": "Select",
         "noResults": "No matches",
-        "listView": "List view"
+        "listView": "List view",
+        "sortBy": "Sort by",
+        "sortAsc": "Switch to descending",
+        "sortDesc": "Switch to ascending"
     },
     "pose": {
         "title": "Pose processing",
