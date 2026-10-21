@@ -260,3 +260,129 @@ export interface PoseTaskState {
     queue_length?: number
     log_size?: number
 }
+
+/** 抖音关注列表：账号信息 */
+export interface DouyinSelfProfile {
+    sec_uid: string
+    uid: string
+    nickname: string
+    unique_id: string
+    avatar: string
+    follower_count: number | null
+    following_count: number | null
+    aweme_count: number | null
+}
+
+/** 抖音关注列表：关注的用户 */
+export interface DouyinFollowingUser {
+    sec_uid: string
+    uid: string
+    nickname: string
+    unique_id: string
+    short_id: string
+    signature: string
+    avatar: string
+    follower_count: number | null
+    following_count: number | null
+    aweme_count: number | null
+    verified: boolean
+    custom_verify: string
+    /** 关注列表里直接带在播房间时为房间号（老接口行为，可能为空） */
+    room_id: string
+}
+
+export interface DouyinFollowingPage {
+    users: DouyinFollowingUser[]
+    page: number
+    page_size: number
+    /** 后面还有没有页 */
+    has_more: boolean
+    /** 抖音返回的关注总数（可能为 null） */
+    total: number | null
+    /** 服务端已经取到的页数，用于「下一页」可用性判断 */
+    max_page: number
+    fetched_at: number
+}
+
+export interface DouyinLiveAnchor {
+    sec_uid: string
+    nickname: string
+    avatar: string
+    web_rid: string
+}
+
+export interface DouyinLiveRoom {
+    web_rid: string
+    room_id: string
+    title: string
+    cover: string
+    online: string | null
+    tag: string | null
+    status: number | null
+    anchor: DouyinLiveAnchor
+}
+
+export interface DouyinLiveResponse {
+    rooms: DouyinLiveRoom[]
+    fetched_at: number
+}
+
+/** 直播间播放直链（抖音 CDN 签名地址，主盯重开会换 stream id） */
+export interface DouyinLiveStream {
+    web_rid: string
+    is_live: boolean
+    /** 播放器直接用的地址（已升成 https，避免 HTTPS 部署下的 mixed content） */
+    play_url: string
+    /** flv = mpegts.js 解封装；hls = Safari 原生/H.265 房间；空 = 拿不到地址 */
+    playback: "flv" | "hls" | ""
+    quality: string
+    codec: string
+    title: string
+    anchor_name: string
+    /** 抖音 CDN 签名的过期时刻（epoch 秒），0 表示地址没带 */
+    expire_at: number
+    fetched_at: number
+}
+
+/** 抖音 Cookie 登录态寿命（解析本地 sid_guard，不发出网请求） */
+export interface DouyinCookieStatus {
+    has_cookie: boolean
+    /** missing 没配 / unknown 读不到寿命 / expired 已过期 / expiring 快到期 / ok 还早 */
+    state: "missing" | "unknown" | "ok" | "expiring" | "expired"
+    /** epoch 秒，null = 读不到 */
+    expires_at: number | null
+    issued_at: number | null
+    ttl_seconds: number | null
+    days_left: number | null
+}
+
+/** 扫码登录会话状态：idle = 还没开始；其余与后端 DouyinLoginSession 一致 */
+export type DouyinLoginStateName =
+    | "idle"
+    | "starting"
+    | "waiting"
+    | "confirming"
+    | "verify"
+    | "confirmed"
+    | "failed"
+    | "cancelled"
+    | "timeout"
+
+/** 扫码登录轮询快照（``error`` 是 ``err.xxx|附加信息``，走 translateError 翻） */
+export interface DouyinLoginState {
+    state: DouyinLoginStateName
+    /** data:image/png;base64 的二维码，前端直接塞 <img src> */
+    qrcode?: string
+    /** 抖音页面自己的提示文案（不翻译） */
+    hint?: string
+    /** 需要额外安全验证（换了一张验证码） */
+    verify?: boolean
+    /** 本部署没装浏览器组件（playwright），只能手动粘贴 Cookie */
+    unavailable?: boolean
+    /** Cookie 已经写进设置了 */
+    saved?: boolean
+    /** 失败原因码，形如 ``err.douyinLoginFailed|RuntimeError: boom`` */
+    error?: string
+    /** 二维码剩余有效秒数 */
+    expires_in?: number
+}

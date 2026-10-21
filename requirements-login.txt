@@ -1,0 +1,8 @@
+# 扫码登录组件：服务端用 headless chromium 打开抖音登录页，把二维码交给 WebUI，
+# 用户手机扫码确认后 cookie 自动回填（不再需要手工从浏览器里复制 cookie）。
+#
+# 浏览器本体不是 pip 包，要另外装（Dockerfile 里已经做了）：
+#   playwright install --only-shell chromium     # 只装 chromium headless shell，约 215MB
+# 本地开发只要不用扫码功能就不需要它——没装时登录接口会返回 err.douyinLoginUnavailable，
+# 设置页仍可手动粘贴 cookie。
+playwright>=1.62.0

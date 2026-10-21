@@ -21,6 +21,15 @@ UNSUPPORTED_URL = "err.unsupportedUrl"
 NO_FIELDS_TO_UPDATE = "err.noFieldsToUpdate"
 VALIDITY_CHECK_UNAVAILABLE = "err.validityUnavailable"
 
+# 抖音关注列表
+DOUYIN_COOKIE_MISSING = "err.douyinCookieMissing"
+DOUYIN_LOGIN_REQUIRED = "err.douyinLoginRequired"
+DOUYIN_UPSTREAM_ERROR = "err.douyinUpstreamError"
+DOUYIN_FOLLOWING_UNAVAILABLE = "err.douyinFollowingUnavailable"
+# 扫码登录：本部署没带浏览器组件 / 浏览器起来了但没拿到码
+DOUYIN_LOGIN_UNAVAILABLE = "err.douyinLoginUnavailable"
+DOUYIN_LOGIN_FAILED = "err.douyinLoginFailed"
+
 # 人体识别
 POSE_MANAGER_UNAVAILABLE = "err.poseUnavailable"
 POSE_NO_VIDEOS = "err.poseNoVideos"

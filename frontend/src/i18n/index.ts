@@ -59,6 +59,16 @@ export function useI18n(): I18nContextValue {
     return useContext(I18nContext)
 }
 
+/** 按界面语言格式化日期（入参是 epoch 秒）。
+ *
+ * 默认的 toLocaleDateString() 跟随**浏览器**语言，中文界面会被渲染成
+ * 12/20/2026；这里显式按 i18n 语言来，跟界面其余部分保持一致。
+ */
+export function formatDate(epochSeconds: number | null | undefined, lang: LangCode = currentLang): string {
+    if (!epochSeconds) return "-"
+    return new Date(epochSeconds * 1000).toLocaleDateString(lang === "en" ? "en-US" : "zh-CN")
+}
+
 export function resolveDictValue(dict: Dict, path: string): string {
     const parts = path.split(".")
     let current: unknown = dict

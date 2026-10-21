@@ -6,6 +6,7 @@ import { AppLayout } from "@/layouts/app-layout"
 import { AuthGate } from "@/layouts/auth-gate"
 import AnalyticsPage from "@/pages/analytics"
 import AboutPage from "@/pages/about"
+import FollowingPage from "@/pages/following"
 import HomePage from "@/pages/home"
 import LoginPage from "@/pages/login"
 import MediaPage from "@/pages/media"
@@ -54,6 +55,7 @@ export const router = createBrowserRouter([
             { path: "/home", element: <HomePage /> },
             { path: "/recordings", element: <RecordingsPage /> },
             { path: "/media", element: <MediaPage /> },
+            { path: "/following", element: <FollowingPage /> },
             { path: "/analytics", element: <AnalyticsPage /> },
             { path: "/settings", element: <SettingsPage /> },
             { path: "/about", element: <AboutPage /> },

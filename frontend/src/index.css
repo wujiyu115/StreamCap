@@ -109,6 +109,17 @@ body {
     background: #000;
 }
 
+/* 直播是「内容比例说了算」：竖屏直播（抖音默认 9:16）收窄到内容宽度，
+   否则在 4xl 宽的舞台里会撑满宽度再被 max-height 压扁，四周一大片黑边。
+   视频元素自带固有宽高比，给个高度上限就能等比缩放。 */
+.player-stage .player-media-live {
+    width: auto;
+    max-width: 100%;
+    max-height: 76dvh;
+    height: auto;
+    margin: 0 auto;
+}
+
 /* 移动端全屏沉浸：舞台占满视口，媒体铺满可用高度（避让刘海） */
 @media (max-width: 640px) {
     .player-overlay {

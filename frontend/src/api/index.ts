@@ -86,6 +86,31 @@ export const systemApi = {
     checkUpdate: () => api.post<Record<string, unknown>>("/system/check-update"),
 }
 
+/** 抖音关注列表（我关注的人 / 谁在直播）。refresh 绕过服务端缓存重新拉。 */
+export const douyinApi = {
+    self: (refresh = false) =>
+        api.get<import("./types").DouyinSelfProfile>(`/douyin/following/self${refresh ? "?refresh=true" : ""}`),
+    following: (page = 1, pageSize = 20, refresh = false) =>
+        api.get<import("./types").DouyinFollowingPage>(
+            `/douyin/following?page=${page}&page_size=${pageSize}${refresh ? "&refresh=true" : ""}`,
+        ),
+    followingLive: (refresh = false) =>
+        api.get<import("./types").DouyinLiveResponse>(
+            `/douyin/following/live${refresh ? "?refresh=true" : ""}`,
+        ),
+    liveStream: (webRid: string, quality?: string, refresh = false) =>
+        api.get<import("./types").DouyinLiveStream>(
+            `/douyin/live/stream?web_rid=${encodeURIComponent(webRid)}` +
+                `${quality ? `&quality=${encodeURIComponent(quality)}` : ""}${refresh ? "&refresh=true" : ""}`,
+        ),
+    // Cookie 寿命（本地解析 sid_guard）：设置页/关注页用来提前提醒续期
+    cookieStatus: () => api.get<import("./types").DouyinCookieStatus>("/douyin/cookie"),
+    // 扫码登录：start 幂等（已在跑就返回当前状态），status 轮询到 confirmed 时后端顺手把 Cookie 写进设置
+    loginStart: () => api.post<import("./types").DouyinLoginState>("/douyin/login"),
+    loginStatus: () => api.get<import("./types").DouyinLoginState>("/douyin/login"),
+    loginCancel: () => api.del<import("./types").DouyinLoginState>("/douyin/login"),
+}
+
 export const poseApi = {
     submit: (paths: string[], trigger = "manual", overrides?: Record<string, unknown>) =>
         api.post<{ task_id: string | null; status: string }>("/pose/tasks", {

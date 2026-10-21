@@ -118,6 +118,10 @@ class RecordingManager:
             )
             self.analytics.maybe_flush()
 
+    def platform_slot(self, platform_key: str, priority: bool = True):
+        """对外的平台节奏门入口（关注列表等交互式请求与周期监控共享预算）。"""
+        return self._platform_slot(platform_key, priority)
+
     @asynccontextmanager
     async def _platform_slot(self, platform_key: str, priority: bool = False):
         """平台请求节奏门：信号量限并发，最小间隔限制请求发起速率。

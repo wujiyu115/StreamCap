@@ -90,6 +90,10 @@ ipython_config.py
 /config/web_auth.json
 /config/room_validity.json
 /config/analytics/
+/config/.config_migrations.json
+# Cookie 覆盖前的备份（内容是各平台登录态，绝不能进仓库）
+/config/backups/
+pose_output/
 .ruff_cache/
 logs/
 storage/
@@ -187,3 +191,6 @@ clip_test/
 # 外置模型目录（挂载卷，不进镜像不进 git；目前只有 CLIP，见
 # scripts/download_clip_model.py）
 models/
+
+# 扫码登录脚本产出的二维码（敏感登录 token，别进仓库）
+/config/douyin_login_qrcode.png

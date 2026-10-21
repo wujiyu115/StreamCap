@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { BarChart3, Home, Info, LogOut, Menu, Moon, Radio, Settings, Sun, Video } from "lucide-react"
+import { BarChart3, Home, Info, LogOut, Menu, Moon, Radio, Settings, Sun, UserCheck, Video } from "lucide-react"
 import { useEffect, useState } from "react"
 import { NavLink, useLocation, useNavigate } from "react-router-dom"
 import { authApi } from "@/api"
@@ -54,6 +54,7 @@ const NAV_ITEMS = [
     { to: "/home", icon: Home, labelKey: "nav.home" },
     { to: "/recordings", icon: Radio, labelKey: "nav.recordings" },
     { to: "/media", icon: Video, labelKey: "nav.media" },
+    { to: "/following", icon: UserCheck, labelKey: "nav.following" },
     { to: "/analytics", icon: BarChart3, labelKey: "nav.analytics" },
     { to: "/settings", icon: Settings, labelKey: "nav.settings" },
     { to: "/about", icon: Info, labelKey: "nav.about" },
@@ -61,7 +62,6 @@ const NAV_ITEMS = [
 
 // 「关于」低频，不占移动端底部 tab 位（入口在顶栏菜单）；桌面侧栏不受限
 const MOBILE_TAB_ITEMS = NAV_ITEMS.filter((item) => item.to !== "/about")
-
 /** 桌面：固定左侧边栏；移动（<md）：顶栏 + 底部 Tab 导航 */
 export function AppLayout({ children }: { children: React.ReactNode }) {
     const i18n = useI18nState()

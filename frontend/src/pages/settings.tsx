@@ -1,9 +1,15 @@
 import { useQuery } from "@tanstack/react-query"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { Loader2, RotateCcw } from "lucide-react"
+import { Loader2, QrCode, RotateCcw } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
-import { settingsApi } from "@/api"
-import type { SettingsData, SettingsResetResult, SettingsWriteResult } from "@/api/types"
+import { douyinApi, settingsApi } from "@/api"
+import type {
+    DouyinCookieStatus,
+    SettingsData,
+    SettingsResetResult,
+    SettingsWriteResult,
+} from "@/api/types"
+import { DouyinLoginDialog } from "@/components/douyin-login-dialog"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
@@ -17,7 +23,7 @@ import {
 } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { translateError, useI18n } from "@/i18n"
+import { formatDate, translateError, useI18n, type LangCode } from "@/i18n"
 import { toast } from "sonner"
 
 export default function SettingsPage() {
@@ -802,17 +808,56 @@ const PLATFORM_KEYS = [
     "6room", "lehai", "catshow", "shopee", "youtube", "taobao", "jd",
 ]
 
+/** Cookie 寿命文案 + 颜色：读不出 sid_guard（unknown）也要说一句，别让人以为能提醒。 */
+function cookieExpiryLine(
+    status: DouyinCookieStatus | undefined,
+    lang: LangCode,
+    t: (path: string) => string,
+    tf: (path: string, params: Record<string, string | number>) => string,
+): { text: string; className: string } | null {
+    if (!status || status.state === "missing") return null
+    if (status.state === "unknown") {
+        return { text: t("settings.cookieExpiryUnknown"), className: "text-muted-foreground" }
+    }
+    const date = formatDate(status.expires_at, lang)
+    if (status.state === "expired") {
+        return { text: tf("settings.cookieExpired", { date }), className: "text-destructive" }
+    }
+    const days = status.days_left ?? 0
+    if (status.state === "expiring") {
+        return {
+            text: tf("settings.cookieExpiring", { date, days: Math.max(1, Math.ceil(days)) }),
+            className: "text-amber-600 dark:text-amber-500",
+        }
+    }
+    return {
+        text: tf("settings.cookieExpiresAt", { date, days: Math.floor(days) }),
+        className: "text-muted-foreground",
+    }
+}
+
 function CookiesTab() {
-    const { t, tf } = useI18n()
+    const { t, tf, lang } = useI18n()
+    const queryClient = useQueryClient()
     const { data, isLoading } = useQuery({
         queryKey: ["cookies"],
         queryFn: settingsApi.getCookies,
     })
     const [values, setValues] = useState<Record<string, string>>({})
+    const [loginOpen, setLoginOpen] = useState(false)
+
+    // Cookie 寿命：后端只解析本地 sid_guard，不打抖音接口（没登录态时也能提醒）
+    const cookieStatus = useQuery({
+        queryKey: ["douyin-cookie"],
+        queryFn: douyinApi.cookieStatus,
+        staleTime: 60_000,
+    })
 
     useEffect(() => {
         if (data) setValues(data.cookies)
     }, [data])
+
+    const expiry = cookieExpiryLine(cookieStatus.data, lang, t, tf)
 
     if (isLoading) {
         return (
@@ -826,7 +871,17 @@ function CookiesTab() {
         <div className="rounded-lg border bg-card p-4">
             <div className="mb-3 flex items-center justify-between">
                 <h3 className="font-semibold">{t("settings.cookies")}</h3>
+                <Button
+                    size="sm"
+                    variant="outline"
+                    data-testid="settings-scan-login"
+                    onClick={() => setLoginOpen(true)}
+                >
+                    <QrCode className="mr-1 h-4 w-4" />
+                    {t("following.scanLogin")}
+                </Button>
             </div>
+            <p className="mb-3 text-xs text-muted-foreground">{t("settings.scanLoginHint")}</p>
             <div className="grid grid-cols-1 gap-x-6 gap-y-4 lg:grid-cols-2">
                 {PLATFORM_KEYS.map((key) => (
                     <div key={key} className="flex flex-col gap-1.5">
@@ -835,17 +890,39 @@ function CookiesTab() {
                             value={values[key] ?? ""}
                             placeholder={tf("settings.cookiesPlaceholder", { platform: key })}
                             onChange={(e) => setValues((v) => ({ ...v, [key]: e.target.value }))}
-                            onBlur={() =>
-                                fetch("/api/settings/cookies", {
+                            onBlur={() => {
+                                void fetch("/api/settings/cookies", {
                                     method: "PUT",
                                     headers: { "Content-Type": "application/json" },
                                     body: JSON.stringify({ cookies: values }),
                                 })
-                            }
+                                // 存完重算寿命提示（后端同时会做一次备份）
+                                if (key === "douyin") {
+                                    void queryClient.invalidateQueries({ queryKey: ["douyin-cookie"] })
+                                }
+                            }}
                         />
+                        {key === "douyin" && expiry && (
+                            <p
+                                data-testid="settings-cookie-expiry"
+                                className={`text-xs ${expiry.className}`}
+                            >
+                                {expiry.text}
+                            </p>
+                        )}
                     </div>
                 ))}
             </div>
+            <p className="mt-3 text-xs text-muted-foreground">{t("settings.cookieBackupHint")}</p>
+
+            <DouyinLoginDialog
+                open={loginOpen}
+                onOpenChange={setLoginOpen}
+                // 登录成功后端已写盘：拉一次就把输入框里的 douyin Cookie 同步成新的
+                onSuccess={() => {
+                    void queryClient.invalidateQueries({ queryKey: ["cookies"] })
+                }}
+            />
         </div>
     )
 }

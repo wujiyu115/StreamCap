@@ -4,6 +4,7 @@ import os
 import shutil
 import tempfile
 import threading
+import time
 from typing import TypeVar
 
 from ...utils.logger import logger
@@ -20,12 +21,15 @@ class ConfigManager:
     # 覆盖层稀疏化迁移的标记：放 sidecar，不污染 user_settings.json
     MIGRATIONS_FILE_NAME = ".config_migrations.json"
     SPARSE_MIGRATION_KEY = "sparse_user_settings"
+    # Cookie 覆盖前留几份带时间戳的备份（cookies 里是各平台登录态，写坏了没法重来）
+    COOKIES_BACKUP_KEEP = 5
 
     def __init__(self, run_path):
         self.config_path = os.path.join(run_path, "config")
         self.language_config_path = os.path.join(self.config_path, "language.json")
         self.user_config_path = os.path.join(self.config_path, "user_settings.json")
         self.cookies_config_path = os.path.join(self.config_path, "cookies.json")
+        self.cookies_backup_dir = os.path.join(self.config_path, "backups")
         self.about_config_path = os.path.join(self.config_path, "version.json")
         self.recordings_config_path = os.path.join(self.config_path, "recordings.json")
         self.validity_cache_config_path = os.path.join(self.config_path, "room_validity.json")
@@ -287,7 +291,70 @@ class ConfigManager:
             error_message="An error occurred while saving user config",
         )
 
+    def _backup_cookies_config(self) -> str | None:
+        """把现存的 Cookie 备份到 config/backups/cookies-<时间戳>.json（只留最近几份）。
+
+        只在「现有内容里至少还有一个非空 Cookie」时备份：否则一次误写的空值/半残值
+        会把上一次的好备份轮换成没用的东西——那样备份就白做了。备份文件是原子写的
+        （临时文件 + os.replace），不会留下半截 JSON。
+        """
+        try:
+            with open(self.cookies_config_path, encoding="utf-8") as file:
+                current = json.load(file)
+        except Exception as e:
+            logger.warning(f"Skip cookies backup, cannot read {self.cookies_config_path}: {e}")
+            return None
+
+        if not isinstance(current, dict) or not any(str(value).strip() for value in current.values()):
+            return None
+
+        os.makedirs(self.cookies_backup_dir, exist_ok=True)
+        target = os.path.join(self.cookies_backup_dir, self._cookies_backup_name())
+        fd, tmp_path = tempfile.mkstemp(prefix=".backup_", dir=self.cookies_backup_dir)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as file:
+                json.dump(current, file, ensure_ascii=False, indent=4)
+            os.replace(tmp_path, target)
+        except BaseException:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+
+        self._prune_cookies_backups()
+        logger.info(f"Cookies backup written: {target}")
+        return target
+
+    @staticmethod
+    def _cookies_backup_name() -> str:
+        """备份文件名：秒级时间戳 + 毫秒后缀。
+
+        只到秒的话，同一秒内的两次写入会落到同一文件名、后一份把前一份盖掉；
+        带上定长毫秒后缀既不会撞名，也能让「按文件名排序 = 按时间排序」成立
+        （_prune_cookies_backups 就靠这个顺序删旧的）。
+        """
+        return f"cookies-{time.strftime('%Y%m%d-%H%M%S')}-{int(time.time() * 1000) % 1000:03d}.json"
+
+    def _prune_cookies_backups(self) -> None:
+        """只留最近 COOKIES_BACKUP_KEEP 份（按文件名里的时间戳排序）。"""
+        try:
+            names = sorted(
+                name
+                for name in os.listdir(self.cookies_backup_dir)
+                if name.startswith("cookies-") and name.endswith(".json")
+            )
+        except OSError:
+            return
+        for name in names[: max(0, len(names) - self.COOKIES_BACKUP_KEEP)]:
+            try:
+                os.unlink(os.path.join(self.cookies_backup_dir, name))
+            except OSError:
+                pass
+
     async def save_cookies_config(self, config):
+        # 覆盖前留一份：手滑贴错、或者某次写入把好 Cookie 冲成空值，都能从这里回滚
+        self._backup_cookies_config()
         await self._save_config(
             self.cookies_config_path,
             config,

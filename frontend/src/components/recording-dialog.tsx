@@ -104,11 +104,14 @@ function initialState(rec: Recording | null, defaults: Record<string, unknown>):
 export function RecordingDialog({
     open,
     recording,
+    preset,
     onOpenChange,
     onSaved,
 }: {
     open: boolean
     recording: Recording | null
+    /** 新建时的预填（如从「关注」页一键监控某个正在直播的主播）；编辑模式无效 */
+    preset?: { url: string; streamer_name: string } | null
     onOpenChange: (open: boolean) => void
     onSaved: () => void
 }) {
@@ -128,7 +131,12 @@ export function RecordingDialog({
 
     useEffect(() => {
         if (open) {
-            setForm(initialState(recording, settingsData?.user_settings ?? {}))
+            const initial = initialState(recording, settingsData?.user_settings ?? {})
+            if (!recording && preset) {
+                initial.url = preset.url
+                initial.streamer_name = preset.streamer_name
+            }
+            setForm(initial)
             setBatchText("")
             setUrlPlatform(URL_PLATFORMS[0].key)
         }
