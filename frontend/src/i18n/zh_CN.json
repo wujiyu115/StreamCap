@@ -448,7 +448,8 @@
         "douyinUpstreamError": "抖音接口请求失败",
         "douyinFollowingUnavailable": "关注列表服务暂不可用，请稍后重试",
         "douyinLoginUnavailable": "本部署没有装浏览器组件，无法扫码登录，请手动填写 Cookie",
-        "douyinLoginFailed": "扫码登录失败"
+        "douyinLoginFailed": "扫码登录失败",
+        "douyinLoginPageBlocked": "打不开抖音登录框（页面改版或被风控会这样，也可能只是加载太慢），稍后重试或改用设置页手动粘贴 Cookie"
     },
     "following": {
         "title": "关注",

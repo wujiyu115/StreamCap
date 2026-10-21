@@ -195,7 +195,13 @@ def _login_payload(session: login.DouyinLoginSession | None) -> dict:
     data = session.snapshot()
     data.pop("started_at", None)
     if data["state"] == login.STATE_FAILED:
-        code = errors.DOUYIN_LOGIN_UNAVAILABLE if data["unavailable"] else errors.DOUYIN_LOGIN_FAILED
+        code = (
+            errors.DOUYIN_LOGIN_UNAVAILABLE
+            if data.get("unavailable")
+            else errors.DOUYIN_LOGIN_PAGE_BLOCKED
+            if data.get("page_blocked")
+            else errors.DOUYIN_LOGIN_FAILED
+        )
         message = str(data.pop("message", "") or "")
         data["error"] = f"{code}|{message}" if message else code
     else:

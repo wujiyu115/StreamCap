@@ -379,6 +379,8 @@ export interface DouyinLoginState {
     verify?: boolean
     /** 本部署没装浏览器组件（playwright），只能手动粘贴 Cookie */
     unavailable?: boolean
+    /** 首页没给登录入口（改版/风控/首屏太慢），浏览器本身可用——重试或手动填 Cookie */
+    page_blocked?: boolean
     /** Cookie 已经写进设置了 */
     saved?: boolean
     /** 失败原因码，形如 ``err.douyinLoginFailed|RuntimeError: boom`` */

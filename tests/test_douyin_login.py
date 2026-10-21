@@ -160,12 +160,14 @@ def test_cancel_sets_state_immediately(driver_box):
     wait_for(lambda: driver.closed)
 
 
-def test_no_qr_marks_unavailable(driver_box, monkeypatch):
+def test_no_qr_marks_page_blocked_not_unavailable(driver_box, monkeypatch):
+    """没拿到码是页面/风控问题，不是「没装浏览器」——文案别把用户支去装浏览器。"""
     monkeypatch.setattr(dl, "QR_START_TIMEOUT", 0.1)
     driver = FakeDriver()
     session = make_session(driver_box, driver).start()
     snapshot = wait_state(session, {dl.STATE_FAILED})
-    assert snapshot["unavailable"] is True
+    assert snapshot["unavailable"] is False
+    assert snapshot["page_blocked"] is True
     assert "二维码" in snapshot["message"]
 
 
@@ -175,6 +177,17 @@ def test_login_unavailable_from_driver(driver_box):
     snapshot = wait_state(session, {dl.STATE_FAILED})
     assert snapshot["unavailable"] is True
     assert "playwright" in snapshot["message"]
+    assert driver.closed
+
+
+def test_page_blocked_from_driver_is_not_unavailable(driver_box):
+    """首页没给登录入口是页面问题，不能报成「本部署没装浏览器」——生产真踩过。"""
+    driver = FakeDriver(open_error=dl.LoginPageBlocked("抖音首页没找到「登录」入口（标题 'x'）"))
+    session = make_session(driver_box, driver).start()
+    snapshot = wait_state(session, {dl.STATE_FAILED})
+    assert snapshot["unavailable"] is False
+    assert snapshot["page_blocked"] is True
+    assert "登录" in snapshot["message"]
     assert driver.closed
 
 
@@ -209,7 +222,7 @@ def test_snapshot_shape(driver_box):
     snapshot = session.snapshot()
     assert set(snapshot) == {
         "state", "qrcode", "hint", "message", "verify", "unavailable",
-        "saved", "started_at", "elapsed", "expires_in",
+        "page_blocked", "saved", "started_at", "elapsed", "expires_in",
     }
     assert snapshot["state"] == dl.STATE_STARTING  # 还没 start() 时是待启动
     assert snapshot["expires_in"] <= 30
@@ -298,6 +311,15 @@ def test_login_payload_maps_failure_codes():
     assert douyin_router._login_payload(session)["error"] == (
         f"{errors.DOUYIN_LOGIN_FAILED}|RuntimeError: boom"
     )
+
+
+def test_login_payload_maps_page_blocked_code():
+    session = dl.DouyinLoginSession()
+    session._update(state=dl.STATE_FAILED, page_blocked=True, message="首页没找到登录入口")
+    payload = douyin_router._login_payload(session)
+    assert payload["error"] == f"{errors.DOUYIN_LOGIN_PAGE_BLOCKED}|首页没找到登录入口"
+    assert payload["unavailable"] is False
+    assert payload["page_blocked"] is True
 
 
 def test_login_payload_drops_cookie_and_started_at(driver_box):
@@ -389,3 +411,82 @@ def test_cancel_login_returns_cancelled(monkeypatch, driver_box):
     wait_state(session, {dl.STATE_WAITING})
     payload = run(douyin_router.cancel_login(user="admin"))
     assert payload["state"] == dl.STATE_CANCELLED
+
+# --------------------------------------------------- 「登录入口」探测（真页面逻辑）
+
+
+class _LocatorStub:
+    """只够 _try_click_login 用：count/is_visible/click。"""
+
+    def __init__(self, page):
+        self._page = page
+
+    @property
+    def first(self):
+        return self
+
+    def count(self):
+        self._page.probes += 1
+        return 1 if self._page.ready else 0
+
+    def is_visible(self):
+        return self._page.ready
+
+    def click(self, timeout=None):
+        self._page.clicks += 1
+
+
+class _PageStub:
+    """模拟「首页第 N 次探测后才渲染出登录入口」。"""
+
+    def __init__(self, ready_after=0, closed=False):
+        self.ready_after = ready_after
+        self._closed = closed
+        self.probes = 0
+        self.clicks = 0
+        self.waits = 0
+
+    @property
+    def ready(self):
+        return self.probes > self.ready_after
+
+    def get_by_role(self, role, name=None, exact=None):
+        return _LocatorStub(self)
+
+    def evaluate(self, script, arg=None):
+        self.probes += 1
+        return False  # JS 兜底恒不命中，只验证它被尝试过
+
+    def is_closed(self):
+        return self._closed
+
+    def wait_for_timeout(self, ms):
+        self.waits += 1
+        time.sleep(min(ms, 10) / 1000)
+
+
+def _driver_with_page(page):
+    driver = dl.PlaywrightDriver()
+    driver._page = page
+    return driver
+
+
+def test_click_login_polls_until_entry_renders():
+    """入口晚几轮才出现时，必须轮询等出来（旧实现单次检查会直接判失败）。"""
+    page = _PageStub(ready_after=2)
+    assert _driver_with_page(page)._click_login(timeout=5.0) is True
+    assert page.clicks == 1
+    assert page.waits >= 1  # 真的等过，而不是查一次就放弃
+
+
+def test_click_login_gives_up_after_timeout_is_bounded():
+    page = _PageStub(ready_after=10**6)
+    started = time.monotonic()
+    assert _driver_with_page(page)._click_login(timeout=0.3) is False
+    assert time.monotonic() - started < 2.0
+    assert page.probes >= 2  # 至少探测了两轮
+
+
+def test_click_login_returns_false_when_page_closed():
+    page = _PageStub(ready_after=10**6, closed=True)
+    assert _driver_with_page(page)._click_login(timeout=5.0) is False

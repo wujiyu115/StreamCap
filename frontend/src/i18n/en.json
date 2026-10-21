@@ -448,7 +448,8 @@
         "douyinUpstreamError": "Douyin API request failed",
         "douyinFollowingUnavailable": "Following list service is unavailable, please retry later",
         "douyinLoginUnavailable": "No browser component in this deployment; fill the cookie in manually",
-        "douyinLoginFailed": "QR sign-in failed"
+        "douyinLoginFailed": "QR sign-in failed",
+        "douyinLoginPageBlocked": "Could not open Douyin's sign-in dialog (page changed, rate-limited, or just slow to load). Retry later or paste a cookie in Settings"
     },
     "following": {
         "title": "Following",

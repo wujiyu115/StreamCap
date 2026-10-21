@@ -45,8 +45,11 @@ WEBDRIVER_PATCH = "Object.defineProperty(navigator,'webdriver',{get:()=>undefine
 
 LOGIN_TIMEOUT = 300.0  # 等扫码的总时长（秒）
 POLL_INTERVAL = 1.5  # 轮询间隔
-QR_START_TIMEOUT = 45.0  # 从打开首页到拿到第一张码的时限
+QR_START_TIMEOUT = 75.0  # 从打开首页到拿到第一张码的时限（NAS 实测点完登录要 27s 才渲染出码）
 QR_RELOAD_AFTER = 90.0  # 码没变也超过这么久就整页 reload 兜底（token 可能已换）
+LOGIN_ENTRY_TIMEOUT = 20.0  # 等首页渲染出「登录」入口的时限（容器里首屏可能要十几秒）
+LOGIN_ENTRY_POLL = 0.5
+LOGIN_ENTRY_TEXTS = ("登录", "立即登录")
 # 只要有其中之一就认为登录态已经落到浏览器里（与 DDr 的 LOGIN_NAMES 一致）
 LOGIN_COOKIE_NAMES = ("sessionid", "sessionid_ss", "sid_tt", "sid_guard")
 COOKIE_ORIGINS = (HOMEPAGE, "https://sso.douyin.com/", "https://www-hj.douyin.com/")
@@ -70,6 +73,14 @@ class LoginUnavailable(RuntimeError):
 
     单独一类是为了让接口层返回「本部署没装登录组件」这种可翻译的错误码，而不是把它
     混进「抖音那边出错」里。
+    """
+
+
+class LoginPageBlocked(RuntimeError):
+    """首页没给出登录入口（首屏太慢 / 页面改版 / 被风控）——浏览器本身是好的。
+
+    必须和 :class:`LoginUnavailable` 分开：后者才会被渲染成「本部署没装浏览器组件」，
+    而这个场景重试或换时间多半能成，文案得如实说，别把用户支去装浏览器。
     """
 
 
@@ -117,6 +128,7 @@ class DouyinLoginSession:
         self._cookie = ""
         self._verify = False
         self._unavailable = False
+        self._page_blocked = False
         self._saved = False
         self._thread = threading.Thread(target=self._run, name="douyin-login", daemon=True)
 
@@ -159,6 +171,7 @@ class DouyinLoginSession:
                 "qrcode": self._qrcode,
                 "hint": self._hint,
                 "message": self._message if self._state == STATE_FAILED else "",
+                "page_blocked": self._page_blocked,
                 "verify": self._verify,
                 "unavailable": self._unavailable,
                 "saved": self._saved,
@@ -187,8 +200,8 @@ class DouyinLoginSession:
                 else:
                     self._update(
                         state=STATE_FAILED,
-                        unavailable=True,
-                        message="浏览器没拿到登录二维码（多半被风控拦了）",
+                        page_blocked=True,
+                        message="抖音登录框一直没出二维码（可能被风控限流，或页面加载太慢）",
                     )
                 return
             self._publish(qr)
@@ -196,6 +209,9 @@ class DouyinLoginSession:
         except LoginUnavailable as exc:
             logger.warning(f"Douyin login unavailable: {exc}")
             self._update(state=STATE_FAILED, unavailable=True, message=str(exc))
+        except LoginPageBlocked as exc:
+            logger.warning(f"Douyin login page blocked: {exc}")
+            self._update(state=STATE_FAILED, page_blocked=True, message=str(exc))
         except Exception as exc:  # 浏览器/页面异常别把请求线程带走
             logger.error(f"Douyin login failed: {type(exc).__name__}: {exc}")
             self._update(state=STATE_FAILED, message=f"{type(exc).__name__}: {exc}")
@@ -291,10 +307,44 @@ class PlaywrightDriver:
         self._page = self._context.new_page()
         self._page.goto(HOMEPAGE, wait_until="domcontentloaded", timeout=45_000)
         self._page.wait_for_timeout(3_000)
-        if not self._click_login():
-            raise LoginUnavailable("抖音首页没找到「登录」按钮（页面可能改版或被风控）")
+        if self._click_login():
+            return
+        # 首屏慢/偶发渲染失败：整页重来一次再等，比直接判死刑合理（生产上真踩过）
+        logger.info("Douyin login entry not found, reloading homepage once")
+        self._reload_homepage()
+        if self._click_login():
+            return
+        title = url = ""
+        try:
+            title, url = self._page.title()[:80], self._page.url[:120]
+        except Exception:
+            pass
+        raise LoginPageBlocked(f"抖音首页没找到「登录」入口（标题 {title!r}，地址 {url}）")
 
-    def _click_login(self) -> bool:
+    def _reload_homepage(self) -> None:
+        assert self._page is not None
+        try:
+            self._page.reload(wait_until="domcontentloaded", timeout=45_000)
+            self._page.wait_for_timeout(3_000)
+        except Exception as exc:
+            logger.debug(f"Douyin homepage reload failed: {exc}")
+
+    def _click_login(self, timeout: float = LOGIN_ENTRY_TIMEOUT) -> bool:
+        """等首页把登录入口渲染出来再点（**必须轮询**）。
+
+        以前是「固定等 3s + count() 查一次」，容器刚重启/首屏 JS 慢十几秒时必然
+        查不到，然后被当成「没装浏览器组件」——2026-10 生产实测踩到。
+        """
+        assert self._page is not None
+        deadline = time.monotonic() + timeout
+        while True:
+            if self._try_click_login():
+                return True
+            if time.monotonic() >= deadline or self._page.is_closed():
+                return False
+            self._page.wait_for_timeout(int(LOGIN_ENTRY_POLL * 1000))
+
+    def _try_click_login(self) -> bool:
         assert self._page is not None
         for role in ("button", "link"):
             try:
@@ -304,7 +354,28 @@ class PlaywrightDriver:
                     return True
             except Exception:
                 continue
-        return False
+        # 兜底：有的 A/B 版本把入口做成普通 div/span，不挂 role
+        try:
+            return bool(
+                self._page.evaluate(
+                    """(texts) => {
+                        const els = [...document.querySelectorAll('button,a,span,div,p')]
+                            .filter(el => {
+                                const t = (el.innerText || '').trim();
+                                if (!texts.includes(t)) return false;
+                                const r = el.getBoundingClientRect();
+                                return r.width > 0 && r.height > 0 && r.top < window.innerHeight;
+                            });
+                        const el = els[els.length - 1];
+                        if (!el) return false;
+                        el.click();
+                        return true;
+                    }""",
+                    list(LOGIN_ENTRY_TEXTS),
+                )
+            )
+        except Exception:
+            return False
 
     def qr(self) -> tuple[str, str, bool] | None:
         if self._page is None or self._page.is_closed():
@@ -344,8 +415,7 @@ class PlaywrightDriver:
         if self._page is None or self._page.is_closed():
             return
         try:
-            self._page.reload(wait_until="domcontentloaded", timeout=45_000)
-            self._page.wait_for_timeout(3_000)
+            self._reload_homepage()
             self._click_login()
         except Exception as exc:
             logger.debug(f"Douyin login reload failed: {exc}")
@@ -391,6 +461,7 @@ __all__ = [
     "DouyinLoginSession",
     "LoginDriver",
     "LoginUnavailable",
+    "LoginPageBlocked",
     "PlaywrightDriver",
     "STATE_CANCELLED",
     "STATE_CONFIRMED",
