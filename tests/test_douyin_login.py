@@ -494,14 +494,17 @@ def test_click_login_returns_false_when_page_closed():
 
 # ------------------------------------------------------------------ 残留进程收尸
 def _fake_proc(tmp_path, procs):
-    """procs: {pid: (comm, environ_bytes)}；返回假的 /proc 根目录。"""
+    """procs: {pid: (comm, environ_bytes[, state, ppid])}；返回假的 /proc 根目录。"""
     root = tmp_path / "proc"
     root.mkdir()
-    for pid, (comm, environ) in procs.items():
+    for pid, spec in procs.items():
+        comm, environ = spec[0], spec[1]
+        state, ppid = (spec[2], spec[3]) if len(spec) > 2 else ("S", 1)
         d = root / str(pid)
         d.mkdir()
         (d / "comm").write_bytes(comm.encode())
         (d / "environ").write_bytes(environ)
+        (d / "stat").write_text(f"{pid} ({comm}) {state} {ppid} {ppid} 0 -1 0 0")
     return root
 
 
@@ -555,3 +558,44 @@ def test_close_reaps_leftovers(monkeypatch):
     driver.close()
     assert reaped == [TAG]
     assert driver._tag == ""
+
+
+def test_reap_zombies_only_our_dead_browsers(tmp_path, monkeypatch):
+    """过继给本进程的 chromium 僵尸才 waitpid；别人的子进程、活着的、非浏览器都不动。"""
+    me = dl.os.getpid()
+    root = _fake_proc(
+        tmp_path,
+        {
+            "21": ("chrome-headless", b"", "Z", me),  # 我们的僵尸 → 收
+            "22": ("chrome-headless", b"", "Z", 1 if me != 1 else 2),  # 别人家的
+            "23": ("chrome-headless", b"", "S", me),  # 还活着
+            "24": ("python", b"", "Z", me),  # 不是浏览器
+        },
+    )
+    waited = []
+    monkeypatch.setattr(dl.os, "waitpid", lambda pid, flags: waited.append((pid, flags)) or (pid, 0))
+    assert dl.reap_zombie_children(proc_root=str(root)) == 1
+    assert [w[0] for w in waited] == [21], "绝不能用 waitpid(-1) 一把捞（会吃掉 ffmpeg 的退出码）"
+
+
+def test_reap_zombies_tolerates_errors(tmp_path, monkeypatch):
+    assert dl.reap_zombie_children(proc_root=str(tmp_path / "nope")) == 0
+    me = dl.os.getpid()
+    root = _fake_proc(tmp_path, {"21": ("chrome-headless", b"", "Z", me)})
+
+    def boom(pid, flags):
+        raise ChildProcessError(pid)
+
+    monkeypatch.setattr(dl.os, "waitpid", boom)
+    assert dl.reap_zombie_children(proc_root=str(root)) == 0
+
+
+def test_close_reaps_zombies_after_stopping_driver(monkeypatch):
+    """顺序要求：先停 driver，再收僵尸（不然僵尸还没产生）。"""
+    events = []
+    driver = dl.PlaywrightDriver()
+    driver._tag = TAG
+    monkeypatch.setattr(dl, "reap_tagged_browsers", lambda tag: events.append("tagged") or 0)
+    monkeypatch.setattr(dl, "reap_zombie_children", lambda: events.append("zombies") or 0)
+    driver.close()
+    assert events == ["tagged", "zombies"]

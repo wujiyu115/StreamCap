@@ -280,11 +280,35 @@ class DouyinLoginSession:
 # ------------------------------------------------------------------ 真浏览器
 
 
+def _iter_browser_procs(proc_root: str = "/proc"):
+    """遍历「名字像浏览器」的进程，产出 ``(pid, comm, state, ppid)``。"""
+    try:
+        entries = os.listdir(proc_root)
+    except OSError:
+        return
+    for entry in entries:
+        if not entry.isdigit():
+            continue
+        base = os.path.join(proc_root, entry)
+        try:
+            with open(os.path.join(base, "comm"), "rb") as fp:
+                comm = fp.read().decode("utf-8", "replace").strip()
+            if "chrome" not in comm.lower() and "headless" not in comm.lower():
+                continue
+            with open(os.path.join(base, "stat"), "rb") as fp:
+                # stat 格式：pid (comm) state ppid ...；comm 里可能带 ')'，从右侧切
+                tail = fp.read().decode("utf-8", "replace").rsplit(")", 1)[1].split()
+            state, ppid = tail[0], int(tail[1])
+        except (OSError, IndexError, ValueError):
+            continue
+        yield int(entry), comm, state, ppid
+
+
 def reap_tagged_browsers(tag: str, proc_root: str = "/proc") -> int:
     """杀掉带 ``tag`` 标记的 chromium 进程，返回杀掉的个数。
 
     为什么需要：``browser.close()`` + ``playwright.stop()`` 都正常返回、也不抛异常，
-    但容器里实测**仍会剩 4 个 chrome-headless 进程**（2026-10 生产与一次性容器都复现）。
+    但容器里实测**仍会剩 4 个 chrome-headless 进程活着**（2026-10 生产与一次性容器都复现）。
     每试一次扫码就漏一组进程，攒着白吃内存，所以在优雅关闭之后按 env 标记收尸。
 
     只杀「进程名带 chrome/headless」且「environ 里带本会话唯一标记」的进程，
@@ -293,31 +317,44 @@ def reap_tagged_browsers(tag: str, proc_root: str = "/proc") -> int:
     if not tag:
         return 0
     needle = f"{BROWSER_TAG_ENV}={tag}".encode()
-    try:
-        entries = os.listdir(proc_root)
-    except OSError:
-        return 0
     killed = 0
-    for entry in entries:
-        if not entry.isdigit():
-            continue
-        base = os.path.join(proc_root, entry)
+    for pid, _comm, _state, _ppid in _iter_browser_procs(proc_root):
         try:
-            with open(os.path.join(base, "comm"), "rb") as fp:
-                comm = fp.read().decode("utf-8", "replace").lower()
-            if "chrome" not in comm and "headless" not in comm:
-                continue
-            with open(os.path.join(base, "environ"), "rb") as fp:
+            with open(os.path.join(proc_root, str(pid), "environ"), "rb") as fp:
                 if needle not in fp.read():
                     continue
         except OSError:
             continue
         try:
-            os.kill(int(entry), signal.SIGKILL)
+            os.kill(pid, signal.SIGKILL)
             killed += 1
         except OSError:
             continue
     return killed
+
+
+def reap_zombie_children(proc_root: str = "/proc") -> int:
+    """收掉过继给本进程的 chromium 僵尸，返回收掉的个数。
+
+    ``playwright.stop()`` 把 node driver 干掉后，被杀掉的 chromium 会被过继给
+    PID 1（容器里就是 main.py 自己），而 Python 不会自动 wait → ``ps`` 里永久
+    留一排 ``chrome-headless`` 的 Z（RSS 0，但卡 PID 表、看着膈应）。
+
+    **只**对「名字像浏览器 + 状态 Z + ppid 就是本进程」的做 ``waitpid``，
+    绝不 ``waitpid(-1)``：录制用的 ffmpeg 子进程挂在同一进程下，一把捞会把它们的
+    退出码吃掉，:class:`~app.core.recording.record_manager.RecordManager` 会跟着坏。
+    """
+    me = os.getpid()
+    reaped = 0
+    for pid, _comm, state, ppid in _iter_browser_procs(proc_root):
+        if state != "Z" or ppid != me:
+            continue
+        try:
+            os.waitpid(pid, os.WNOHANG)
+            reaped += 1
+        except OSError:
+            continue
+    return reaped
 
 
 class PlaywrightDriver:
@@ -499,18 +536,25 @@ class PlaywrightDriver:
                     closer.close()
             except Exception:
                 pass
-        try:
-            if self._playwright is not None:
-                self._playwright.stop()
-        except Exception:
-            pass
-        # 优雅关闭偶尔留残兵（实测 4 个），按标记补一刀
+        # 优雅关闭偶尔留残兵（实测 4 个活着），趁 driver 还没停按标记补一刀，让它来收
         try:
             killed = reap_tagged_browsers(self._tag)
             if killed:
                 logger.info(f"Douyin login reaped {killed} leftover browser process(es)")
         except Exception as exc:
             logger.debug(f"Douyin login reap failed: {exc}")
+        try:
+            if self._playwright is not None:
+                self._playwright.stop()
+        except Exception:
+            pass
+        # driver 死后被杀的 chromium 过继到本进程，会变僵尸没人 wait，顺手收掉
+        try:
+            zombies = reap_zombie_children()
+            if zombies:
+                logger.info(f"Douyin login reaped {zombies} zombie browser process(es)")
+        except Exception as exc:
+            logger.debug(f"Douyin login zombie reap failed: {exc}")
         self._page = None
         self._context = None
         self._browser = None
@@ -525,6 +569,7 @@ __all__ = [
     "LoginPageBlocked",
     "PlaywrightDriver",
     "reap_tagged_browsers",
+    "reap_zombie_children",
     "STATE_CANCELLED",
     "STATE_CONFIRMED",
     "STATE_CONFIRMING",
