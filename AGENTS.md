@@ -65,7 +65,7 @@ StreamCap 的生产部署目标是 Unraid 7.x 服务器 **tank**（`192.168.31.1
 ### 前置条件
 
 - SSH 免密已配：`ssh -i ~/.ssh/id_rsa_nas root@192.168.31.139` 直连，不要密码登录
-- GitHub Actions 工作流：`.github/workflows/docker.yml`，`push` 到 main 自动构建并推 `:latest` + `:{sha}` 到 Docker Hub（用 `secrets.DOCKERHUB_USERNAME/TOKEN`）；多架构 + QEMU，通常 1–2 分钟跑完
+- GitHub Actions 工作流：`.github/workflows/docker.yml`，`push` 到 main 自动构建并推 `:latest` + `:{sha}` 到 Docker Hub（用 `secrets.DOCKERHUB_USERNAME/TOKEN`）；多架构（`linux/amd64,linux/arm64`）+ QEMU，registry buildcache（`mode=max`）。**耗时看缓存**：层缓存命中 1–2 分钟；改了 Dockerfile / requirements（包在镜像里加了 playwright+chromium 后镜像 2.62GB）导致缓存失效时实测 ~17 分钟（2026-10）。判断「卡住」前先看 run 的 step 明细（`/actions/runs/<id>/jobs` 的 `Build and push` 步骤是否已 completed），别只看 run 的 `status=in_progress`
 
 ### 流程（5 步）
 
