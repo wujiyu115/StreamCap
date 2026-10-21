@@ -45,7 +45,9 @@ WEBDRIVER_PATCH = "Object.defineProperty(navigator,'webdriver',{get:()=>undefine
 
 LOGIN_TIMEOUT = 300.0  # 等扫码的总时长（秒）
 POLL_INTERVAL = 1.5  # 轮询间隔
-QR_START_TIMEOUT = 75.0  # 从打开首页到拿到第一张码的时限（NAS 实测点完登录要 27s 才渲染出码）
+QR_START_TIMEOUT = 120.0  # 从打开首页到拿到第一张码的时限
+#   NAS 实测：空载一次性容器 27s；生产容器刚重启（模型加载、152 个任务抢 CPU）75s
+#   才出码——留薄了必翻车，反正总时限 LOGIN_TIMEOUT=300s 兜着
 QR_RELOAD_AFTER = 90.0  # 码没变也超过这么久就整页 reload 兜底（token 可能已换）
 LOGIN_ENTRY_TIMEOUT = 20.0  # 等首页渲染出「登录」入口的时限（容器里首屏可能要十几秒）
 LOGIN_ENTRY_POLL = 0.5
