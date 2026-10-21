@@ -22,6 +22,8 @@
 
 from __future__ import annotations
 
+import os
+import signal
 import threading
 import time
 from typing import Any, Callable, Protocol
@@ -42,6 +44,8 @@ LAUNCH_ARGS = [
     "--disable-blink-features=AutomationControlled",
 ]
 WEBDRIVER_PATCH = "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})"
+# 给浏览器进程打标记（env 变量），关闭后按标记收尸，见 reap_tagged_browsers
+BROWSER_TAG_ENV = "STREAMCAP_DY_LOGIN_TAG"
 
 LOGIN_TIMEOUT = 300.0  # 等扫码的总时长（秒）
 POLL_INTERVAL = 1.5  # 轮询间隔
@@ -276,6 +280,46 @@ class DouyinLoginSession:
 # ------------------------------------------------------------------ 真浏览器
 
 
+def reap_tagged_browsers(tag: str, proc_root: str = "/proc") -> int:
+    """杀掉带 ``tag`` 标记的 chromium 进程，返回杀掉的个数。
+
+    为什么需要：``browser.close()`` + ``playwright.stop()`` 都正常返回、也不抛异常，
+    但容器里实测**仍会剩 4 个 chrome-headless 进程**（2026-10 生产与一次性容器都复现）。
+    每试一次扫码就漏一组进程，攒着白吃内存，所以在优雅关闭之后按 env 标记收尸。
+
+    只杀「进程名带 chrome/headless」且「environ 里带本会话唯一标记」的进程，
+    因此不会误伤别的程序（标记是每次会话现生成的）。
+    """
+    if not tag:
+        return 0
+    needle = f"{BROWSER_TAG_ENV}={tag}".encode()
+    try:
+        entries = os.listdir(proc_root)
+    except OSError:
+        return 0
+    killed = 0
+    for entry in entries:
+        if not entry.isdigit():
+            continue
+        base = os.path.join(proc_root, entry)
+        try:
+            with open(os.path.join(base, "comm"), "rb") as fp:
+                comm = fp.read().decode("utf-8", "replace").lower()
+            if "chrome" not in comm and "headless" not in comm:
+                continue
+            with open(os.path.join(base, "environ"), "rb") as fp:
+                if needle not in fp.read():
+                    continue
+        except OSError:
+            continue
+        try:
+            os.kill(int(entry), signal.SIGKILL)
+            killed += 1
+        except OSError:
+            continue
+    return killed
+
+
 class PlaywrightDriver:
     """headless chromium-headless-shell 实现（pyproject/镜像里带 playwright 才有）。"""
 
@@ -284,6 +328,7 @@ class PlaywrightDriver:
         self._browser = None
         self._context = None
         self._page = None
+        self._tag = ""
 
     def open(self) -> None:
         try:
@@ -293,8 +338,14 @@ class PlaywrightDriver:
                 "当前部署没有安装 playwright（登录组件），请在设置页手动粘贴 Cookie"
             ) from exc
         self._playwright = sync_playwright().start()
+        self._tag = os.urandom(8).hex()
         try:
-            self._browser = self._playwright.chromium.launch(headless=True, args=LAUNCH_ARGS)
+            # env 里带上标记，关闭后好按标记收尸（传全量 os.environ，不赌合并语义）
+            self._browser = self._playwright.chromium.launch(
+                headless=True,
+                args=LAUNCH_ARGS,
+                env=dict(os.environ, **{BROWSER_TAG_ENV: self._tag}),
+            )
         except Exception as exc:
             self._playwright.stop()
             self._playwright = None
@@ -453,10 +504,18 @@ class PlaywrightDriver:
                 self._playwright.stop()
         except Exception:
             pass
+        # 优雅关闭偶尔留残兵（实测 4 个），按标记补一刀
+        try:
+            killed = reap_tagged_browsers(self._tag)
+            if killed:
+                logger.info(f"Douyin login reaped {killed} leftover browser process(es)")
+        except Exception as exc:
+            logger.debug(f"Douyin login reap failed: {exc}")
         self._page = None
         self._context = None
         self._browser = None
         self._playwright = None
+        self._tag = ""
 
 
 __all__ = [
@@ -465,6 +524,7 @@ __all__ = [
     "LoginUnavailable",
     "LoginPageBlocked",
     "PlaywrightDriver",
+    "reap_tagged_browsers",
     "STATE_CANCELLED",
     "STATE_CONFIRMED",
     "STATE_CONFIRMING",

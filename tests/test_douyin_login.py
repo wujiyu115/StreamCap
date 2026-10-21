@@ -490,3 +490,68 @@ def test_click_login_gives_up_after_timeout_is_bounded():
 def test_click_login_returns_false_when_page_closed():
     page = _PageStub(ready_after=10**6, closed=True)
     assert _driver_with_page(page)._click_login(timeout=5.0) is False
+
+
+# ------------------------------------------------------------------ 残留进程收尸
+def _fake_proc(tmp_path, procs):
+    """procs: {pid: (comm, environ_bytes)}；返回假的 /proc 根目录。"""
+    root = tmp_path / "proc"
+    root.mkdir()
+    for pid, (comm, environ) in procs.items():
+        d = root / str(pid)
+        d.mkdir()
+        (d / "comm").write_bytes(comm.encode())
+        (d / "environ").write_bytes(environ)
+    return root
+
+
+TAG = "abc123"
+MARK = f"{dl.BROWSER_TAG_ENV}={TAG}".encode()
+
+
+def test_reap_kills_only_tagged_chromium(tmp_path, monkeypatch):
+    """只杀「名字像浏览器 + 带本次标记」的进程：不误伤别人的 chromium 也不是自己的 python。"""
+    root = _fake_proc(
+        tmp_path,
+        {
+            "11": ("chrome-headless", b"PATH=/x\x00" + MARK + b"\x00"),
+            "12": ("chrome-headless", b"PATH=/x\x00"),  # 别人的浏览器，没标记
+            "13": ("python", b"PATH=/x\x00" + MARK + b"\x00"),  # 名字不像浏览器
+            "14": ("chrome_crashpad", b"" + MARK),  # 带标记且名字含 chrome
+            "not-pid": ("chrome-headless", MARK),
+        },
+    )
+    killed = []
+    monkeypatch.setattr(dl.os, "kill", lambda pid, sig: killed.append(pid))
+    assert dl.reap_tagged_browsers(TAG, proc_root=str(root)) == 2
+    assert sorted(killed) == [11, 14]
+
+
+def test_reap_is_noop_without_tag(tmp_path, monkeypatch):
+    root = _fake_proc(tmp_path, {"11": ("chrome-headless", MARK)})
+    killed = []
+    monkeypatch.setattr(dl.os, "kill", lambda pid, sig: killed.append(pid))
+    assert dl.reap_tagged_browsers("", proc_root=str(root)) == 0
+    assert killed == []
+
+
+def test_reap_tolerates_missing_proc_and_dead_processes(tmp_path, monkeypatch):
+    assert dl.reap_tagged_browsers(TAG, proc_root=str(tmp_path / "nope")) == 0
+    root = _fake_proc(tmp_path, {"11": ("chrome-headless", MARK)})
+
+    def boom(pid, sig):
+        raise ProcessLookupError(pid)
+
+    monkeypatch.setattr(dl.os, "kill", boom)
+    assert dl.reap_tagged_browsers(TAG, proc_root=str(root)) == 0
+
+
+def test_close_reaps_leftovers(monkeypatch):
+    """close() 必须在优雅关闭之后再收一刀。"""
+    driver = dl.PlaywrightDriver()
+    driver._tag = TAG
+    monkeypatch.setattr(dl, "reap_tagged_browsers", lambda tag: (reaped.append(tag), 3)[1])
+    reaped = []
+    driver.close()
+    assert reaped == [TAG]
+    assert driver._tag == ""
