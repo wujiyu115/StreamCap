@@ -21,6 +21,9 @@ _RETRY_DELAYS = (60, 300, 900, 3600)
 class UploadManager:
     """单工作线程持久上传队列；渠道实现通过 provider 注册表解耦。"""
 
+    # 上传记录只留最近这么多条（队列里未结束的任务永不删除）
+    MAX_JOBS = 100
+
     def __init__(self, run_path: str, config_getter: Callable[[], dict], settings=None):
         self.run_path = os.path.abspath(run_path)
         self._config_getter = config_getter
@@ -31,6 +34,7 @@ class UploadManager:
         self._stop = threading.Event()
         self._init_db()
         self._recover_interrupted()
+        self._prune_jobs()
         self._worker = threading.Thread(target=self._run, name="UploadWorker", daemon=True)
         self._worker.start()
 
@@ -79,6 +83,28 @@ class UploadManager:
                 "UPDATE upload_jobs SET status='retrying', next_attempt_at=0, "
                 "message='service restarted during upload' WHERE status='uploading'"
             )
+
+    def _prune_jobs(self) -> int:
+        """超过 MAX_JOBS 时按创建时间删最旧的已结束记录。
+
+        未结束（排队/上传/重试/等登录）的一律保留，否则会丢队列。
+        """
+        with self._connect() as conn:
+            total = conn.execute("SELECT COUNT(*) FROM upload_jobs").fetchone()[0]
+            excess = total - self.MAX_JOBS
+            if excess <= 0:
+                return 0
+            cursor = conn.execute(
+                "DELETE FROM upload_jobs WHERE id IN ("
+                "SELECT id FROM upload_jobs "
+                "WHERE status NOT IN ('pending', 'uploading', 'retrying', 'blocked_auth') "
+                "ORDER BY created_at ASC, rowid ASC LIMIT ?)",
+                (excess,),
+            )
+            removed = cursor.rowcount
+        if removed:
+            logger.info(f"上传记录超出保留上限 {self.MAX_JOBS}，已清理 {removed} 条最旧记录")
+        return removed
 
     @staticmethod
     def _display_title(files: list[str], source_task_id: str) -> str:
@@ -133,6 +159,7 @@ class UploadManager:
                 inserted += cursor.rowcount
         if inserted:
             logger.info(f"人体识别产物已加入上传队列: {source_task_id} ({inserted} channel(s))")
+            self._prune_jobs()
         return inserted
 
     def list_channels(self) -> list[dict]:
@@ -173,10 +200,14 @@ class UploadManager:
             )
         return True
 
-    def list_jobs(self, limit: int = 50) -> list[dict]:
+    def list_jobs(self, page: int = 1, per_page: int = 15) -> list[dict]:
+        """按创建时间倒序分页；created_at 只到秒，同秒内再用 rowid 兜底保证翻页稳定。"""
+        per_page = max(1, min(per_page, self.MAX_JOBS))
+        offset = (max(1, page) - 1) * per_page
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM upload_jobs ORDER BY created_at DESC LIMIT ?", (max(1, min(limit, 200)),)
+                "SELECT * FROM upload_jobs ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?",
+                (per_page, offset),
             ).fetchall()
         result = []
         for row in rows:
@@ -185,6 +216,10 @@ class UploadManager:
             item["metadata"] = json.loads(item.pop("metadata_json"))
             result.append(item)
         return result
+
+    def count_jobs(self) -> int:
+        with self._connect() as conn:
+            return int(conn.execute("SELECT COUNT(*) FROM upload_jobs").fetchone()[0])
 
     def retry(self, job_id: str) -> bool:
         now = datetime.now().isoformat(timespec="seconds")
@@ -257,6 +292,7 @@ class UploadManager:
                 )
             logger.error(f"上传任务失败({provider_name}, attempt={attempts}/{max_attempts}): {exc}")
             if terminal:
+                self._prune_jobs()
                 self._notify("StreamCap 上传失败", f"{request.title}\n渠道：{provider_name}\n{str(exc)[-500:]}")
             return
 
@@ -272,6 +308,7 @@ class UploadManager:
                 ),
             )
         logger.success(f"上传任务完成: {provider_name} {result.remote_id or row['id']}")
+        self._prune_jobs()
 
     def _block_auth(self, row: dict, message: str) -> None:
         now = datetime.now().isoformat(timespec="seconds")

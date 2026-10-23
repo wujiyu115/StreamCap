@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from ..deps import get_current_user
 
@@ -15,9 +15,20 @@ def _manager(request: Request):
 
 
 @router.get("")
-async def list_uploads(request: Request, limit: int = 50, user: str = Depends(get_current_user)):
+async def list_uploads(
+    request: Request,
+    page: int = Query(1, ge=1),
+    per_page: int = Query(15, ge=1, le=100),
+    user: str = Depends(get_current_user),
+):
     manager = _manager(request)
-    return {"jobs": manager.list_jobs(limit), "channels": manager.list_channels()}
+    return {
+        "jobs": manager.list_jobs(page, per_page),
+        "channels": manager.list_channels(),
+        "total": manager.count_jobs(),
+        "page": page,
+        "per_page": per_page,
+    }
 
 
 @router.post("/{job_id}/retry")

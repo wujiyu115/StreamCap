@@ -69,6 +69,21 @@ export function formatDate(epochSeconds: number | null | undefined, lang: LangCo
     return new Date(epochSeconds * 1000).toLocaleDateString(lang === "en" ? "en-US" : "zh-CN")
 }
 
+/** 按界面语言格式化时间串（入参是后端写库的 ISO 本地时间，如 2026-10-23T22:36:42）。
+ *
+ * 只显示到分钟，够用且不会把上传记录那行撑得太长（手机上尤其明显）。
+ */
+export function formatDateTime(value: string | null | undefined, lang: LangCode = currentLang): string {
+    if (!value) return "-"
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) return value
+    const pad = (n: number) => String(n).padStart(2, "0")
+    const day = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+    const time = `${pad(date.getHours())}:${pad(date.getMinutes())}`
+    // 英文界面按 en-US 习惯用月/日，中文用年-月-日
+    return lang === "en" ? `${date.getMonth() + 1}/${date.getDate()}/${date.getFullYear()} ${time}` : `${day} ${time}`
+}
+
 export function resolveDictValue(dict: Dict, path: string): string {
     const parts = path.split(".")
     let current: unknown = dict

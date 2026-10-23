@@ -118,7 +118,8 @@ export const bilibiliApi = {
 }
 
 export const uploadsApi = {
-    list: () => api.get<import("./types").UploadsResponse>("/uploads"),
+    list: (page = 1, perPage = 15) =>
+        api.get<import("./types").UploadsResponse>(`/uploads?page=${page}&per_page=${perPage}`),
     retry: (jobId: string) => api.post<{ ok: boolean }>(`/uploads/${jobId}/retry`),
     resumeChannel: (provider: string) =>
         api.post<{ ok: boolean }>(`/uploads/channels/${provider}/resume`),

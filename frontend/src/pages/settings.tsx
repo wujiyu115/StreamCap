@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query"
+import { keepPreviousData, useQuery } from "@tanstack/react-query"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { CheckCircle2, ExternalLink, Loader2, QrCode, RefreshCw, RotateCcw, XCircle } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
@@ -25,13 +25,15 @@ import {
 } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { formatDate, translateError, useI18n, type LangCode } from "@/i18n"
+import { formatDate, formatDateTime, translateError, useI18n, type LangCode } from "@/i18n"
 import { toast } from "sonner"
 
 export default function SettingsPage() {
     const { t } = useI18n()
     return (
-        <Tabs defaultValue="recording" className="space-y-4">
+        // 设置页整页随主区滚动（内容比 h-full 的 wrapper 高），而 main 的底部安全区只覆盖 wrapper，
+        // 所以这里自己补一份，否则滚到底时最后一段（如上传记录分页条）会被手机底部导航压住
+        <Tabs defaultValue="recording" className="space-y-4 pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-0">
             <TabsList className="w-full overflow-x-auto whitespace-nowrap sm:w-auto">
                 <TabsTrigger value="recording">录制设置</TabsTrigger>
                 <TabsTrigger value="pose">人体识别</TabsTrigger>
@@ -447,19 +449,35 @@ function PoseSettings() {
     )
 }
 
+const UPLOAD_PAGE_SIZE = 15
+
 function UploadSettings() {
-    const { t } = useI18n()
+    const { t, tf, lang } = useI18n()
     const form = useSettingsForm()
     const queryClient = useQueryClient()
     const [bilibiliLoginOpen, setBilibiliLoginOpen] = useState(false)
+    const [page, setPage] = useState(1)
+    const uploadsQueryKey = ["uploads", page] as const
     const tasks = useQuery({
-        queryKey: ["uploads"],
-        queryFn: uploadsApi.list,
+        queryKey: uploadsQueryKey,
+        queryFn: () => uploadsApi.list(page, UPLOAD_PAGE_SIZE),
+        // 翻页时保留上一页数据：否则 total 会瞬间变 0、页码被下面的越界保护退回第 1 页
+        placeholderData: keepPreviousData,
         refetchInterval: (query) =>
             query.state.data?.jobs.some((job) => ["pending", "uploading", "retrying"].includes(job.status))
                 ? 3000
                 : 15000,
     })
+    const total = tasks.data?.total ?? 0
+    const totalPages = Math.max(1, Math.ceil(total / UPLOAD_PAGE_SIZE))
+    // 页码标签跟当前显示的这批数据对齐（翻页瞬间还在显示上一页）
+    const shownPage = tasks.data?.page ?? page
+
+    // 记录只留最近 100 条，翻到末页后再有新任务/清理，页码可能越界，退到末页；
+    // 新页数据还没回来时 total 不可信，别在这里判
+    useEffect(() => {
+        if (tasks.data && page > totalPages) setPage(totalPages)
+    }, [tasks.data, page, totalPages])
     const retry = useMutation({
         mutationFn: uploadsApi.retry,
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ["uploads"] }),
@@ -540,10 +558,43 @@ function UploadSettings() {
                 ) : (tasks.data?.jobs.length ?? 0) === 0 ? (
                     <p className="py-8 text-center text-sm text-muted-foreground">{t("settings.uploadTasksEmpty")}</p>
                 ) : (
-                    <div className="space-y-2">
+                    <div className="space-y-2" data-testid="upload-tasks">
                         {tasks.data?.jobs.map((job) => (
-                            <UploadJobRow key={job.id} job={job} retrying={retry.isPending} onRetry={() => retry.mutate(job.id)} t={t} />
+                            <UploadJobRow key={job.id} job={job} retrying={retry.isPending} onRetry={() => retry.mutate(job.id)} t={t} lang={lang} />
                         ))}
+                    </div>
+                )}
+                {total > 0 && (
+                    <div
+                        // 手机上底部固定导航会遮住页面最下面一截；这里留出间距，滚动到底后分页条稳稳露在导航上方
+                        className="mb-2 mt-3 flex flex-wrap items-center justify-between gap-2 border-t pt-3"
+                    >
+                        <span className="text-xs text-muted-foreground" data-testid="upload-total">
+                            {tf("settings.uploadTotal", { count: total })}
+                        </span>
+                        <div className="flex items-center gap-2">
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                data-testid="upload-prev"
+                                disabled={page <= 1 || tasks.isFetching}
+                                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                            >
+                                {t("settings.uploadPrevPage")}
+                            </Button>
+                            <span className="whitespace-nowrap text-xs text-muted-foreground" data-testid="upload-page">
+                                {tf("settings.uploadPageOf", { page: shownPage, max: totalPages })}
+                            </span>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                data-testid="upload-next"
+                                disabled={page >= totalPages || tasks.isFetching}
+                                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                            >
+                                {t("settings.uploadNextPage")}
+                            </Button>
+                        </div>
                     </div>
                 )}
             </div>
@@ -551,23 +602,30 @@ function UploadSettings() {
     )
 }
 
-function UploadJobRow({ job, retrying, onRetry, t }: { job: UploadJob; retrying: boolean; onRetry: () => void; t: (key: string) => string }) {
+function UploadJobRow({ job, retrying, onRetry, t, lang }: { job: UploadJob; retrying: boolean; onRetry: () => void; t: (key: string) => string; lang: LangCode }) {
     const success = job.status === "completed"
     const failed = job.status === "failed" || job.status === "blocked_auth"
+    const finished = success || failed
     const label = t(`settings.uploadStatus${job.status.replace(/(^|_)(\w)/g, (_, _p, c) => c.toUpperCase())}`)
     return (
         <div className="rounded border p-3 text-sm">
-            <div className="flex items-start justify-between gap-3">
+            {/* 手机上标题/按钮竖排，别让标题被按钮挤成省略号 */}
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
                 <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                        {success ? <CheckCircle2 className="h-4 w-4 shrink-0 text-green-600" /> : failed ? <XCircle className="h-4 w-4 shrink-0 text-destructive" /> : <Loader2 className={`h-4 w-4 shrink-0 ${job.status === "uploading" ? "animate-spin" : ""}`} />}
-                        <span className="truncate font-medium">{job.title}</span>
+                    <div className="flex items-start gap-2">
+                        {success ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-green-600" /> : failed ? <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" /> : <Loader2 className={`mt-0.5 h-4 w-4 shrink-0 ${job.status === "uploading" ? "animate-spin" : ""}`} />}
+                        <span className="min-w-0 flex-1 break-all font-medium leading-snug line-clamp-2" title={job.title}>{job.title}</span>
                         <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-xs">{label}</span>
                     </div>
-                    <p className="mt-1 text-xs text-muted-foreground">{job.files.length} {t("settings.uploadFiles")} · {t("settings.uploadAttempts")} {job.attempts}</p>
+                    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+                        <span>{job.files.length} {t("settings.uploadFiles")}</span>
+                        <span>{t("settings.uploadAttempts")} {job.attempts}</span>
+                        <span>{t("settings.uploadCreatedAt")} {formatDateTime(job.created_at, lang)}</span>
+                        {finished && <span>{t("settings.uploadFinishedAt")} {formatDateTime(job.updated_at, lang)}</span>}
+                    </div>
                     {job.message && failed && <p className="mt-1 line-clamp-2 break-all text-xs text-destructive" title={job.message}>{job.message}</p>}
                 </div>
-                <div className="flex shrink-0 gap-1">
+                <div className="flex shrink-0 flex-wrap gap-1">
                     {job.remote_id && <Button asChild variant="outline" size="sm"><a href={`https://www.bilibili.com/video/${job.remote_id}`} target="_blank" rel="noreferrer">{job.remote_id}<ExternalLink className="ml-1 h-3 w-3" /></a></Button>}
                     {failed && <Button variant="outline" size="sm" onClick={onRetry} disabled={retrying || job.status === "blocked_auth"}>{t("settings.uploadRetry")}</Button>}
                 </div>

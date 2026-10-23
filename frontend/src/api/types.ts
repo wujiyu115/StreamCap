@@ -267,6 +267,9 @@ export interface UploadChannel {
 export interface UploadsResponse {
     jobs: UploadJob[]
     channels: UploadChannel[]
+    total: number
+    page: number
+    per_page: number
 }
 
 export interface PoseTaskState {
