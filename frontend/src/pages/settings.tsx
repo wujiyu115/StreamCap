@@ -10,6 +10,7 @@ import type {
     SettingsWriteResult,
     UploadJob,
 } from "@/api/types"
+import { BilibiliLoginDialog } from "@/components/bilibili-login-dialog"
 import { DouyinLoginDialog } from "@/components/douyin-login-dialog"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -450,6 +451,7 @@ function UploadSettings() {
     const { t } = useI18n()
     const form = useSettingsForm()
     const queryClient = useQueryClient()
+    const [bilibiliLoginOpen, setBilibiliLoginOpen] = useState(false)
     const tasks = useQuery({
         queryKey: ["uploads"],
         queryFn: uploadsApi.list,
@@ -503,7 +505,7 @@ function UploadSettings() {
             </div>
             <div className="rounded-lg border bg-card p-4">
                 <div className="mb-4 flex items-center justify-between">
-                    <div><h3 className="font-semibold">Bilibili</h3><p className="text-xs text-muted-foreground">{t("settings.bilibiliHint")}</p></div>
+                    <div><div className="flex items-center gap-3"><h3 className="font-semibold">Bilibili</h3><Button size="sm" variant="outline" onClick={() => setBilibiliLoginOpen(true)}><QrCode className="mr-1 h-4 w-4" />{t("following.scanLogin")}</Button></div><p className="mt-1 text-xs text-muted-foreground">{t("settings.bilibiliHint")}</p></div>
                     <Switch checked={Boolean(bilibili.enabled)} onCheckedChange={(v) => setBilibili("enabled", v)} />
                 </div>
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -516,6 +518,7 @@ function UploadSettings() {
                 </div>
             </div>
 
+            <BilibiliLoginDialog open={bilibiliLoginOpen} onOpenChange={setBilibiliLoginOpen} />
             <div className="rounded-lg border bg-card p-4">
                 <div className="mb-3 flex items-center justify-between">
                     <h3 className="font-semibold">{t("settings.uploadTasks")}</h3>
@@ -977,7 +980,8 @@ function CookiesTab() {
         queryFn: settingsApi.getCookies,
     })
     const [values, setValues] = useState<Record<string, string>>({})
-    const [loginOpen, setLoginOpen] = useState(false)
+    const [douyinLoginOpen, setDouyinLoginOpen] = useState(false)
+    const [bilibiliLoginOpen, setBilibiliLoginOpen] = useState(false)
 
     // Cookie 寿命：后端只解析本地 sid_guard，不打抖音接口（没登录态时也能提醒）
     const cookieStatus = useQuery({
@@ -1002,23 +1006,15 @@ function CookiesTab() {
 
     return (
         <div className="rounded-lg border bg-card p-4">
-            <div className="mb-3 flex items-center justify-between">
-                <h3 className="font-semibold">{t("settings.cookies")}</h3>
-                <Button
-                    size="sm"
-                    variant="outline"
-                    data-testid="settings-scan-login"
-                    onClick={() => setLoginOpen(true)}
-                >
-                    <QrCode className="mr-1 h-4 w-4" />
-                    {t("following.scanLogin")}
-                </Button>
-            </div>
-            <p className="mb-3 text-xs text-muted-foreground">{t("settings.scanLoginHint")}</p>
+            <div className="mb-3"><h3 className="font-semibold">{t("settings.cookies")}</h3></div>
             <div className="grid grid-cols-1 gap-x-6 gap-y-4 lg:grid-cols-2">
                 {PLATFORM_KEYS.map((key) => (
                     <div key={key} className="flex flex-col gap-1.5">
-                        <Label className="text-sm font-mono">{key}</Label>
+                        <div className="flex min-h-8 items-center justify-between gap-2">
+                            <Label className="text-sm font-mono">{key}</Label>
+                            {key === "douyin" && <Button size="sm" variant="outline" data-testid="douyin-scan-login" onClick={() => setDouyinLoginOpen(true)}><QrCode className="mr-1 h-4 w-4" />{t("following.scanLogin")}</Button>}
+                            {key === "bilibili" && <Button size="sm" variant="outline" data-testid="bilibili-scan-login" onClick={() => setBilibiliLoginOpen(true)}><QrCode className="mr-1 h-4 w-4" />{t("following.scanLogin")}</Button>}
+                        </div>
                         <Input
                             value={values[key] ?? ""}
                             placeholder={tf("settings.cookiesPlaceholder", { platform: key })}
@@ -1049,13 +1045,14 @@ function CookiesTab() {
             <p className="mt-3 text-xs text-muted-foreground">{t("settings.cookieBackupHint")}</p>
 
             <DouyinLoginDialog
-                open={loginOpen}
-                onOpenChange={setLoginOpen}
+                open={douyinLoginOpen}
+                onOpenChange={setDouyinLoginOpen}
                 // 登录成功后端已写盘：拉一次就把输入框里的 douyin Cookie 同步成新的
                 onSuccess={() => {
                     void queryClient.invalidateQueries({ queryKey: ["cookies"] })
                 }}
             />
+            <BilibiliLoginDialog open={bilibiliLoginOpen} onOpenChange={setBilibiliLoginOpen} />
         </div>
     )
 }

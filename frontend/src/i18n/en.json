@@ -432,6 +432,20 @@
         "monitorRecencyPriorityHint": "Two tiers: rooms live within 2 days, or with average go-live interval ≤3 days (auto-tracked), are checked every round; others every 2 rounds (~6 min). Going live restores top tier",
         "scanLoginHint": "Douyin cookie expired? Sign in with a QR code instead of copying the cookie by hand."
     },
+    "bilibiliLogin": {
+        "title": "Sign in to Bilibili",
+        "desc": "Scan with the Bilibili app. Publishing credentials are saved and paused uploads resume after confirmation.",
+        "idle": "Preparing",
+        "starting": "Fetching QR code",
+        "waiting": "Scan with the Bilibili app",
+        "scanned": "Scanned; confirm on your phone",
+        "confirmed": "Signed in",
+        "failed": "Sign-in failed",
+        "cancelled": "Cancelled",
+        "timeout": "QR code expired",
+        "restart": "Get a new code",
+        "success": "Signed in to Bilibili"
+    },
     "about": {
         "title": "About",
         "version": "Version",

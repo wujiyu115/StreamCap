@@ -432,6 +432,20 @@
         "monitorRecencyPriorityHint": "两档：最近 2 天播过、或平均开播间隔 ≤3 天（自动统计）的房间每轮都查，其余每 2 轮一次（约 6 分钟）；开播后自动回到高档",
         "scanLoginHint": "抖音 Cookie 过期了？点右上角直接扫码登录，不用再去浏览器里手动复制 Cookie。"
     },
+    "bilibiliLogin": {
+        "title": "扫码登录 Bilibili",
+        "desc": "使用哔哩哔哩 App 扫码，成功后自动保存投稿凭据并恢复暂停的上传任务。",
+        "idle": "准备中",
+        "starting": "正在获取二维码",
+        "waiting": "请使用哔哩哔哩 App 扫码",
+        "scanned": "已扫码，请在手机上确认",
+        "confirmed": "登录成功",
+        "failed": "登录失败",
+        "cancelled": "已取消",
+        "timeout": "二维码已过期",
+        "restart": "重新获取",
+        "success": "Bilibili 登录成功"
+    },
     "about": {
         "title": "关于",
         "version": "版本",

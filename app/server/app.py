@@ -13,7 +13,7 @@ from ..core.upload import UploadManager
 from ..messages.cookie_health import CookieHealthMonitor
 from ..utils.logger import logger
 from .deps import SESSION_COOKIE
-from .routers import analytics, auth, douyin, media, pose, recordings, settings as settings_router, system, uploads
+from .routers import analytics, auth, bilibili, douyin, media, pose, recordings, settings as settings_router, system, uploads
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -61,6 +61,9 @@ def create_app(run_path: str | None = None) -> FastAPI:
         pose_task_manager.shutdown()
         upload_manager.shutdown()
         cookie_health.shutdown()
+        session = getattr(app.state, "bilibili_login", None)
+        if session:
+            session.cancel()
         services.stop_background_loop()
         logger.info("StreamCap server stopped")
 
@@ -75,6 +78,7 @@ def create_app(run_path: str | None = None) -> FastAPI:
     app.include_router(analytics.router)
     app.include_router(douyin.router)
     app.include_router(uploads.router)
+    app.include_router(bilibili.router)
 
     _mount_spa(app)
 

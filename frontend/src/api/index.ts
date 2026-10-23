@@ -111,6 +111,12 @@ export const douyinApi = {
     loginCancel: () => api.del<import("./types").DouyinLoginState>("/douyin/login"),
 }
 
+export const bilibiliApi = {
+    loginStart: () => api.post<import("./types").BilibiliLoginState>("/bilibili/login"),
+    loginStatus: () => api.get<import("./types").BilibiliLoginState>("/bilibili/login"),
+    loginCancel: () => api.del<import("./types").BilibiliLoginState>("/bilibili/login"),
+}
+
 export const uploadsApi = {
     list: () => api.get<import("./types").UploadsResponse>("/uploads"),
     retry: (jobId: string) => api.post<{ ok: boolean }>(`/uploads/${jobId}/retry`),

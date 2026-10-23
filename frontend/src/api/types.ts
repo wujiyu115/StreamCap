@@ -233,6 +233,13 @@ export interface SettingsResetResult {
     user_overrides: Record<string, unknown>
 }
 
+export interface BilibiliLoginState {
+    state: "idle" | "starting" | "waiting" | "scanned" | "confirmed" | "failed" | "cancelled" | "timeout"
+    qrcode: string | null
+    saved: boolean
+    error?: string
+}
+
 export interface UploadJob {
     id: string
     source_task_id: string
