@@ -9,9 +9,11 @@ from fastapi.responses import FileResponse
 from ..auth.auth_manager import AuthManager
 from ..core.pose.pose_task_manager import PoseTaskManager
 from ..core.runtime.backend_services import BackendServices
+from ..core.upload import UploadManager
+from ..messages.cookie_health import CookieHealthMonitor
 from ..utils.logger import logger
 from .deps import SESSION_COOKIE
-from .routers import analytics, auth, douyin, media, pose, recordings, settings as settings_router, system
+from .routers import analytics, auth, douyin, media, pose, recordings, settings as settings_router, system, uploads
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -40,11 +42,25 @@ def create_app(run_path: str | None = None) -> FastAPI:
         services.pose_task_manager = pose_task_manager
         _bind_pose_analytics(services, pose_task_manager)
 
+        upload_manager = UploadManager(
+            run_path,
+            lambda: services.settings_config.user_config,
+            settings=services.settings_config,
+        )
+        app.state.upload_manager = upload_manager
+        services.upload_manager = upload_manager
+        pose_task_manager.set_completion_sink(upload_manager.enqueue_pose_outputs)
+
+        cookie_health = CookieHealthMonitor(run_path, services.settings_config)
+        services.cookie_health = cookie_health
+        cookie_health.start()
         services.start_background_loop()
         logger.info(f"StreamCap server started (run_path={run_path})")
         yield
 
         pose_task_manager.shutdown()
+        upload_manager.shutdown()
+        cookie_health.shutdown()
         services.stop_background_loop()
         logger.info("StreamCap server stopped")
 
@@ -58,6 +74,7 @@ def create_app(run_path: str | None = None) -> FastAPI:
     app.include_router(system.router)
     app.include_router(analytics.router)
     app.include_router(douyin.router)
+    app.include_router(uploads.router)
 
     _mount_spa(app)
 

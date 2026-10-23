@@ -12,7 +12,25 @@ RUN bun run build
 # 写成滚动 tag 的话上游换发行版会让那串包名静默失效。
 FROM python:3.12-slim-trixie AS builder
 
+ARG TARGETARCH
+ARG BILIUP_VERSION=1.3.3
 WORKDIR /app
+
+# B站上传复用 biliup 的官方预编译 CLI；固定版本与双架构 SHA256，避免构建时漂移。
+RUN apt-get update && apt-get install -y --no-install-recommends curl xz-utils ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+RUN set -eux; \
+    case "$TARGETARCH" in \
+      amd64) arch=x86_64-linux-musl; sha=b45892e02ce4cc64da72addf81a26e00f5d83b0db1719087170ea80e1b135182 ;; \
+      arm64) arch=aarch64-linux; sha=3745af55fbf3d1154f50c2990e0e6ad563eb1fd3d5ad8108fa92f1b6c91aac4c ;; \
+      *) echo "unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    archive=/tmp/biliup.tar.xz; \
+    curl --retry 5 --retry-all-errors --connect-timeout 20 -LfsS "https://github.com/biliup/biliup/releases/download/v${BILIUP_VERSION}/biliupR-v${BILIUP_VERSION}-${arch}.tar.xz" -o "$archive"; \
+    echo "$sha  $archive" | sha256sum -c -; \
+    tar -xJf "$archive" -C /tmp; \
+    install -m 0755 "/tmp/biliupR-v${BILIUP_VERSION}-${arch}/biliup" /usr/local/bin/biliup; \
+    rm -rf "$archive" "/tmp/biliupR-v${BILIUP_VERSION}-${arch}"
 
 # 独立 venv：整体拷贝到运行阶段，且 pip 能正确识别已安装的包
 RUN python -m venv /opt/venv
@@ -76,6 +94,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /opt/venv /opt/venv
+COPY --from=builder /usr/local/bin/biliup /usr/local/bin/biliup
 # 扫码登录用的 chromium headless shell（209MB，多余语言包已在 builder 里删掉）
 COPY --from=builder /opt/ms-playwright /opt/ms-playwright
 ENV PATH="/opt/venv/bin:$PATH"

@@ -87,6 +87,10 @@ ipython_config.py
 /config/user_settings.json
 /config/recordings.json
 /config/cookies.json
+/config/bilibili/
+/config/uploads.sqlite3*
+/config/cookie_health.json*
+/qrcode.png
 /config/web_auth.json
 /config/room_validity.json
 /config/analytics/

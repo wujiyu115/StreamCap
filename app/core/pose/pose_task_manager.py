@@ -70,7 +70,9 @@ class PoseTaskManager:
         self._stop_worker = False
         self._worker: Optional[threading.Thread] = None
         self._analytics_sink: Optional[Callable[[str, float, int, int], None]] = None
+        self._completion_sink: Optional[Callable[[str, dict[str, Any]], None]] = None
         self._accounted: set[str] = set()
+        self._completion_dispatched: set[str] = set()
 
         self._adopt_orphans()
         self._prune_old_tasks()
@@ -124,6 +126,7 @@ class PoseTaskManager:
                     if time.time() - last_account > ACCOUNT_INTERVAL_SECONDS:
                         last_account = time.time()
                         self._account_analytics()
+                        self._dispatch_completed()
                     time.sleep(2.0)
                     continue
                 try:
@@ -174,6 +177,37 @@ class PoseTaskManager:
         """
         self._analytics_sink = sink
         self._account_analytics()
+
+    def set_completion_sink(self, sink: Callable[[str, dict[str, Any]], None]) -> None:
+        """晚绑定终态回调；上传管理器靠自身唯一键保证跨重启幂等。"""
+        self._completion_sink = sink
+        self._dispatch_completed()
+
+    def _dispatch_completed(self) -> None:
+        sink = self._completion_sink
+        if sink is None or not os.path.isdir(self.tasks_root):
+            return
+        try:
+            names = sorted(os.listdir(self.tasks_root), reverse=True)[:ACCOUNT_SCAN_LIMIT]
+        except OSError:
+            return
+        for name in names:
+            if name in self._completion_dispatched:
+                continue
+            state_path = os.path.join(self.tasks_root, name, "state.json")
+            try:
+                with open(state_path, encoding="utf-8") as f:
+                    state = json.load(f)
+            except (OSError, ValueError):
+                continue
+            if state.get("status") not in {"completed", "failed", "cancelled"}:
+                continue
+            try:
+                sink(name, state)
+            except Exception as e:
+                logger.warning(f"人体识别完成回调失败({name}): {e}")
+                continue
+            self._completion_dispatched.add(name)
 
     @staticmethod
     def _finished_ts(state: dict[str, Any]) -> float:

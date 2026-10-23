@@ -146,7 +146,7 @@ class VideoProcessor:
         """处理单个视频。
 
         返回 (处理帧数, 采样帧数, 原始区间数, 合并区间数, 片段数, 产物字节数,
-        删掉的原视频字节数, CLIP 判定)。中间两项供录制分析统计「识别到底省了
+        删掉的原视频字节数, CLIP 判定, 产物绝对路径列表)。中间两项供录制分析统计「识别到底省了
         多少盘」，原视频大小必须在处理前取，因为 delete_original_video 打开时
         文件会被删掉。
         """
@@ -242,6 +242,7 @@ class VideoProcessor:
             output_bytes,
             deleted_bytes,
             clip_verdict,
+            [os.path.abspath(path) for path in (moved_paths or clip_paths) if os.path.isfile(path)],
         )
 
     def _move_output_to_input(self, video_path: str) -> list[str]:

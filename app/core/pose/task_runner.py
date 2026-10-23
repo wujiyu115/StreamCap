@@ -114,6 +114,8 @@ def main(argv=None) -> int:
         # 识别产物 / 被删掉的原视频字节数，父进程读 state.json 后计入录制分析
         "output_bytes": 0,
         "deleted_bytes": 0,
+        # 完整产物清单供后续上传队列使用；只记录当前仍存在的绝对路径
+        "output_files": [],
         # CLIP 服装分类闸门（开启时才有意义）
         "clip_enabled": bool(params.clip_filter_enabled),
         "clip_pass": 0,
@@ -216,6 +218,7 @@ def main(argv=None) -> int:
                     out_bytes,
                     del_bytes,
                     clip_verdict,
+                    output_files,
                 ) = processor.process_video_file(
                     video_path,
                     idx,
@@ -240,6 +243,7 @@ def main(argv=None) -> int:
                 summary["clips"] += clips
                 summary["output_bytes"] += out_bytes
                 summary["deleted_bytes"] += del_bytes
+                summary["output_files"].extend(output_files)
                 verdict_key = {
                     "pass": "clip_pass",
                     "reject": "clip_reject",

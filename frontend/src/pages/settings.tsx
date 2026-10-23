@@ -1,13 +1,14 @@
 import { useQuery } from "@tanstack/react-query"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { Loader2, QrCode, RotateCcw } from "lucide-react"
+import { CheckCircle2, ExternalLink, Loader2, QrCode, RefreshCw, RotateCcw, XCircle } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
-import { douyinApi, settingsApi } from "@/api"
+import { douyinApi, settingsApi, uploadsApi } from "@/api"
 import type {
     DouyinCookieStatus,
     SettingsData,
     SettingsResetResult,
     SettingsWriteResult,
+    UploadJob,
 } from "@/api/types"
 import { DouyinLoginDialog } from "@/components/douyin-login-dialog"
 import { Button } from "@/components/ui/button"
@@ -27,11 +28,13 @@ import { formatDate, translateError, useI18n, type LangCode } from "@/i18n"
 import { toast } from "sonner"
 
 export default function SettingsPage() {
+    const { t } = useI18n()
     return (
         <Tabs defaultValue="recording" className="space-y-4">
             <TabsList className="w-full overflow-x-auto whitespace-nowrap sm:w-auto">
                 <TabsTrigger value="recording">录制设置</TabsTrigger>
                 <TabsTrigger value="pose">人体识别</TabsTrigger>
+                <TabsTrigger value="uploads">{t("settings.uploads")}</TabsTrigger>
                 <TabsTrigger value="push">推送设置</TabsTrigger>
                 <TabsTrigger value="cookies">Cookies</TabsTrigger>
                 <TabsTrigger value="accounts">账号设置</TabsTrigger>
@@ -42,6 +45,9 @@ export default function SettingsPage() {
             </TabsContent>
             <TabsContent value="pose">
                 <PoseSettings />
+            </TabsContent>
+            <TabsContent value="uploads">
+                <UploadSettings />
             </TabsContent>
             <TabsContent value="push">
                 <PushSettings />
@@ -434,6 +440,133 @@ function PoseSettings() {
                     {clipFilterFields.map((field) => (
                         <FieldRow key={field.key} field={field} form={form} scope="pose_detection" />
                     ))}
+                </div>
+            </div>
+        </div>
+    )
+}
+
+function UploadSettings() {
+    const { t } = useI18n()
+    const form = useSettingsForm()
+    const queryClient = useQueryClient()
+    const tasks = useQuery({
+        queryKey: ["uploads"],
+        queryFn: uploadsApi.list,
+        refetchInterval: (query) =>
+            query.state.data?.jobs.some((job) => ["pending", "uploading", "retrying"].includes(job.status))
+                ? 3000
+                : 15000,
+    })
+    const retry = useMutation({
+        mutationFn: uploadsApi.retry,
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ["uploads"] }),
+        onError: (e: Error) => toast.error(translateError(e.message)),
+    })
+    const resume = useMutation({
+        mutationFn: uploadsApi.resumeChannel,
+        onSuccess: () => {
+            toast.success(t("settings.uploadChannelResumed"))
+            queryClient.invalidateQueries({ queryKey: ["uploads"] })
+        },
+        onError: (e: Error) => toast.error(translateError(e.message)),
+    })
+
+    if (form.isLoading || !form.data) {
+        return <div className="flex justify-center py-20"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+    }
+
+    const uploads = (form.values.uploads ?? {}) as Rec
+    const providers = (uploads.providers ?? {}) as Rec
+    const bilibili = (providers.bilibili ?? {}) as Rec
+    const setUpload = (key: string, value: unknown) => form.set("uploads", { ...uploads, [key]: value })
+    const setBilibili = (key: string, value: unknown) => form.set("uploads", {
+        ...uploads,
+        providers: { ...providers, bilibili: { ...bilibili, [key]: value } },
+    })
+
+    const input = (key: string, type = "text") => (
+        <Input
+            type={type}
+            value={String(bilibili[key] ?? "")}
+            onChange={(e) => setBilibili(key, type === "number" ? Number(e.target.value) : e.target.value)}
+        />
+    )
+
+    return (
+        <div className="space-y-4">
+            <div className="rounded-lg border bg-card p-4">
+                <div className="flex items-center justify-between">
+                    <div><h3 className="font-semibold">{t("settings.uploadEnabled")}</h3><p className="text-xs text-muted-foreground">{t("settings.uploadEnabledHint")}</p></div>
+                    <Switch checked={Boolean(uploads.enabled)} onCheckedChange={(v) => setUpload("enabled", v)} />
+                </div>
+            </div>
+            <div className="rounded-lg border bg-card p-4">
+                <div className="mb-4 flex items-center justify-between">
+                    <div><h3 className="font-semibold">Bilibili</h3><p className="text-xs text-muted-foreground">{t("settings.bilibiliHint")}</p></div>
+                    <Switch checked={Boolean(bilibili.enabled)} onCheckedChange={(v) => setBilibili("enabled", v)} />
+                </div>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div className="space-y-1.5"><Label>{t("settings.bilibiliCookieFile")}</Label>{input("cookie_file")}</div>
+                    <div className="space-y-1.5"><Label>{t("settings.bilibiliTid")}</Label>{input("tid", "number")}</div>
+                    <div className="space-y-1.5"><Label>{t("settings.bilibiliTags")}</Label>{input("tags")}</div>
+                    <div className="space-y-1.5"><Label>{t("settings.bilibiliDescription")}</Label>{input("description")}</div>
+                    <div className="flex items-center justify-between rounded border p-3"><Label>{t("settings.bilibiliOnlySelf")}</Label><Switch checked={Boolean(bilibili.only_self)} onCheckedChange={(v) => setBilibili("only_self", v)} /></div>
+                    <div className="flex items-center justify-between rounded border p-3"><Label>{t("settings.bilibiliNoReprint")}</Label><Switch checked={Boolean(bilibili.no_reprint)} onCheckedChange={(v) => setBilibili("no_reprint", v)} /></div>
+                </div>
+            </div>
+
+            <div className="rounded-lg border bg-card p-4">
+                <div className="mb-3 flex items-center justify-between">
+                    <h3 className="font-semibold">{t("settings.uploadTasks")}</h3>
+                    <Button variant="ghost" size="sm" onClick={() => tasks.refetch()} disabled={tasks.isFetching}>
+                        <RefreshCw className={`mr-1 h-4 w-4 ${tasks.isFetching ? "animate-spin" : ""}`} />
+                        {t("common.refresh")}
+                    </Button>
+                </div>
+                {(tasks.data?.channels ?? []).map((channel) => channel.status === "blocked_auth" && (
+                    <div key={channel.provider} className="mb-3 rounded border border-destructive/40 bg-destructive/5 p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div><p className="font-medium text-destructive">{t("settings.uploadLoginExpired")}</p><p className="mt-1 text-xs text-muted-foreground">{t("settings.uploadLoginExpiredHint")}</p></div>
+                            <Button size="sm" onClick={() => resume.mutate(channel.provider)} disabled={resume.isPending}>{t("settings.uploadResume")}</Button>
+                        </div>
+                    </div>
+                ))}
+                {tasks.isLoading ? (
+                    <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin" /></div>
+                ) : (tasks.data?.jobs.length ?? 0) === 0 ? (
+                    <p className="py-8 text-center text-sm text-muted-foreground">{t("settings.uploadTasksEmpty")}</p>
+                ) : (
+                    <div className="space-y-2">
+                        {tasks.data?.jobs.map((job) => (
+                            <UploadJobRow key={job.id} job={job} retrying={retry.isPending} onRetry={() => retry.mutate(job.id)} t={t} />
+                        ))}
+                    </div>
+                )}
+            </div>
+        </div>
+    )
+}
+
+function UploadJobRow({ job, retrying, onRetry, t }: { job: UploadJob; retrying: boolean; onRetry: () => void; t: (key: string) => string }) {
+    const success = job.status === "completed"
+    const failed = job.status === "failed" || job.status === "blocked_auth"
+    const label = t(`settings.uploadStatus${job.status.replace(/(^|_)(\w)/g, (_, _p, c) => c.toUpperCase())}`)
+    return (
+        <div className="rounded border p-3 text-sm">
+            <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                        {success ? <CheckCircle2 className="h-4 w-4 shrink-0 text-green-600" /> : failed ? <XCircle className="h-4 w-4 shrink-0 text-destructive" /> : <Loader2 className={`h-4 w-4 shrink-0 ${job.status === "uploading" ? "animate-spin" : ""}`} />}
+                        <span className="truncate font-medium">{job.title}</span>
+                        <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-xs">{label}</span>
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">{job.files.length} {t("settings.uploadFiles")} · {t("settings.uploadAttempts")} {job.attempts}</p>
+                    {job.message && failed && <p className="mt-1 line-clamp-2 break-all text-xs text-destructive" title={job.message}>{job.message}</p>}
+                </div>
+                <div className="flex shrink-0 gap-1">
+                    {job.remote_id && <Button asChild variant="outline" size="sm"><a href={`https://www.bilibili.com/video/${job.remote_id}`} target="_blank" rel="noreferrer">{job.remote_id}<ExternalLink className="ml-1 h-3 w-3" /></a></Button>}
+                    {failed && <Button variant="outline" size="sm" onClick={onRetry} disabled={retrying || job.status === "blocked_auth"}>{t("settings.uploadRetry")}</Button>}
                 </div>
             </div>
         </div>

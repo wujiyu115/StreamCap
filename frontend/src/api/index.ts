@@ -111,6 +111,13 @@ export const douyinApi = {
     loginCancel: () => api.del<import("./types").DouyinLoginState>("/douyin/login"),
 }
 
+export const uploadsApi = {
+    list: () => api.get<import("./types").UploadsResponse>("/uploads"),
+    retry: (jobId: string) => api.post<{ ok: boolean }>(`/uploads/${jobId}/retry`),
+    resumeChannel: (provider: string) =>
+        api.post<{ ok: boolean }>(`/uploads/channels/${provider}/resume`),
+}
+
 export const poseApi = {
     submit: (paths: string[], trigger = "manual", overrides?: Record<string, unknown>) =>
         api.post<{ task_id: string | null; status: string }>("/pose/tasks", {

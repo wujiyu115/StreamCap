@@ -79,6 +79,27 @@
     "monitor_recency_priority_enabled": true,
     "last_route": "/home",
     "check_live_on_browser_refresh": false,
+    "uploads": {
+        "enabled": false,
+        "auto_after_pose": true,
+        "max_attempts": 5,
+        "notify_failures": true,
+        "providers": {
+            "bilibili": {
+                "enabled": false,
+                "cookie_file": "config/bilibili/cookies.json",
+                "submit": "web",
+                "tid": 138,
+                "tags": "直播录像,录播",
+                "copyright": 1,
+                "description": "",
+                "only_self": true,
+                "no_reprint": false,
+                "upload_threads": 3,
+                "timeout_seconds": 21600
+            }
+        }
+    },
     "pose_detection": {
         "enabled": true,
         "frame_seconds": 10.0,

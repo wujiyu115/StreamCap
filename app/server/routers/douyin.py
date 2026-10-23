@@ -64,6 +64,10 @@ async def _dispatch(services, coro):
     try:
         return await asyncio.wrap_future(future)
     except following.DouyinFollowingError as exc:
+        monitor = getattr(services, "cookie_health", None)
+        if exc.code == "login_required" and monitor is not None:
+            cookie = services.settings_config.get_cookies_value(_PLATFORM_KEY) or ""
+            asyncio.create_task(asyncio.to_thread(monitor.report_expired, _PLATFORM_KEY, cookie))
         raise _http_error(exc) from exc
     except Exception as exc:  # 后台 loop 上的意外异常，别吐成不可翻译的 500
         logger.error(f"Douyin following dispatch failed: {type(exc).__name__}: {exc}")

@@ -233,6 +233,35 @@ export interface SettingsResetResult {
     user_overrides: Record<string, unknown>
 }
 
+export interface UploadJob {
+    id: string
+    source_task_id: string
+    provider: string
+    status: "pending" | "uploading" | "retrying" | "completed" | "failed" | "blocked_auth"
+    files: string[]
+    title: string
+    attempts: number
+    next_attempt_at: number
+    remote_id: string | null
+    message: string
+    created_at: string
+    updated_at: string
+}
+
+export interface UploadChannel {
+    provider: string
+    enabled: boolean
+    status: "active" | "blocked_auth"
+    message: string
+    notified: number
+    updated_at: string | null
+}
+
+export interface UploadsResponse {
+    jobs: UploadJob[]
+    channels: UploadChannel[]
+}
+
 export interface PoseTaskState {
     task_id: string | null
     task_dir: string | null
