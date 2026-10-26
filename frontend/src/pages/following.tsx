@@ -1,10 +1,21 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { ExternalLink, Loader2, Play, Plus, QrCode, Radio, RefreshCw, Users } from "lucide-react"
+import {
+    ExternalLink,
+    Loader2,
+    Play,
+    Plus,
+    QrCode,
+    Radio,
+    RefreshCw,
+    UserMinus,
+    Users,
+} from "lucide-react"
 import { useMemo, useState } from "react"
 import { Link } from "react-router-dom"
 import { douyinApi, settingsApi } from "@/api"
 import { ApiError } from "@/api/client"
-import type { DouyinFollowingUser, DouyinLiveRoom } from "@/api/types"
+import type { DouyinFollowingPage, DouyinFollowingUser, DouyinLiveRoom } from "@/api/types"
+import { useConfirm } from "@/components/confirm-dialog"
 import { DouyinLoginDialog } from "@/components/douyin-login-dialog"
 import { LivePlayerDialog } from "@/components/live-player-dialog"
 import { RecordingDialog } from "@/components/recording-dialog"
@@ -77,15 +88,17 @@ function LiveBadge() {
     )
 }
 
-/** 关注的人：头像 / 昵称 / 粉丝数 / 在播徽标 / 一键加监控 */
+/** 关注的人：头像 / 昵称 / 粉丝数 / 在播徽标 / 一键加监控 / 去抖音取关 */
 function UserRow({
     user,
     room,
     onMonitor,
+    onUnfollow,
 }: {
     user: DouyinFollowingUser
     room?: DouyinLiveRoom
     onMonitor: (room: DouyinLiveRoom) => void
+    onUnfollow: (user: DouyinFollowingUser) => void
 }) {
     const { t, tf } = useI18n()
     const isLive = Boolean(room)
@@ -143,10 +156,17 @@ function UserRow({
                 href={`https://www.douyin.com/user/${user.sec_uid}`}
                 target="_blank"
                 rel="noreferrer"
-                title={t("following.openProfile")}
-                className="shrink-0 text-muted-foreground hover:text-foreground"
+                title={t("following.unfollow")}
+                data-testid={`unfollow-${user.sec_uid}`}
+                className="shrink-0 text-muted-foreground hover:text-destructive"
+                onClick={(e) => {
+                    // 中键/⌘ 点击照旧走原生行为，左键走带说明的确认框
+                    if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return
+                    e.preventDefault()
+                    onUnfollow(user)
+                }}
             >
-                <ExternalLink className="h-4 w-4" />
+                <UserMinus className="h-4 w-4" />
             </a>
         </div>
     )
@@ -263,6 +283,7 @@ export default function FollowingPage() {
     const [playerRoom, setPlayerRoom] = useState<DouyinLiveRoom | null>(null)
     const [loginOpen, setLoginOpen] = useState(false)
     const [refreshing, setRefreshing] = useState(false)
+    const confirmBox = useConfirm()
 
     // Cookie 是否已配置（没配就不用打接口了，直接给提示）
     const cookies = useQuery({
@@ -338,6 +359,19 @@ export default function FollowingPage() {
         setDialogOpen(true)
     }
 
+    // 取消关注：抖音从 2026-08 起给行为接口（关注/取关、点赞…）加了站点侧签名
+    // （x-secsdk-web-signature / ArgusSecurityPlugin），服务端复现不出来——实测同一份有效
+    // Cookie 打读接口 200、打 commit/follow 一律 403，注入 Cookie 的 headless 浏览器也被
+    // 判成「未登录」。所以这里不假装能取关：确认后把人送到抖音主页，由用户在那里点。
+    const askUnfollow = async (target: DouyinFollowingUser) => {
+        const name = target.nickname || target.unique_id || target.sec_uid
+        const ok = await confirmBox({
+            description: tf("following.unfollowHint", { name }),
+            confirmText: t("following.openProfile"),
+        })
+        if (ok) window.open(`https://www.douyin.com/user/${target.sec_uid}`, "_blank", "noopener,noreferrer")
+    }
+
     // Cookie 失效时的「扫码登录」入口：不用再手动去浏览器里导 Cookie
     const scanLoginButton = (
         <Button
@@ -377,6 +411,7 @@ export default function FollowingPage() {
             user={user}
             room={liveBySecUid.get(user.sec_uid) ?? (user.short_id ? liveByShortId.get(user.short_id) : undefined)}
             onMonitor={openMonitor}
+            onUnfollow={askUnfollow}
         />
     )
 

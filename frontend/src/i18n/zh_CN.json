@@ -550,7 +550,9 @@
         "playerMute": "静音",
         "playerUnmute": "取消静音",
         "playerFullscreen": "全屏",
-        "scanLogin": "扫码登录"
+        "scanLogin": "扫码登录",
+        "unfollow": "去抖音取消关注",
+        "unfollowHint": "抖音已不开放第三方直接取消关注，「{name}」的主页会在新标签页打开，请在那里点「已关注 → 取消关注」。"
     },
     "analytics": {
         "title": "录制分析",

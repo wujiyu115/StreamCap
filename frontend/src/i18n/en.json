@@ -550,7 +550,9 @@
         "playerMute": "Mute",
         "playerUnmute": "Unmute",
         "playerFullscreen": "Fullscreen",
-        "scanLogin": "Scan QR to sign in"
+        "scanLogin": "Scan QR to sign in",
+        "unfollow": "Unfollow in Douyin",
+        "unfollowHint": "Douyin no longer allows third-party unfollow. \"{name}\" will open in a new tab — click \"Following → Unfollow\" there."
     },
     "analytics": {
         "title": "Analytics",
