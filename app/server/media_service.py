@@ -175,3 +175,31 @@ def list_dir(rel: str, root: str) -> dict:
     media.sort(key=lambda x: x["name"].lower())
     norm = "" if rel in (None, "", ".") else rel.strip("/")
     return {"path": norm, "items": folders + media}
+
+
+def collect_videos(rel_paths: list[str], root: str) -> dict:
+    """把「选中的文件 / 文件夹」展开成视频文件绝对路径（批量上传用）。
+
+    文件夹递归收集，只认媒体页展示的那套视频扩展名（图片/其他扩展名忽略）；
+    同一个文件在一次请求里被选中多次只算一次。非法或已不存在的路径单独记到
+    missing，不中断其余路径。同步实现——调用方必须丢线程池（NAS 上 os.walk 很慢）。
+    """
+    files: dict[str, None] = {}
+    missing: list[str] = []
+    for rel in rel_paths:
+        try:
+            full = resolve_safe(root, rel)
+        except MediaPathError:
+            missing.append(rel)
+            continue
+        if os.path.isfile(full):
+            if classify(os.path.basename(full)) == "video":
+                files.setdefault(os.path.abspath(full), None)
+        elif os.path.isdir(full):
+            for walk_root, _dirs, names in os.walk(full):
+                for name in names:
+                    if classify(name) == "video":
+                        files.setdefault(os.path.abspath(os.path.join(walk_root, name)), None)
+        else:
+            missing.append(rel)
+    return {"files": list(files), "missing": missing}

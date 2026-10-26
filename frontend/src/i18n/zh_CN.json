@@ -228,7 +228,16 @@
         "listView": "列表模式",
         "sortBy": "排序",
         "sortAsc": "切换为降序",
-        "sortDesc": "切换为升序"
+        "sortDesc": "切换为升序",
+        "batchUpload": "批量上传",
+        "uploadDialogDesc": "选中的视频会逐个加入上传队列（文件夹递归展开），已经上传过的文件会自动跳过。",
+        "uploadChannel": "上传渠道",
+        "uploadNoChannel": "还没有可用的上传渠道，请先在「设置 → 自动上传」里配置。",
+        "uploadDisabledChannel": "未启用",
+        "uploadBlockedChannel": "登录失效",
+        "uploadQueued": "已加入队列 {queued} 个文件（跳过已上传 {uploaded} 个、已在队列 {pending} 个）",
+        "uploadAllSkipped": "选中的文件都已上传过或已在队列中，没有新增任务",
+        "uploadAction": "开始上传"
     },
     "pose": {
         "title": "人体识别处理",
@@ -494,7 +503,13 @@
         "douyinFollowingUnavailable": "关注列表服务暂不可用，请稍后重试",
         "douyinLoginUnavailable": "本部署没有装浏览器组件，无法扫码登录，请手动填写 Cookie",
         "douyinLoginFailed": "扫码登录失败",
-        "douyinLoginPageBlocked": "打不开抖音登录框（页面改版或被风控会这样，也可能只是加载太慢），稍后重试或改用设置页手动粘贴 Cookie"
+        "douyinLoginPageBlocked": "打不开抖音登录框（页面改版或被风控会这样，也可能只是加载太慢），稍后重试或改用设置页手动粘贴 Cookie",
+        "uploadUnavailable": "上传服务不可用",
+        "uploadJobNotFound": "上传任务不存在",
+        "uploadChannelNotFound": "上传渠道不存在",
+        "uploadNoFiles": "没有选择文件",
+        "uploadNoVideo": "选中的内容里没有视频文件",
+        "uploadNoChannel": "没有选择上传渠道"
     },
     "following": {
         "title": "关注",

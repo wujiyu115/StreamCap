@@ -1,4 +1,5 @@
 from __future__ import annotations
+import os
 
 import sqlite3
 
@@ -161,3 +162,85 @@ def test_list_jobs_pagination_is_stable_across_same_second(tmp_path):
     assert len(ids) == len(set(ids)) == 20
     assert ids[0] == "same-19"                   # 新的在前
     assert manager.list_jobs(page=3, per_page=15) == []
+
+
+def _mgr(tmp_path, config=None):
+    manager = UploadManager(str(tmp_path), lambda: config or _config())
+    manager._stop.set()  # 别让后台线程真的投稿
+    manager._worker.join(timeout=3)
+    return manager
+
+
+def test_collect_videos_expands_folders_and_skips_non_video(tmp_path):
+    from app.server.media_service import collect_videos
+
+    root = tmp_path / "downloads"
+    (root / "sub" / "deep").mkdir(parents=True)
+    (root / "a.mp4").write_bytes(b"x")
+    (root / "cover.jpg").write_bytes(b"x")
+    (root / "sub" / "b.mkv").write_bytes(b"x")
+    (root / "sub" / "deep" / "c.ts").write_bytes(b"x")
+
+    got = collect_videos(["a.mp4", "..", "nope", "sub"], str(root))
+    names = sorted(os.path.basename(p) for p in got["files"])
+    assert names == ["a.mp4", "b.mkv", "c.ts"]
+    assert sorted(got["missing"]) == ["..", "nope"]
+
+    # 同一文件重复选中只算一次
+    assert len(collect_videos(["a.mp4", "a.mp4"], str(root))["files"]) == 1
+
+
+def test_enqueue_files_skips_uploaded_and_queued_but_retries_failed(tmp_path):
+    files = []
+    for name in ("one.mp4", "two.mp4", "three.mp4"):
+        path = tmp_path / name
+        path.write_bytes(b"video")
+        files.append(str(path))
+
+    manager = _mgr(tmp_path)
+    first = manager.enqueue_files(files, ["bilibili"])
+    assert first["queued"] == 3 and first["files"] == 3
+    assert first["skipped_uploaded"] == 0 and first["skipped_queued"] == 0
+    # 同一批又点一次：任务还在队列里，不重复入队
+    again = manager.enqueue_files(files, ["bilibili"])
+    assert again["queued"] == 0 and again["skipped_queued"] == 3
+    assert manager.count_jobs() == 3
+
+    # 一个成功、一个失败、一个仍在队
+    with sqlite3.connect(manager.db_path) as conn:
+        conn.execute(
+            "UPDATE upload_jobs SET status='completed' WHERE files_json LIKE ?", (f"%{files[0]}%",)
+        )
+        conn.execute("UPDATE upload_jobs SET status='failed' WHERE files_json LIKE ?", (f"%{files[1]}%",))
+    result = manager.enqueue_files(files, ["bilibili"])
+    assert (result["queued"], result["skipped_uploaded"], result["skipped_queued"]) == (1, 1, 1)
+    statuses = {j["files"][0]: j["status"] for j in manager.list_jobs()}
+    assert statuses[files[0]] == "completed"   # 已上传的不动
+    assert statuses[files[1]] == "pending"     # 失败的重投
+    assert manager.count_jobs() == 3           # 复用同一行，不膨胀
+
+
+def test_enqueue_files_skips_already_uploaded_pose_output(tmp_path):
+    output = tmp_path / "downloads" / "clip_merged.mp4"
+    output.parent.mkdir()
+    output.write_bytes(b"video")
+    manager = _mgr(tmp_path)
+    assert manager.enqueue_pose_outputs(
+        "pose-9", {"status": "completed", "trigger": "auto", "summary": {"output_files": [str(output)]}}
+    ) == 1
+    with sqlite3.connect(manager.db_path) as conn:
+        conn.execute("UPDATE upload_jobs SET status='completed'")
+
+    # 手动再选同一个文件：同渠道已上传过，跳过（来源不同也算）
+    result = manager.enqueue_files([str(output)], ["bilibili"])
+    assert result["queued"] == 0 and result["skipped_uploaded"] == 1
+    assert manager.count_jobs() == 1
+
+
+def test_enqueue_files_ignores_unknown_provider_and_missing_files(tmp_path):
+    path = tmp_path / "a.mp4"
+    path.write_bytes(b"video")
+    manager = _mgr(tmp_path)
+    assert manager.enqueue_files([str(path)], ["youtube"])["providers"] == []
+    assert manager.count_jobs() == 0
+    assert manager.enqueue_files([str(tmp_path / "gone.mp4")], ["bilibili"])["files"] == 0

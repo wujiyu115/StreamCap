@@ -15,9 +15,10 @@ import {
     RefreshCw,
     Sparkles,
     Trash2,
+    UploadCloud,
 } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
-import { mediaApi, poseApi } from "@/api"
+import { mediaApi, poseApi, uploadsApi } from "@/api"
 import type { MediaItem } from "@/api/types"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -61,6 +62,9 @@ export default function MediaPage() {
     const [previewItem, setPreviewItem] = useState<MediaItem | null>(null)
     const [lastViewed, setLastViewed] = useState<string | null>(null)
     const [cleanOpen, setCleanOpen] = useState(false)
+    // 批量上传：选中的文件/文件夹 → 选渠道 → 进自动上传队列（后端按文件×渠道去重跳过已上传）
+    const [uploadOpen, setUploadOpen] = useState(false)
+    const [uploadProviders, setUploadProviders] = useState<string[]>([])
     // 清理阈值持久化（原版 LS_THRESH 同款）：|| 兜底，空串/未存时回默认 10
     const [cleanMb, setCleanMb] = useState(() => localStorage.getItem("media-clean-mb") || "10")
     const [search, setSearch] = useState("")
@@ -252,10 +256,7 @@ export default function MediaPage() {
 
     const submitPose = async () => {
         // 文件夹也允许提交（后端递归展开为目录内全部视频）
-        const targets = Array.from(selected).filter((rel) => {
-            const item = items.find((i) => i.rel_path === rel)
-            return item && (item.type === "video" || item.type === "folder")
-        })
+        const targets = selectedTargets()
         if (targets.length === 0) return
         const ok = await confirmBox({
             description: tf("pose.submitConfirm", { count: targets.length }),
@@ -264,6 +265,56 @@ export default function MediaPage() {
         if (ok) {
             poseMutation.mutate(targets)
         }
+    }
+
+    const channelsQuery = useQuery({
+        queryKey: ["upload-channels"],
+        queryFn: () => uploadsApi.channels(),
+        enabled: uploadOpen,
+    })
+
+    // 打开对话框时默认勾选已启用的渠道（用户已经改过选择就不覆盖）
+    useEffect(() => {
+        if (!uploadOpen || !channelsQuery.data) return
+        const all = channelsQuery.data.channels
+        setUploadProviders((prev) =>
+            prev.length ? prev : all.filter((ch) => ch.enabled).map((ch) => ch.provider),
+        )
+    }, [uploadOpen, channelsQuery.data])
+
+    const uploadMutation = useMutation({
+        mutationFn: (vars: { paths: string[]; providers: string[] }) =>
+            uploadsApi.enqueue(vars.paths, vars.providers),
+        onSuccess: (res) => {
+            if (res.queued > 0) {
+                toast.success(
+                    tf("media.uploadQueued", {
+                        queued: res.queued,
+                        uploaded: res.skipped_uploaded,
+                        pending: res.skipped_queued,
+                    }),
+                )
+            } else {
+                toast.info(t("media.uploadAllSkipped"))
+            }
+            setUploadOpen(false)
+            // 设置页的上传记录列表跟着刷新
+            queryClient.invalidateQueries({ queryKey: ["uploads"] })
+        },
+        onError: (e: Error) => toast.error(translateError(e.message)),
+    })
+
+    // 与人体识别同一套目标筛选：文件夹也允许提交（后端递归展开成目录内全部视频）
+    const selectedTargets = () =>
+        Array.from(selected).filter((rel) => {
+            const item = items.find((i) => i.rel_path === rel)
+            return item && (item.type === "video" || item.type === "folder")
+        })
+
+    const submitUpload = () => {
+        const targets = selectedTargets()
+        if (targets.length === 0 || uploadProviders.length === 0) return
+        uploadMutation.mutate({ paths: targets, providers: uploadProviders })
     }
 
     const navigate = (rel: string) => {
@@ -378,6 +429,16 @@ export default function MediaPage() {
                     <Button
                         variant="outline"
                         size="sm"
+                        disabled={selected.size === 0 || uploadMutation.isPending}
+                        onClick={() => setUploadOpen(true)}
+                        title={t("media.batchUpload")}
+                    >
+                        <UploadCloud className="h-4 w-4" />
+                        <span className="hidden sm:inline">{t("media.batchUpload")}</span>
+                    </Button>
+                    <Button
+                        variant="outline"
+                        size="sm"
                         disabled={selected.size === 0 || poseMutation.isPending}
                         onClick={submitPose}
                     >
@@ -482,6 +543,67 @@ export default function MediaPage() {
                 </div>
             )}
             </div>
+            {/* 批量上传对话框：选渠道后把选中项交给自动上传队列 */}
+            <Dialog open={uploadOpen} onOpenChange={setUploadOpen}>
+                <DialogContent className="max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>{t("media.batchUpload")}</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-3">
+                        <p className="text-xs text-muted-foreground">{t("media.uploadDialogDesc")}</p>
+                        <div className="space-y-1.5">
+                            <div className="text-sm font-medium">{t("media.uploadChannel")}</div>
+                            {channelsQuery.isLoading ? (
+                                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                            ) : (channelsQuery.data?.channels.length ?? 0) === 0 ? (
+                                <p className="text-xs text-muted-foreground">{t("media.uploadNoChannel")}</p>
+                            ) : (
+                                <div className="space-y-2">
+                                    {channelsQuery.data!.channels.map((ch) => (
+                                        <label
+                                            key={ch.provider}
+                                            className="flex items-center gap-2 rounded-md border p-2 text-sm"
+                                        >
+                                            <Checkbox
+                                                checked={uploadProviders.includes(ch.provider)}
+                                                onCheckedChange={(v) =>
+                                                    setUploadProviders((prev) =>
+                                                        v
+                                                            ? [...new Set([...prev, ch.provider])]
+                                                            : prev.filter((p) => p !== ch.provider),
+                                                    )
+                                                }
+                                            />
+                                            <span className="font-medium">
+                                                {ch.provider === "bilibili" ? "Bilibili" : ch.provider}
+                                            </span>
+                                            {!ch.enabled && (
+                                                <Badge variant="secondary">
+                                                    {t("media.uploadDisabledChannel")}
+                                                </Badge>
+                                            )}
+                                            {ch.status === "blocked_auth" && (
+                                                <Badge variant="destructive">
+                                                    {t("media.uploadBlockedChannel")}
+                                                </Badge>
+                                            )}
+                                        </label>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                        <Button
+                            className="w-full"
+                            disabled={uploadMutation.isPending || uploadProviders.length === 0}
+                            onClick={submitUpload}
+                        >
+                            {uploadMutation.isPending && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
+                            {t("media.uploadAction")}
+                        </Button>
+                    </div>
+                </DialogContent>
+            </Dialog>
+
             {/* 清理对话框 */}
             <Dialog open={cleanOpen} onOpenChange={setCleanOpen}>
                 <DialogContent className="max-w-md">
@@ -585,7 +707,7 @@ function MediaCard({
         .join(" ")
 
     return (
-        <article className={cls} onClick={onClick}>
+        <article className={cls} onClick={onClick} data-testid={`media-item-${item.rel_path}`}>
             {/* 勾选框：网格模式叠在缩略图左上角；列表模式由 CSS 移到卡片左缘独立列 */}
             <Checkbox
                 className="media-check absolute left-2 top-2 z-10 grid h-6 w-6 place-items-center rounded-md bg-black/40 ring-offset-0 data-[state=checked]:bg-black/60"

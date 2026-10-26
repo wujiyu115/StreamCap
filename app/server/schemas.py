@@ -120,3 +120,10 @@ class PoseTaskSubmitRequest(BaseModel):
     paths: list[str]
     trigger: str = "manual"
     overrides: dict | None = None
+
+
+class UploadEnqueueRequest(BaseModel):
+    """手动批量上传：paths 是媒体根目录下的相对路径（文件或文件夹，文件夹递归展开）。"""
+
+    paths: list[str] = Field(default_factory=list)
+    providers: list[str] = Field(default_factory=list)

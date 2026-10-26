@@ -17,6 +17,9 @@ from .providers import BilibiliProvider
 
 _RETRY_DELAYS = (60, 300, 900, 3600)
 
+# 「任务还没结束」的状态：同一文件再次提交时不能重复入队
+_ACTIVE_STATUSES = ("pending", "uploading", "retrying", "blocked_auth")
+
 
 class UploadManager:
     """单工作线程持久上传队列；渠道实现通过 provider 注册表解耦。"""
@@ -161,6 +164,91 @@ class UploadManager:
             logger.info(f"人体识别产物已加入上传队列: {source_task_id} ({inserted} channel(s))")
             self._prune_jobs()
         return inserted
+
+    def enqueue_files(self, files: list[str], providers: list[str]) -> dict:
+        """手动批量上传入队（走与自动上传同一条队列）。
+
+        去重按「文件 × 渠道」：任意来源（自动识别产物或手动选文件）的上传记录里
+        已经有该文件时就不再重复上传——已成功算 ``skipped_uploaded``，还在队列里
+        算 ``skipped_queued``；只有失败过的会重置成 pending 重投。
+        手动任务的 ``source_task_id`` 用 ``file:<绝对路径>``，配合唯一键天然幂等。
+        """
+        paths = [os.path.abspath(p) for p in files if p and os.path.isfile(p)]
+        result = {
+            "files": len(paths),
+            "queued": 0,
+            "skipped_uploaded": 0,
+            "skipped_queued": 0,
+            "providers": [],
+        }
+        if not paths:
+            return result
+
+        now = datetime.now().isoformat(timespec="seconds")
+        with self._connect() as conn:
+            for name in providers:
+                if name not in self._providers or name in result["providers"]:
+                    continue
+                result["providers"].append(name)
+                index: dict[str, list[str]] = {}
+                for row in conn.execute(
+                    "SELECT status, files_json FROM upload_jobs WHERE provider=?", (name,)
+                ):
+                    for path in json.loads(row["files_json"]):
+                        index.setdefault(path, []).append(row["status"])
+
+                for path in paths:
+                    states = index.get(path) or []
+                    if "completed" in states:
+                        result["skipped_uploaded"] += 1
+                        continue
+                    if any(state in _ACTIVE_STATUSES for state in states):
+                        result["skipped_queued"] += 1
+                        continue
+
+                    source_key = f"file:{path}"
+                    # 失败过的同文件同渠道记录直接复用（次数清零重投），不新增行
+                    reset = conn.execute(
+                        "UPDATE upload_jobs SET status='pending', attempts=0, next_attempt_at=0, "
+                        "message='', updated_at=? "
+                        "WHERE source_task_id=? AND provider=? AND status='failed'",
+                        (now, source_key, name),
+                    ).rowcount
+                    if not reset:
+                        reset = conn.execute(
+                            """
+                            INSERT OR IGNORE INTO upload_jobs
+                            (id, source_task_id, provider, status, files_json, title, metadata_json,
+                             attempts, next_attempt_at, created_at, updated_at)
+                            VALUES (?, ?, ?, 'pending', ?, ?, ?, 0, 0, ?, ?)
+                            """,
+                            (
+                                uuid.uuid4().hex,
+                                source_key,
+                                name,
+                                json.dumps([path], ensure_ascii=False),
+                                self._file_title(path),
+                                json.dumps({"origin": "manual", "source_path": path}, ensure_ascii=False),
+                                now,
+                                now,
+                            ),
+                        ).rowcount
+                    if reset:
+                        result["queued"] += 1
+                        index.setdefault(path, []).append("pending")
+
+        if result["queued"]:
+            logger.info(
+                f"手动上传已入队: {result['queued']} 个文件 · 渠道 {', '.join(result['providers'])} "
+                f"（跳过已上传 {result['skipped_uploaded']}、队列中 {result['skipped_queued']}）"
+            )
+            self._prune_jobs()
+        return result
+
+    @staticmethod
+    def _file_title(path: str) -> str:
+        stem = Path(path).stem.removesuffix("_merged")
+        return stem[:80] or Path(path).name[:80]
 
     def list_channels(self) -> list[dict]:
         configured = (self._config_getter().get("uploads") or {}).get("providers") or {}

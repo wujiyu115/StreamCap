@@ -123,6 +123,9 @@ export const uploadsApi = {
     retry: (jobId: string) => api.post<{ ok: boolean }>(`/uploads/${jobId}/retry`),
     resumeChannel: (provider: string) =>
         api.post<{ ok: boolean }>(`/uploads/channels/${provider}/resume`),
+    channels: () => api.get<{ channels: import("./types").UploadChannel[] }>("/uploads/channels"),
+    enqueue: (paths: string[], providers: string[]) =>
+        api.post<import("./types").UploadEnqueueResponse>("/uploads/enqueue", { paths, providers }),
 }
 
 export const poseApi = {

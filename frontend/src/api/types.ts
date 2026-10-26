@@ -272,6 +272,15 @@ export interface UploadsResponse {
     per_page: number
 }
 
+export interface UploadEnqueueResponse {
+    files: number
+    queued: number
+    skipped_uploaded: number
+    skipped_queued: number
+    providers: string[]
+    missing: string[]
+}
+
 export interface PoseTaskState {
     task_id: string | null
     task_dir: string | null
