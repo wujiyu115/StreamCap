@@ -98,6 +98,11 @@ export const douyinApi = {
         api.get<import("./types").DouyinLiveResponse>(
             `/douyin/following/live${refresh ? "?refresh=true" : ""}`,
         ),
+    // 推荐直播（首页「换一批」那批）；没配 Cookie 也能读（平台给热门榜）
+    recommendLive: (refresh = false) =>
+        api.get<import("./types").DouyinRecommendFeed>(
+            `/douyin/live/recommend${refresh ? "?refresh=true" : ""}`,
+        ),
     liveStream: (webRid: string, quality?: string, refresh = false) =>
         api.get<import("./types").DouyinLiveStream>(
             `/douyin/live/stream?web_rid=${encodeURIComponent(webRid)}` +

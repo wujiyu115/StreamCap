@@ -29,7 +29,7 @@
         "analytics": "数据分析",
         "settings": "设置",
         "about": "关于",
-        "following": "关注"
+        "following": "直播"
     },
     "login": {
         "title": "StreamCap 登录",
@@ -512,14 +512,20 @@
         "uploadNoChannel": "没有选择上传渠道"
     },
     "following": {
-        "title": "关注",
-        "subtitle": "用抖音 Cookie 读取我关注的人",
+        "title": "直播",
+        "subtitle": "关注的人在播 + 抖音推荐直播，不登录也能看推荐",
         "cookieMissing": "还没配置抖音 Cookie。关注列表需要带登录态的 Cookie（只填 ttwid 不够），点「扫码登录」最快，也可以去设置页的 Cookies 里填入 douyin Cookie",
         "goSettings": "去设置",
         "loginExpired": "抖音 Cookie 登录态已失效，点右边「扫码登录」用抖音 App 重新登录，或去设置页粘贴最新 Cookie（要含 sessionid）",
         "cookieExpiring": "抖音登录态 {days} 天后到期（{date}），现在点「扫码登录」续一下，免得看着看着掉线",
         "tabAll": "全部关注",
         "tabLive": "正在直播",
+        "tabRecommend": "推荐直播",
+        "recommendPersonal": "按你的兴趣推荐（每批全新）",
+        "recommendHot": "热门直播（登录后按你的兴趣推荐）",
+        "recommendShuffle": "换一批",
+        "emptyRecommend": "这次没拿到推荐直播间，点「换一批」再试试",
+        "seeRecommend": "看看推荐直播",
         "liveNow": "直播中",
         "verified": "认证",
         "followers": "粉丝 {count}",

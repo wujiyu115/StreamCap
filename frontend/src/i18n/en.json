@@ -29,7 +29,7 @@
         "analytics": "Analytics",
         "settings": "Settings",
         "about": "About",
-        "following": "Following"
+        "following": "Live"
     },
     "login": {
         "title": "StreamCap Login",
@@ -512,14 +512,20 @@
         "uploadNoChannel": "No upload channel selected"
     },
     "following": {
-        "title": "Following",
-        "subtitle": "Read who you follow on Douyin with your cookie",
+        "title": "Live",
+        "subtitle": "Who you follow is live right now, plus Douyin recommendations — recommendations work without signing in",
         "cookieMissing": "No Douyin cookie yet. The following list needs a logged-in cookie (ttwid alone is not enough) — “Scan QR to sign in” is quickest, or paste the douyin cookie in Settings.",
         "goSettings": "Open Settings",
         "loginExpired": "The Douyin cookie has expired. Use “Scan QR to sign in” with the Douyin app, or paste a fresh cookie (must contain sessionid) in Settings.",
         "cookieExpiring": "The Douyin session expires in {days} days ({date}). Scan to renew now so playback does not drop mid-stream.",
         "tabAll": "All following",
         "tabLive": "Live now",
+        "tabRecommend": "Recommended",
+        "recommendPersonal": "Recommended for your interests (a fresh batch each time)",
+        "recommendHot": "Popular live rooms (sign in for personalised picks)",
+        "recommendShuffle": "New batch",
+        "emptyRecommend": "No recommended rooms this time — hit “New batch” to try again",
+        "seeRecommend": "Browse recommendations",
         "liveNow": "Live",
         "verified": "Verified",
         "followers": "{count} followers",

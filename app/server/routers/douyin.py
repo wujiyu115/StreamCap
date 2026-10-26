@@ -17,6 +17,7 @@ import threading
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ...core.platforms import douyin_following as following
+from ...core.platforms import douyin_live_feed as live_feed
 from ...core.platforms import douyin_login as login
 from ...core.platforms.room_validity import resolve_platform_proxy
 from ...utils.logger import logger
@@ -120,6 +121,20 @@ async def list_following_live(
     cookie, proxy = _douyin_context(services)
     store = following.get_store()
     return await _dispatch(services, store.live(cookie, proxy, _slot(services), refresh=refresh))
+
+
+@router.get("/live/recommend")
+async def list_recommend_live(
+    refresh: bool = Query(False),
+    user: str = Depends(get_current_user),
+    services=Depends(get_services),
+):
+    """推荐直播（抖音首页那批「换一批」的房间；默认 60s 缓存）。
+
+    Cookie 不是必须的：配了就是强个性化（每批全新），没配/失效自动退回热门榜。"""
+    cookie, proxy = _douyin_context(services, require_cookie=False)
+    store = live_feed.get_store()
+    return await _dispatch(services, store.feed(cookie, proxy, _slot(services), refresh=refresh))
 
 
 @router.get("/live/stream")

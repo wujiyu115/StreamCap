@@ -375,6 +375,14 @@ export interface DouyinLiveResponse {
     fetched_at: number
 }
 
+/** 推荐直播：同一批房间结构与「关注在播」一致，前端共用卡片与播放器 */
+export interface DouyinRecommendFeed {
+    rooms: DouyinLiveRoom[]
+    /** true = 按登录态个性化；false = 热门榜（没配 Cookie 或登录态失效时的自动降级） */
+    personalized: boolean
+    fetched_at: number
+}
+
 /** 直播间播放直链（抖音 CDN 签名地址，主盯重开会换 stream id） */
 export interface DouyinLiveStream {
     web_rid: string

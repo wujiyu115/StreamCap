@@ -7,6 +7,7 @@ import {
     QrCode,
     Radio,
     RefreshCw,
+    Sparkles,
     UserMinus,
     Users,
 } from "lucide-react"
@@ -39,6 +40,7 @@ const PAGE_SIZES = [20, 50, 100]
 const queryKeys = {
     self: ["douyin-self"] as const,
     live: ["douyin-live"] as const,
+    recommend: ["douyin-live-recommend"] as const,
     following: (page: number, pageSize: number) => ["douyin-following", page, pageSize] as const,
 }
 
@@ -275,9 +277,11 @@ function CookieNotice({ text, action }: { text: string; action?: React.ReactNode
 export default function FollowingPage() {
     const { t, tf, lang } = useI18n()
     const queryClient = useQueryClient()
-    const [tab, setTab] = useState("all")
+    // null = 还没手动选过：按有没有登录态自动落到「关注在播」或「推荐」
+    const [pickedTab, setPickedTab] = useState<string | null>(null)
     const [page, setPage] = useState(1)
     const [pageSize, setPageSize] = useState(20)
+    const [shuffling, setShuffling] = useState(false)
     const [preset, setPreset] = useState<{ url: string; streamer_name: string } | null>(null)
     const [dialogOpen, setDialogOpen] = useState(false)
     const [playerRoom, setPlayerRoom] = useState<DouyinLiveRoom | null>(null)
@@ -327,9 +331,21 @@ export default function FollowingPage() {
         enabled: hasCookie,
         retry: false,
     })
+    // 推荐直播：不需要登录态（没有 Cookie 时平台给热门榜），所以无条件拉
+    const recommend = useQuery({
+        queryKey: queryKeys.recommend,
+        queryFn: () => douyinApi.recommendLive(),
+        retry: false,
+        staleTime: 60_000,
+    })
+
+    // 默认落在「关注在播」；没登录态就看推荐（整页不登录也有东西看）
+    const tab = pickedTab ?? (hasCookie ? "live" : "recommend")
+    const setTab = setPickedTab
 
     // 在播房间索引：优先按 sec_uid 配对，退化到 short_id == web_rid
     const liveRooms = live.data?.rooms ?? []
+    const recommendRooms = recommend.data?.rooms ?? []
     const liveBySecUid = useMemo(() => {
         const map = new Map<string, DouyinLiveRoom>()
         for (const room of liveRooms) {
@@ -405,6 +421,18 @@ export default function FollowingPage() {
         }
     }
 
+    // 「换一批」：抖音推荐流没有真分页（回传游标只会拿到重叠数据），只能整批重取
+    const shuffleRecommend = async () => {
+        setShuffling(true)
+        try {
+            queryClient.setQueryData(queryKeys.recommend, await douyinApi.recommendLive(true))
+        } catch (e) {
+            toast.error(errorText(e) ?? t("common.failed"))
+        } finally {
+            setShuffling(false)
+        }
+    }
+
     const userRow = (user: DouyinFollowingUser) => (
         <UserRow
             key={user.sec_uid}
@@ -466,12 +494,8 @@ export default function FollowingPage() {
             {genericError && <ErrorNotice text={errorText(genericError) ?? t("common.failed")} />}
 
             <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
-                <TabsList className="w-fit">
-                    <TabsTrigger value="all">
-                        <Users className="mr-1 h-4 w-4" />
-                        {t("following.tabAll")}
-                    </TabsTrigger>
-                    <TabsTrigger value="live">
+                <TabsList className="w-fit max-w-full overflow-x-auto">
+                    <TabsTrigger value="live" data-testid="tab-live">
                         <Radio className="mr-1 h-4 w-4" />
                         {t("following.tabLive")}
                         {liveRooms.length > 0 && (
@@ -479,6 +503,14 @@ export default function FollowingPage() {
                                 {liveRooms.length}
                             </Badge>
                         )}
+                    </TabsTrigger>
+                    <TabsTrigger value="recommend" data-testid="tab-recommend">
+                        <Sparkles className="mr-1 h-4 w-4" />
+                        {t("following.tabRecommend")}
+                    </TabsTrigger>
+                    <TabsTrigger value="all" data-testid="tab-all">
+                        <Users className="mr-1 h-4 w-4" />
+                        {t("following.tabAll")}
                     </TabsTrigger>
                 </TabsList>
 
@@ -570,8 +602,66 @@ export default function FollowingPage() {
                         </div>
                     )}
                     {!live.isLoading && (live.data?.rooms.length ?? 0) === 0 && (
+                        <div className="flex flex-col items-center gap-3 py-10 text-center text-sm text-muted-foreground">
+                            <span>{t("following.emptyLive")}</span>
+                            <Button size="sm" variant="outline" onClick={() => setTab("recommend")}>
+                                <Sparkles className="mr-1 h-3.5 w-3.5" />
+                                {t("following.seeRecommend")}
+                            </Button>
+                        </div>
+                    )}
+                </TabsContent>
+
+                <TabsContent
+                    value="recommend"
+                    className="mt-3 min-h-0 flex-1 overflow-auto data-[state=inactive]:hidden"
+                >
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-xs text-muted-foreground" data-testid="recommend-source">
+                            {recommend.data?.personalized
+                                ? t("following.recommendPersonal")
+                                : t("following.recommendHot")}
+                        </span>
+                        <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={shuffleRecommend}
+                            disabled={shuffling || recommend.isLoading}
+                            data-testid="recommend-shuffle"
+                        >
+                            {shuffling ? (
+                                <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                            ) : (
+                                <RefreshCw className="mr-1 h-4 w-4" />
+                            )}
+                            {t("following.recommendShuffle")}
+                        </Button>
+                    </div>
+                    {recommend.error && (
+                        <ErrorNotice text={errorText(recommend.error) ?? t("common.failed")} />
+                    )}
+                    {recommend.isLoading && (
+                        <div className="grid gap-3 md:grid-cols-2">
+                            {Array.from({ length: 4 }).map((_, i) => (
+                                <Skeleton key={i} className="h-24 w-full rounded-lg" />
+                            ))}
+                        </div>
+                    )}
+                    {recommendRooms.length > 0 && (
+                        <div className="grid gap-3 md:grid-cols-2" data-testid="recommend-grid">
+                            {recommendRooms.map((room) => (
+                                <LiveRoomCard
+                                    key={`${room.web_rid}-${room.room_id}`}
+                                    room={room}
+                                    onMonitor={openMonitor}
+                                    onPlay={setPlayerRoom}
+                                />
+                            ))}
+                        </div>
+                    )}
+                    {!recommend.isLoading && !recommend.error && recommendRooms.length === 0 && (
                         <div className="py-10 text-center text-sm text-muted-foreground">
-                            {t("following.emptyLive")}
+                            {t("following.emptyRecommend")}
                         </div>
                     )}
                 </TabsContent>
@@ -588,9 +678,10 @@ export default function FollowingPage() {
                 open={loginOpen}
                 onOpenChange={setLoginOpen}
                 onSuccess={() => {
-                    // 新 Cookie 到了：关注 / 在播 / 自己都得重拉（旧缓存是按旧 Cookie 绑的）
+                    // 新 Cookie 到了：关注 / 在播 / 推荐 / 自己都得重拉（旧缓存是按旧 Cookie 绑的）
                     void queryClient.invalidateQueries({ queryKey: queryKeys.self })
                     void queryClient.invalidateQueries({ queryKey: queryKeys.live })
+                    void queryClient.invalidateQueries({ queryKey: queryKeys.recommend })
                     void queryClient.invalidateQueries({ queryKey: ["douyin-following"] })
                 }}
             />
