@@ -59,6 +59,56 @@ SALT = "A96D855A08C0A9707F8BEF0D9A527E4E"   # douyin_web 项目，写死在 VM �
 
 **服务端真取关是可行的**，不是「平台封死」。403 的直接原因是缺 `x-secsdk-web-signature`（可能叠加 TLS 指纹不匹配），而我们当时的探测因为「读接口不需要它」而完全没往这个方向想。
 
+## 3.4 实测：签名链已通（2026-10-27 15:01）
+
+用**不存在的 `user_id`**（`999999999999999999`，不产生任何真实关注关系）打 `POST /aweme/v1/web/commit/follow/user/`，得到下面这张矩阵（httpx，无 `curl_cffi`，无 msToken，无 ticket-guard）：
+
+| 变体 | 结果 |
+| --- | --- |
+| `www` + 无 secsdk 签名（复现历史行为） | **403，空 body** |
+| `www` + secsdk 签名（放 query） | 403，空 body |
+| `www` + secsdk 签名 + 三个头 | 403，空 body |
+| `www-hj` + secsdk 签名（只放 query） | 403（`x-alicdn-da-ups-status: endOs,0,403`，边缘拦截） |
+| **`www-hj` + secsdk 签名 + 三个头** | **200** `{"status_code":8,"status_msg":"用户未登录"}` |
+
+「三个头」= `uifid`、`x-secsdk-web-signature`、`x-secsdk-web-expire`（+ `x-secsdk-csrf-token` 取 cookie 里的 `passport_csrf_token`）。
+
+**结论：403 墙已经过去了。** 返回的是**业务错误码**而不是风控拒绝，说明签名/TLS/参数这一层被服务端接受了，剩下的唯一变量是登录态（当时那份 Cookie 的 `www` 会话已失效，见下）。没有用 ticket-guard、没有用 dtrait、没有用 msToken、没有 `curl_cffi`。
+
+签名拼装顺序（实测可用，与 `DouyinDataReview` 的 `signSecsdkUrl` 一致）：
+
+```
+query1 = 设备参数 + uifid + verifyFp/fp
+query2 = query1 + "&a_bogus=" + quote(ab_sign(query1, UA))      # a_bogus 先签
+query3 = 规范化(query2) + "&timestamp=" + ts                    # value 解码后重编码，末尾追加 ts
+sig    = md5(f"{uifid}_{ts}_{SALT}_{query3}")
+URL    = host + path + "?" + query3 + "&x-secsdk-web-signature=" + sig
+```
+
+顺带查出一个**会骗人的缓存**：`/api/douyin/following/self` 默认读 `FollowingStore` 的 10 分钟缓存，会话死了它照样返回上次的账号信息（我一开始就被它骗了，以为生产登录态还活着）。带 `?refresh=true` 立刻暴露：`HTTP 400 err.douyinLoginRequired`。判断登录态一律加 `refresh=true`。
+
+## 3.5 第二轮：登录态有效时，写请求仍 403 且**会把会话弄死**（2026-10-27 15:1x）
+
+用户重新扫码登录后（`self?refresh=true` → 200 / `status_code: 0`，账号 Helix），同一条请求再打：
+
+| 步骤 | 结果 |
+| --- | --- |
+| `p.py` 先读 self | 200，`status_code: 0`（登录态确实活了）| 
+| `p.py` 写接口 × 2（www / www-hj，secsdk 签名 + 三头已齐）| **403 空 body** |
+| `p2.py` 再读 self | 200，`status_code: 8 用户未登录` ← **会话死了** |
+| `p2.py` 写接口 × 6（现取 csrf 头 / 目标页 referer / 拼 msToken 等组合）| 全部 200 + `status_code: 8`（已经只是未登录，不是风控）|
+| 回到生产 `self?refresh=true` | **400 `err.douyinLoginRequired`** |
+
+文件 `cookies.json` 的 mtime / md5 全程未变（15:08 / `9baf7243…`），所以不是 Cookie 被改写或被别人刷掉——**是写请求本身把会话打死**。
+
+推论：
+
+1. `403` 是请求层拒绝，且**发生在会话还有效的时候**；不是「未登录」的别名。
+2. 被拒之后会话随即失效，说明 Argus 把这次请求判为「异常设备/行为」并连带作废了登录态——这与 2026-10-26 那次「注入 Cookie 的浏览器被判未登录」是同一个机制：**会话绑浏览器侧凭据**。
+3. 所以剩下缺的不是参数，而是那套**设备凭据**：`bd-ticket-guard-client-data`（P-256 ECDH + HKDF + HMAC，ticket 来自登录态）、`x-tt-session-dtrait`，以及可能的 `msToken`（生产 Cookie 里**没有**这个键）。这也解释了为什么 `DouyinDataReview` 的 `ree_path` 白名单里恰好包含 `/aweme/v1/web/commit/follow/user/`。
+
+⚠️ **代价**：每失败一次探测就把会话打死一次，用户得重新扫码；对真实账号反复触发 Argus 也有被风控/要求验证的风险。要接着试必须用一次性小号，不能拿主号刷。
+
 ## 4. 真要打通还缺什么
 
 按依赖顺序，逐项都是已开源可抄的：
@@ -73,14 +123,16 @@ SALT = "A96D855A08C0A9707F8BEF0D9A527E4E"   # douyin_web 项目，写死在 VM �
 | `x-tt-session-dtrait` | 未实现 | 中：AES-128-CBC + RSA PKCS#1，需 `cryptography` 或 `pycryptodome`；`dtrait` blob 与 sdkVersion 需从页面捞 |
 | TLS / HTTP2 指纹 | 现用 `httpx` | 低：`curl_cffi` + `impersonate="chrome"`（creatorhub 就是这么过的） |
 
+> 2026-10-27 实测修正：前面三项（secsdk 签名、csrf、a_bogus）已由我们亲手验证过——签名链能过。卡住的是**最后三项里的设备凭据**（ticket-guard / dtrait / msToken）。
+
 **枚举分歧要实测确认**：取关的 `type`，`DouyinDataReview` 用 `0`（关注用 `1`），`creatorhub` 用 `2`（关注用 `1`）。两者不可能都对，写错就是业务错误码而不是 403。
 
-## 5. 建议的验证顺序（关键：不牺牲生产登录态）
+## 5. 建议的验证顺序（关键：不牺牲生产登录态 / 不拿主号刷）
 
 1. **先验签名链，不动任何真实关系**：拿一个**不存在的 `user_id`**（如 `1` 或随机 19 位）打 `commit/follow/user/`。
    - 返回业务错误码（`status_code != 0`）⇒ 请求层被接受，签名/TLS 都对，继续；
    - 返回 403 / 空 body ⇒ 还缺东西（优先怀疑 ticket-guard / dtrait）。
-   - 这一步不产生任何关注或取关，风险最低。**但仍然要用 Cookie，所以必须先跟用户确认可以拿当前登录态试。**
+   - 这一步不产生任何关注或取关，风险最低。**注意：2026-10-27 实测证明连这一步都会把会话打死**（见 §3.5）——所以这一轮和后面所有轮都应该在**一次性小号**上做，不要用主号。
 2. 用**一次性小号**的登录态做真实验证：关注一个目标 → 取关 → 读回 `follow_status` 确认。
 3. 两项都过，再谈接进 StreamCap（后端 `douyin_following.py` 旁边加 `douyin_write.py`，前端把跳转换回真按钮 + 二次确认 + 失败回滚提示）。
 
