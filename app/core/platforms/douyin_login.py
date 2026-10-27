@@ -31,6 +31,15 @@ from typing import Any, Callable, Protocol
 from ...utils.logger import logger
 
 HOMEPAGE = "https://www.douyin.com/"
+# 登录入口所在页面。实测（2026-10-27，生产容器 4C/loadavg 2.5）用 /user/self 比首页
+# 早 ~6s 出「登录」按钮、且动画/播放器 chunk 少，出码总耗时 74s → 30s。
+# 打不开时回落到 HOMEPAGE（老路径，行为不变）。
+LOGIN_ENTRY_URL = "https://www.douyin.com/user/self"
+# 浏览器 profile 目录（持久化 HTTP 缓存用）。抖音登录框要现拉 4 个域的一堆风控 SDK
+# （secure-consumer-sdk / uc-secure-dtrait-core / rc-verifycenter/@latest…），全新
+# context 每次都从零下载，实测复用一个 profile 能省 ~17s。注意这里面**存着登录态**
+# Cookie，和 cookies.json 一个等级，别打进镜像/仓库。
+PROFILE_DIRNAME = "douyin_login_profile"
 # 抖音的登录框有几种形态：普通扫码、二次安全验证（#uc-second-verify）
 QR_BOX_SELECTOR = "#douyin_login_comp_scan_code #animate_qrcode_container"
 VERIFY_BOX_SELECTOR = "#uc-second-verify #uc_verification_animate_qrcode_container"
@@ -49,11 +58,12 @@ BROWSER_TAG_ENV = "STREAMCAP_DY_LOGIN_TAG"
 
 LOGIN_TIMEOUT = 300.0  # 等扫码的总时长（秒）
 POLL_INTERVAL = 1.5  # 轮询间隔
-QR_START_TIMEOUT = 120.0  # 从打开首页到拿到第一张码的时限
-#   NAS 实测：空载一次性容器 27s；生产容器刚重启（模型加载、152 个任务抢 CPU）75s
-#   才出码——留薄了必翻车，反正总时限 LOGIN_TIMEOUT=300s 兜着
+QR_START_TIMEOUT = 120.0  # 从打开页面到拿到第一张码的时限
+#   2026-10-27 生产容器实测（4C / loadavg 2.5）：首页 + 全新 context 74s；
+#   持久 profile + /user/self 冷启 37s、热启 29s。旧路径刚重启（模型加载、152 个任务
+#   抢 CPU）能到 75s——留薄了必翻车，反正总时限 LOGIN_TIMEOUT=300s 兜着
 QR_RELOAD_AFTER = 90.0  # 码没变也超过这么久就整页 reload 兜底（token 可能已换）
-LOGIN_ENTRY_TIMEOUT = 20.0  # 等首页渲染出「登录」入口的时限（容器里首屏可能要十几秒）
+LOGIN_ENTRY_TIMEOUT = 25.0  # 等页面渲染出「登录」入口的时限（容器里首屏要 18~24s）
 LOGIN_ENTRY_POLL = 0.5
 LOGIN_ENTRY_TEXTS = ("登录", "立即登录")
 # 只要有其中之一就认为登录态已经落到浏览器里（与 DDr 的 LOGIN_NAMES 一致）
@@ -280,6 +290,22 @@ class DouyinLoginSession:
 # ------------------------------------------------------------------ 真浏览器
 
 
+def _profile_dir(explicit: str | None = None) -> str:
+    """登录用 chromium 的持久 profile 目录（存在即复用 HTTP 缓存）。
+
+    位置跟 cookies.json 同级（``<运行目录>/config/``），因为里面同样存着登录态。
+    目录建不出来/不可写时不抦：调用方会 catch 并退回无缓存模式。
+    """
+    if explicit:
+        os.makedirs(explicit, exist_ok=True)
+        return explicit
+    from ..runtime.paths import user_data_dir
+
+    path = os.path.join(str(user_data_dir), "config", PROFILE_DIRNAME)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
 def _iter_browser_procs(proc_root: str = "/proc"):
     """遍历「名字像浏览器」的进程，产出 ``(pid, comm, state, ppid)``。"""
     try:
@@ -360,12 +386,13 @@ def reap_zombie_children(proc_root: str = "/proc") -> int:
 class PlaywrightDriver:
     """headless chromium-headless-shell 实现（pyproject/镜像里带 playwright 才有）。"""
 
-    def __init__(self) -> None:
+    def __init__(self, profile_dir: str | None = None) -> None:
         self._playwright = None
         self._browser = None
         self._context = None
         self._page = None
         self._tag = ""
+        self._profile_dir = profile_dir
 
     def open(self) -> None:
         try:
@@ -376,31 +403,57 @@ class PlaywrightDriver:
             ) from exc
         self._playwright = sync_playwright().start()
         self._tag = os.urandom(8).hex()
-        try:
-            # env 里带上标记，关闭后好按标记收尸（传全量 os.environ，不赌合并语义）
-            self._browser = self._playwright.chromium.launch(
-                headless=True,
-                args=LAUNCH_ARGS,
-                env=dict(os.environ, **{BROWSER_TAG_ENV: self._tag}),
-            )
-        except Exception as exc:
-            self._playwright.stop()
-            self._playwright = None
-            raise LoginUnavailable(f"浏览器启动失败：{exc}") from exc
-        self._context = self._browser.new_context(
+        # env 里带上标记，关闭后好按标记收尸（传全量 os.environ，不赌合并语义）
+        launch_env = dict(os.environ, **{BROWSER_TAG_ENV: self._tag})
+        launch_kwargs = dict(
+            headless=True,
+            args=LAUNCH_ARGS,
+            env=launch_env,
             user_agent=REAL_UA,  # 必须伪装，否则整页变滑块拼图
             viewport={"width": 1440, "height": 900},
             locale="zh-CN",
             timezone_id="Asia/Shanghai",
         )
+        self._context = None
+        try:
+            # 持久 profile：复用 HTTP 缓存，省掉每次重下风控 SDK 的十几秒
+            self._context = self._playwright.chromium.launch_persistent_context(
+                _profile_dir(self._profile_dir), **launch_kwargs
+            )
+            self._browser = self._context.browser
+        except Exception as exc:
+            # profile 目录不可用（只读挂载/损坏）不该让整个登录挂掉：退回无缓存模式
+            logger.warning(f"Douyin login persistent profile unavailable, falling back: {exc}")
+            try:
+                self._browser = self._playwright.chromium.launch(
+                    headless=True, args=LAUNCH_ARGS, env=launch_env
+                )
+                self._context = self._browser.new_context(
+                    user_agent=REAL_UA,
+                    viewport={"width": 1440, "height": 900},
+                    locale="zh-CN",
+                    timezone_id="Asia/Shanghai",
+                )
+            except Exception as exc2:
+                self._playwright.stop()
+                self._playwright = None
+                raise LoginUnavailable(f"浏览器启动失败：{exc2}") from exc2
         self._context.add_init_script(WEBDRIVER_PATCH)
-        self._page = self._context.new_page()
-        self._page.goto(HOMEPAGE, wait_until="domcontentloaded", timeout=45_000)
-        self._page.wait_for_timeout(3_000)
+        # 持久 profile 会把上次的登录态一起带过来：那样页面压根不显示「登录」入口，
+        # 扫码流程直接判定失败。每个会话都从「未登录」开始（清 cookie 不动 HTTP 缓存，
+        # 缓存才是提速的那部分）。
+        try:
+            self._context.clear_cookies()
+        except Exception as exc:
+            logger.debug(f"Douyin login clear_cookies failed: {exc}")
+        pages = self._context.pages
+        self._page = pages[0] if pages else self._context.new_page()
+        self._goto_entry()
+        # 不复位固定 sleep：登录入口本身就晚十几秒才渲染，直接开始轮询（省 3s）
         if self._click_login():
             return
         # 首屏慢/偶发渲染失败：整页重来一次再等，比直接判死刑合理（生产上真踩过）
-        logger.info("Douyin login entry not found, reloading homepage once")
+        logger.info("Douyin login entry not found, reloading page once")
         self._reload_homepage()
         if self._click_login():
             return
@@ -409,15 +462,24 @@ class PlaywrightDriver:
             title, url = self._page.title()[:80], self._page.url[:120]
         except Exception:
             pass
-        raise LoginPageBlocked(f"抖音首页没找到「登录」入口（标题 {title!r}，地址 {url}）")
+        raise LoginPageBlocked(f"抖音页面没找到「登录」入口（标题 {title!r}，地址 {url}）")
+
+    def _goto_entry(self) -> None:
+        """先开轻量入口页，失败/没渲染再回落到首页。"""
+        assert self._page is not None
+        for url in (LOGIN_ENTRY_URL, HOMEPAGE):
+            try:
+                self._page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+                return
+            except Exception as exc:
+                logger.debug(f"Douyin login goto {url} failed: {exc}")
 
     def _reload_homepage(self) -> None:
         assert self._page is not None
         try:
             self._page.reload(wait_until="domcontentloaded", timeout=45_000)
-            self._page.wait_for_timeout(3_000)
         except Exception as exc:
-            logger.debug(f"Douyin homepage reload failed: {exc}")
+            logger.debug(f"Douyin page reload failed: {exc}")
 
     def _click_login(self, timeout: float = LOGIN_ENTRY_TIMEOUT) -> bool:
         """等首页把登录入口渲染出来再点（**必须轮询**）。

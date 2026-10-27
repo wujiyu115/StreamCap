@@ -599,3 +599,50 @@ def test_close_reaps_zombies_after_stopping_driver(monkeypatch):
     monkeypatch.setattr(dl, "reap_zombie_children", lambda: events.append("zombies") or 0)
     driver.close()
     assert events == ["tagged", "zombies"]
+
+
+# ---------------------------------------------------------------- 启动提速（2026-10-27）
+def test_login_entry_url_is_light_page_not_homepage():
+    """入口页必须是 /user/self：首页要等播放器 chunk，实测出码慢 40s+。"""
+    assert dl.LOGIN_ENTRY_URL.rstrip("/") == "https://www.douyin.com/user/self"
+    assert dl.LOGIN_ENTRY_URL != dl.HOMEPAGE
+
+
+def test_profile_dir_creates_and_reuses_explicit_path(tmp_path):
+    target = tmp_path / "prof"
+    assert dl._profile_dir(str(target)) == str(target)
+    assert target.is_dir()
+    # 幂等：目录已存在也不报错
+    assert dl._profile_dir(str(target)) == str(target)
+
+
+def test_profile_dir_defaults_under_config(tmp_path, monkeypatch):
+    from app.core.runtime import paths
+
+    monkeypatch.setattr(paths, "user_data_dir", tmp_path)
+    assert dl._profile_dir() == str(tmp_path / "config" / dl.PROFILE_DIRNAME)
+    assert (tmp_path / "config" / dl.PROFILE_DIRNAME).is_dir()
+
+
+def test_playwright_driver_accepts_profile_dir(tmp_path):
+    driver = dl.PlaywrightDriver(profile_dir=str(tmp_path / "p"))
+    assert driver._profile_dir == str(tmp_path / "p")
+
+
+def test_goto_entry_falls_back_to_homepage(tmp_path):
+    """入口页打不开（改版/超时）时要回落到首页，不能直接把整次登录判死。"""
+
+    class Page:
+        def __init__(self):
+            self.urls = []
+
+        def goto(self, url, **kwargs):
+            self.urls.append(url)
+            if url == dl.LOGIN_ENTRY_URL:
+                raise RuntimeError("net::ERR_TIMED_OUT")
+
+    page = Page()
+    driver = dl.PlaywrightDriver(profile_dir=str(tmp_path / "p"))
+    driver._page = page
+    driver._goto_entry()
+    assert page.urls == [dl.LOGIN_ENTRY_URL, dl.HOMEPAGE]

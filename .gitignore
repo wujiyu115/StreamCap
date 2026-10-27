@@ -97,6 +97,8 @@ ipython_config.py
 /config/.config_migrations.json
 # Cookie 覆盖前的备份（内容是各平台登录态，绝不能进仓库）
 /config/backups/
+# 扫码登录用的 chromium profile：存着抖音登录态 + HTTP 缓存，同样不能进仓库
+/config/douyin_login_profile/
 pose_output/
 .ruff_cache/
 logs/
