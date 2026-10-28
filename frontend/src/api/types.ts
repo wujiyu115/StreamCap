@@ -258,10 +258,14 @@ export interface UploadJob {
 export interface UploadChannel {
     provider: string
     enabled: boolean
-    status: "active" | "blocked_auth"
+    status: "active" | "blocked_auth" | "cooling"
     message: string
     notified: number
     updated_at: string | null
+    /** cooling 时的冷却到期 Unix 秒；0 表示没有冷却 */
+    resume_at: number
+    /** 连续限流次数，成功后归零 */
+    cool_downs: number
 }
 
 export interface UploadsResponse {

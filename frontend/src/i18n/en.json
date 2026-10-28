@@ -237,7 +237,8 @@
         "uploadBlockedChannel": "login expired",
         "uploadQueued": "Queued {queued} file(s) — skipped {uploaded} uploaded, {pending} already queued",
         "uploadAllSkipped": "Selected files were already uploaded or queued — nothing new added",
-        "uploadAction": "Start upload"
+        "uploadAction": "Start upload",
+        "uploadRateLimitedChannel": "rate limited"
     },
     "pose": {
         "title": "Pose processing",
@@ -445,7 +446,10 @@
         "monitorMinIntervalHint": "Minimum spacing between checks of the same platform to avoid rate-limit risk control; 0=unlimited",
         "monitorRecencyPriority": "Prioritize active rooms",
         "monitorRecencyPriorityHint": "Two tiers: rooms live within 2 days, or with average go-live interval ≤3 days (auto-tracked), are checked every round; others every 2 rounds (~6 min). Going live restores top tier",
-        "scanLoginHint": "Douyin cookie expired? Sign in with a QR code instead of copying the cookie by hand."
+        "scanLoginHint": "Douyin cookie expired? Sign in with a QR code instead of copying the cookie by hand.",
+        "uploadRateLimited": "Bilibili rate-limited uploads; automatic uploads are paused",
+        "uploadRateLimitedHint": "Post one video manually on bilibili.com or the app, clear the captcha/SMS check, then resume; cooling tasks do not consume retries",
+        "uploadRateLimitedUntil": "Cooling down until {time}, then retries automatically"
     },
     "bilibiliLogin": {
         "title": "Sign in to Bilibili",

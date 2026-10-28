@@ -12,10 +12,14 @@ from pathlib import Path
 
 from ...messages.message_pusher import MessagePusher
 from ...utils.logger import logger
-from .models import UploadAuthError, UploadRequest
+from .models import UploadAuthError, UploadRateLimited, UploadRequest
 from .providers import BilibiliProvider
 
 _RETRY_DELAYS = (60, 300, 900, 3600)
+
+# 风控冷却默认值：B 站「上传视频过快」实测不手动过验证能撑 3~4 天，6h 起步 + 翻倍封顶 24h
+_DEFAULT_COOLDOWN_SECONDS = 21600
+_DEFAULT_MAX_COOLDOWN_SECONDS = 86400
 
 # 「任务还没结束」的状态：同一文件再次提交时不能重复入队
 _ACTIVE_STATUSES = ("pending", "uploading", "retrying", "blocked_auth")
@@ -78,6 +82,20 @@ class UploadManager:
                     updated_at TEXT NOT NULL
                 )
                 """
+            )
+            self._migrate_channel_columns(conn)
+
+    @staticmethod
+    def _migrate_channel_columns(conn: sqlite3.Connection) -> None:
+        """老库补列：冷却到期时间与连续限流次数（只在缺失时 ALTER）。"""
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(upload_channels)")}
+        if "resume_at" not in columns:
+            conn.execute(
+                "ALTER TABLE upload_channels ADD COLUMN resume_at REAL NOT NULL DEFAULT 0"
+            )
+        if "cool_downs" not in columns:
+            conn.execute(
+                "ALTER TABLE upload_channels ADD COLUMN cool_downs INTEGER NOT NULL DEFAULT 0"
             )
 
     def _recover_interrupted(self) -> None:
@@ -264,6 +282,8 @@ class UploadManager:
                 "message": "",
                 "notified": 0,
                 "updated_at": None,
+                "resume_at": 0,
+                "cool_downs": 0,
             }
             item["enabled"] = bool(provider_config.get("enabled"))
             result.append(item)
@@ -273,18 +293,32 @@ class UploadManager:
         if provider not in self._providers:
             return False
         now = datetime.now().isoformat(timespec="seconds")
+        now_ts = time.time()
         with self._connect() as conn:
+            current = conn.execute(
+                "SELECT status FROM upload_channels WHERE provider=?", (provider,)
+            ).fetchone()
+            # 从限流冷却里恢复：保留 cool_downs/notified——用户没先去过验证就又撞上风控时，
+            # 退避继续翻倍且不重复推送（否则每次点「恢复上传」都会再拉一次 600s + 一条通知）。
+            # 从登录失效里恢复不一定是新 bug，但也可能是新的 cookie：通知重新计一次。
+            keep_episode = bool(current) and current["status"] == "cooling"
+            notified = "notified" if keep_episode else "0"
+            cool_downs = "cool_downs" if keep_episode else "0"
             conn.execute(
-                "INSERT INTO upload_channels(provider,status,message,notified,updated_at) "
-                "VALUES(?, 'active', '', 0, ?) "
-                "ON CONFLICT(provider) DO UPDATE SET status='active', message='', notified=0, "
-                "updated_at=excluded.updated_at",
+                "INSERT INTO upload_channels"
+                "(provider,status,message,notified,updated_at,resume_at,cool_downs) "
+                "VALUES(?, 'active', '', 0, ?, 0, 0) "
+                "ON CONFLICT(provider) DO UPDATE SET status='active', message='', "
+                f"notified={notified}, updated_at=excluded.updated_at, resume_at=0, "
+                f"cool_downs={cool_downs}",
                 (provider, now),
             )
+            # 用户显式恢复：把等登录/等冷却的任务立刻放行（其他正常指数退避的不动）
             conn.execute(
                 "UPDATE upload_jobs SET status='retrying', next_attempt_at=0, updated_at=? "
-                "WHERE provider=? AND status='blocked_auth'",
-                (now, provider),
+                "WHERE provider=? AND (status='blocked_auth' "
+                "OR (status='retrying' AND next_attempt_at > ?))",
+                (now, provider, now_ts),
             )
         return True
 
@@ -321,11 +355,13 @@ class UploadManager:
 
     def _next_job(self):
         with self._connect() as conn:
+            now_ts = time.time()
             row = conn.execute(
                 "SELECT j.* FROM upload_jobs j LEFT JOIN upload_channels c ON c.provider=j.provider "
                 "WHERE j.status IN ('pending','retrying') AND j.next_attempt_at <= ? "
-                "AND COALESCE(c.status, 'active')='active' ORDER BY j.created_at LIMIT 1",
-                (time.time(),),
+                "AND COALESCE(c.status, 'active')='active' "
+                "AND COALESCE(c.resume_at, 0) <= ? ORDER BY j.created_at LIMIT 1",
+                (now_ts, now_ts),
             ).fetchone()
             if row is None:
                 return None
@@ -360,6 +396,9 @@ class UploadManager:
             if provider is None:
                 raise RuntimeError(f"Unknown upload provider: {provider_name}")
             result = provider.upload(request, config)
+        except UploadRateLimited as exc:
+            self._cool_down(row, exc, attempts)
+            return
         except UploadAuthError as exc:
             self._block_auth(row, str(exc))
             return
@@ -395,8 +434,69 @@ class UploadManager:
                     row["id"],
                 ),
             )
+            # 一单成功说明风控已解除，冷却计数归零（下次再限流从 base 重新开始）
+            conn.execute(
+                "UPDATE upload_channels SET cool_downs=0, resume_at=0 WHERE provider=?",
+                (provider_name,),
+            )
         logger.success(f"上传任务完成: {provider_name} {result.remote_id or row['id']}")
         self._prune_jobs()
+
+    def _cool_down(self, row: dict, exc: Exception, attempts: int) -> None:
+        """平台风控/限流：整个渠道冷却，任务退回重试预算。
+
+        406/601 「上传视频过快」是账号级状态，逐任务重试只会把 5 次预算全部烧在
+        限流窗口里（2026-10-28 生产：40min 内 49 条任务全烧到第 4 次）。所以：
+        渠道 status=cooling + resume_at，所有任务一起停，attempts 回退 1。
+        """
+        uploads = self._config_getter().get("uploads") or {}
+        base = max(60, int(uploads.get("rate_limit_cooldown_seconds") or _DEFAULT_COOLDOWN_SECONDS))
+        cap = max(
+            base, int(uploads.get("rate_limit_max_cooldown_seconds") or _DEFAULT_MAX_COOLDOWN_SECONDS)
+        )
+        message = str(exc)[-4000:]
+        now_ts = time.time()
+        now = datetime.now().isoformat(timespec="seconds")
+        with self._connect() as conn:
+            channel = conn.execute(
+                "SELECT notified, cool_downs FROM upload_channels WHERE provider=?",
+                (row["provider"],),
+            ).fetchone()
+            count = int(channel["cool_downs"] if channel else 0) + 1
+            should_notify = channel is None or not bool(channel["notified"])
+            delay = min(base * (2 ** (count - 1)), cap)
+            resume_at = now_ts + delay
+            conn.execute(
+                "INSERT INTO upload_channels"
+                "(provider,status,message,notified,updated_at,resume_at,cool_downs) "
+                "VALUES(?, 'cooling', ?, 1, ?, ?, ?) "
+                "ON CONFLICT(provider) DO UPDATE SET status='cooling', message=excluded.message, "
+                "notified=1, updated_at=excluded.updated_at, resume_at=excluded.resume_at, "
+                "cool_downs=excluded.cool_downs",
+                (row["provider"], message, now, resume_at, count),
+            )
+            conn.execute(
+                "UPDATE upload_jobs SET status='retrying', attempts=?, next_attempt_at=?, "
+                "message=?, updated_at=? WHERE id=?",
+                (max(0, attempts - 1), resume_at, message, now, row["id"]),
+            )
+        logger.warning(
+            f"上传渠道被平台限流，冷却 {delay}s: {row['provider']} "
+            f"(第 {count} 次连续限流，attempt 不计数) -> {message[-300:]}"
+        )
+        if should_notify:
+            needs_verify = bool(getattr(exc, "needs_verify", False))
+            hint = (
+                "平台已经挂出待过的验证：去 B 站网页端/App 手动投稿一次，把弹出的人机或短信验证过掉，"
+                if needs_verify
+                else "去 B 站网页端或 App 手动投稿一次（会要求人机/短信验证），把验证过掉，"
+            )
+            self._notify(
+                "StreamCap B站上传被限流",
+                f"{hint}"
+                "然后回到「设置 → 自动上传」点「恢复上传」。"
+                f"积压任务不会消耗重试次数，{max(1, round(delay / 60))} 分钟后也会自动再试。",
+            )
 
     def _block_auth(self, row: dict, message: str) -> None:
         now = datetime.now().isoformat(timespec="seconds")
@@ -407,10 +507,11 @@ class UploadManager:
             ).fetchone()
             should_notify = channel is None or not bool(channel["notified"])
             conn.execute(
-                "INSERT INTO upload_channels(provider,status,message,notified,updated_at) "
-                "VALUES(?, 'blocked_auth', ?, 1, ?) "
+                "INSERT INTO upload_channels"
+                "(provider,status,message,notified,updated_at,resume_at,cool_downs) "
+                "VALUES(?, 'blocked_auth', ?, 1, ?, 0, 0) "
                 "ON CONFLICT(provider) DO UPDATE SET status='blocked_auth', message=excluded.message, "
-                "notified=1, updated_at=excluded.updated_at",
+                "notified=1, updated_at=excluded.updated_at, resume_at=0, cool_downs=0",
                 (row["provider"], message[-4000:], now),
             )
             conn.execute(

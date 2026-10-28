@@ -237,7 +237,8 @@
         "uploadBlockedChannel": "登录失效",
         "uploadQueued": "已加入队列 {queued} 个文件（跳过已上传 {uploaded} 个、已在队列 {pending} 个）",
         "uploadAllSkipped": "选中的文件都已上传过或已在队列中，没有新增任务",
-        "uploadAction": "开始上传"
+        "uploadAction": "开始上传",
+        "uploadRateLimitedChannel": "限流冷却"
     },
     "pose": {
         "title": "人体识别处理",
@@ -445,7 +446,10 @@
         "monitorMinIntervalHint": "同一平台相邻检测请求的最小间隔，摊开请求防风控；0=不限",
         "monitorRecencyPriority": "活跃房间优先监控",
         "monitorRecencyPriorityHint": "两档：最近 2 天播过、或平均开播间隔 ≤3 天（自动统计）的房间每轮都查，其余每 2 轮一次（约 6 分钟）；开播后自动回到高档",
-        "scanLoginHint": "抖音 Cookie 过期了？点右上角直接扫码登录，不用再去浏览器里手动复制 Cookie。"
+        "scanLoginHint": "抖音 Cookie 过期了？点右上角直接扫码登录，不用再去浏览器里手动复制 Cookie。",
+        "uploadRateLimited": "B站风控限流，自动上传已暂停",
+        "uploadRateLimitedHint": "去 B 站网页端或 App 手动投稿一次，把人机/短信验证过掉，再点「恢复上传」；冷却中的任务不会消耗重试次数",
+        "uploadRateLimitedUntil": "冷却至 {time}，之后会自动再试"
     },
     "bilibiliLogin": {
         "title": "扫码登录 Bilibili",

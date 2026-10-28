@@ -545,6 +545,20 @@ function UploadSettings() {
                         {t("common.refresh")}
                     </Button>
                 </div>
+                {(tasks.data?.channels ?? []).map((channel) => channel.status === "cooling" && (
+                    <div key={channel.provider} className="mb-3 rounded border border-amber-500/40 bg-amber-500/5 p-3" data-testid="upload-rate-limited">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                                <p className="font-medium text-amber-600">{t("settings.uploadRateLimited")}</p>
+                                <p className="mt-1 text-xs text-muted-foreground">{t("settings.uploadRateLimitedHint")}</p>
+                                <p className="mt-1 text-xs text-muted-foreground" data-testid="upload-rate-limited-until">
+                                    {tf("settings.uploadRateLimitedUntil", { time: formatDateTime(channel.resume_at ? new Date(channel.resume_at * 1000).toISOString() : null, lang) })}
+                                </p>
+                            </div>
+                            <Button size="sm" onClick={() => resume.mutate(channel.provider)} disabled={resume.isPending}>{t("settings.uploadResume")}</Button>
+                        </div>
+                    </div>
+                ))}
                 {(tasks.data?.channels ?? []).map((channel) => channel.status === "blocked_auth" && (
                     <div key={channel.provider} className="mb-3 rounded border border-destructive/40 bg-destructive/5 p-3">
                         <div className="flex flex-wrap items-center justify-between gap-2">

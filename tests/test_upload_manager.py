@@ -1,7 +1,10 @@
 from __future__ import annotations
-import os
 
+import os
 import sqlite3
+import time
+
+import pytest
 
 from app.core.upload.manager import UploadManager
 from app.core.upload.models import UploadAuthError, UploadRequest
@@ -244,3 +247,282 @@ def test_enqueue_files_ignores_unknown_provider_and_missing_files(tmp_path):
     assert manager.enqueue_files([str(path)], ["youtube"])["providers"] == []
     assert manager.count_jobs() == 0
     assert manager.enqueue_files([str(tmp_path / "gone.mp4")], ["bilibili"])["files"] == 0
+
+
+# 2026-10-28 生产环境 biliup 真实输出（去掉 ANSI 色码，其余逐字保留）
+_PRE_UPLOAD_SAMPLE = (
+    'pre_upload: {"build":2140000,"name":"彤宝_2026-10-12_15-31-52_000_merged.mp4",'
+    '"profile":"ugcupos/bup","r":"upos","size":27331032,"ssl":0,"version":"2.14.0"}'
+)
+REAL_406_OUTPUT = """biliup upload failed: 2026-10-28 11:28:09 INFO biliup_cli::uploader: user: bili_14714387372
+2026-10-28 11:28:09 INFO biliup_cli::uploader: number of concurrent futures: 3
+2026-10-28 11:28:09 INFO biliup_cli::uploader: No checkpoint found, starting fresh upload
+2026-10-28 11:28:10 INFO biliup::uploader::line: __PRE_UPLOAD_SAMPLE__
+Error: after retries
+├╴at crates/biliup-cli/src/uploader.rs:579:14
+│
+╰─▶ Failed to pre_upload from {"OK":0,"info":"您上传视频过快，请您稍作休息后再继续","code":406,"message":"您上传视频过快，请您稍作休息后再继续"}
+    ╰╴at crates/biliup-cli/src/uploader.rs:579:14""".replace(
+    "__PRE_UPLOAD_SAMPLE__", _PRE_UPLOAD_SAMPLE
+)
+
+
+def test_rate_limit_detector_recognises_real_platform_output():
+    """平台风控的 code 在不同版本/接口下不同，文案也不同，都要认出来。"""
+    from app.core.upload.providers.bilibili import detect_rate_limit
+
+    assert detect_rate_limit(REAL_406_OUTPUT) == (406, False)
+    # issue #1565：601 且响应里带 detail.v_voucher —— 说明平台已挂着待过的验证
+    assert detect_rate_limit(
+        'Failed to pre_upload from {"OK":0,"info":"您上传视频过快","code":601,'
+        '"detail":{"v_voucher":"voucher_09f7b9d6-10fa-4688-90"}}'
+    ) == (601, True)
+    # issue #1362：submit 回的是 Rust Debug 而不是 JSON，code 是 21566
+    assert detect_rate_limit(
+        'ResponseData { code: 21566, data: None, message: "投稿过于频繁，建议将APP升级至最新版本后再试", ttl: Some(1) }'
+    ) == (21566, False)
+    assert detect_rate_limit('Failed to pre_upload from {"code":21564,"message":"上传过于频繁请等待24小时"}') == (21564, False)
+    # 普通失败不能被误判成限流
+    assert detect_rate_limit("Error: file not found") is None
+    assert detect_rate_limit('Web 接口投稿失败: ResponseData { code: 21001, message: "参数错误" }') is None
+
+
+def test_provider_raises_rate_limited_for_real_406(tmp_path, monkeypatch):
+    import subprocess
+
+    from app.core.upload.models import UploadRateLimited
+
+    cookie = tmp_path / "cookies.json"
+    cookie.write_text("{}")
+    video = tmp_path / "v_merged.mp4"
+    video.write_bytes(b"video")
+    provider = BilibiliProvider(str(tmp_path), executable="/usr/bin/biliup")
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(a[0], 1, stdout=REAL_406_OUTPUT),
+    )
+    provider_config = {**_config()["uploads"]["providers"]["bilibili"], "cookie_file": str(cookie)}
+    with __import__("pytest").raises(UploadRateLimited) as info:
+        provider.upload(UploadRequest("job", [str(video)], "标题"), provider_config)
+    assert info.value.code == 406
+    assert info.value.needs_verify is False
+
+
+def test_rate_limit_cools_channel_without_burning_attempts(tmp_path):
+    """406 是账号级风控：整个渠道冷却、任务重试预算不扣，而不是逐任务烧 5 次。"""
+    from app.core.upload.models import UploadRateLimited
+
+    output = tmp_path / "sample_merged.mp4"
+    output.write_bytes(b"video")
+    config = _config()
+    config["uploads"]["rate_limit_cooldown_seconds"] = 1800
+    manager = _mgr(tmp_path, config)
+    state = {"status": "completed", "trigger": "auto", "summary": {"output_files": [str(output)]}}
+    assert manager.enqueue_pose_outputs("rate-task", state) == 1
+
+    class LimitedProvider:
+        def upload(self, request, provider_config):
+            raise UploadRateLimited("Bilibili rate limited (code=406)", code=406)
+
+    manager._providers["bilibili"] = LimitedProvider()
+    row = manager._next_job()
+    manager._process(row)
+
+    job = manager.list_jobs()[0]
+    assert job["status"] == "retrying"
+    assert job["attempts"] == 0            # 限流不消耗重试预算（max_attempts=2 只有 2 次）
+    assert job["next_attempt_at"] > time.time()
+    channel = manager.list_channels()[0]
+    assert channel["status"] == "cooling"
+    assert channel["cool_downs"] == 1
+    assert channel["resume_at"] == pytest.approx(job["next_attempt_at"], abs=1)
+
+    # 冷却期间任务即使到期也不取（否则队列会立刻把冷却打穿）
+    with sqlite3.connect(manager.db_path) as conn:
+        conn.execute("UPDATE upload_jobs SET next_attempt_at=0")
+    assert manager._next_job() is None
+
+    # 冷却到期后自己恢复
+    with sqlite3.connect(manager.db_path) as conn:
+        conn.execute("UPDATE upload_channels SET resume_at=0, status='active'")
+    resumed = manager._next_job()
+    assert resumed["id"] == job["id"]
+    assert resumed["attempts"] == 0
+
+
+def test_cooldown_escalates_caps_and_notifies_once_per_episode(tmp_path):
+    from app.core.upload.models import UploadRateLimited
+
+    output = tmp_path / "sample_merged.mp4"
+    output.write_bytes(b"video")
+    config = _config()
+    config["uploads"]["rate_limit_cooldown_seconds"] = 60
+    config["uploads"]["rate_limit_max_cooldown_seconds"] = 240
+    manager = _mgr(tmp_path, config)
+
+    class Pusher:
+        def __init__(self):
+            self.calls = []
+
+        def push_messages_sync(self, title, content):
+            self.calls.append((title, content))
+
+    pusher = Pusher()
+    manager._message_pusher = pusher
+    state = {"status": "completed", "trigger": "auto", "summary": {"output_files": [str(output)]}}
+    manager.enqueue_pose_outputs("cool-task", state)
+
+    class LimitedProvider:
+        def upload(self, request, provider_config):
+            raise UploadRateLimited("Bilibili rate limited (code=406)", code=406)
+
+    manager._providers["bilibili"] = LimitedProvider()
+
+    def cool_once() -> float:
+        row = manager._next_job()
+        assert row is not None
+        manager._process(row)
+        channel = manager.list_channels()[0]
+        return channel["resume_at"] - time.time()
+
+    def expire_cooldown():
+        with sqlite3.connect(manager.db_path) as conn:
+            conn.execute("UPDATE upload_channels SET resume_at=0, status='active'")
+            conn.execute("UPDATE upload_jobs SET next_attempt_at=0")
+
+    assert cool_once() == pytest.approx(60, abs=2)
+    expire_cooldown()
+    assert cool_once() == pytest.approx(120, abs=2)   # 连续第二次翻倍
+    expire_cooldown()
+    assert cool_once() == pytest.approx(240, abs=2)   # 到上限
+    expire_cooldown()
+    assert cool_once() == pytest.approx(240, abs=2)   # 封顶不再涨
+    # 同一轮冷却只推一次（否则限流期间会被通知刷屏）
+    assert len(pusher.calls) == 1
+    assert "验证" in pusher.calls[0][1]
+
+    # 用户点「恢复上传」又立刻撞上风控：退避继续翻倍、不重复推送
+    assert manager.resume_channel("bilibili") is True
+    expire_cooldown()
+    assert cool_once() == pytest.approx(240, abs=2)
+    assert len(pusher.calls) == 1
+
+
+def test_resume_channel_clears_cooldown_and_releases_jobs(tmp_path):
+    from app.core.upload.models import UploadRateLimited
+
+    output = tmp_path / "sample_merged.mp4"
+    output.write_bytes(b"video")
+    config = _config()
+    manager = _mgr(tmp_path, config)
+    state = {"status": "completed", "trigger": "auto", "summary": {"output_files": [str(output)]}}
+    manager.enqueue_pose_outputs("resume-task", state)
+
+    class LimitedProvider:
+        def upload(self, request, provider_config):
+            raise UploadRateLimited("Bilibili rate limited (code=601)", code=601)
+
+    manager._providers["bilibili"] = LimitedProvider()
+    manager._process(manager._next_job())
+    assert manager._next_job() is None
+
+    assert manager.resume_channel("bilibili") is True
+    channel = manager.list_channels()[0]
+    assert channel["status"] == "active" and channel["resume_at"] == 0
+    # 限流恢复保留连续计数：用户没先去过验证就又撞风控时，退避继续翻倍而不是回到 600s
+    assert channel["cool_downs"] == 1 and channel["notified"] == 1
+    job = manager.list_jobs()[0]
+    assert job["status"] == "retrying" and job["next_attempt_at"] == 0
+    assert job["attempts"] == 0
+    assert manager._next_job() is not None
+
+
+def test_success_resets_cooldown_counter(tmp_path):
+    from app.core.upload.models import UploadResult
+
+    output = tmp_path / "sample_merged.mp4"
+    output.write_bytes(b"video")
+    manager = _mgr(tmp_path)
+    state = {"status": "completed", "trigger": "auto", "summary": {"output_files": [str(output)]}}
+    manager.enqueue_pose_outputs("ok-task", state)
+    with sqlite3.connect(manager.db_path) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO upload_channels(provider,status,message,notified,updated_at,"
+            "resume_at,cool_downs) VALUES('bilibili','active','',0,'2026-10-28T00:00:00',0,3)"
+        )
+
+    class OkProvider:
+        def upload(self, request, provider_config):
+            return UploadResult(provider="bilibili", remote_id="BV1xx411c7mD", message="ok")
+
+    manager._providers["bilibili"] = OkProvider()
+    manager._process(manager._next_job())
+    channel = manager.list_channels()[0]
+    assert channel["cool_downs"] == 0 and channel["resume_at"] == 0
+
+
+def test_old_channel_table_is_migrated_for_cooldown(tmp_path):
+    """生产库是旧 schema：没有 resume_at/cool_downs，启动时要补列且不动老数据。"""
+    db = tmp_path / "config" / "uploads.sqlite3"
+    db.parent.mkdir(parents=True)
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "CREATE TABLE upload_channels (provider TEXT PRIMARY KEY, "
+            "status TEXT NOT NULL DEFAULT 'active', message TEXT NOT NULL DEFAULT '', "
+            "notified INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL)"
+        )
+        conn.execute(
+            "INSERT INTO upload_channels VALUES('bilibili','blocked_auth','登录失效',1,"
+            "'2026-10-27T16:23:00')"
+        )
+
+    manager = _mgr(tmp_path)
+    with sqlite3.connect(manager.db_path) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(upload_channels)")}
+    assert {"resume_at", "cool_downs"} <= columns
+    channel = manager.list_channels()[0]
+    assert channel["status"] == "blocked_auth"   # 老状态原样保留
+    assert channel["message"] == "登录失效"
+    assert channel["resume_at"] == 0 and channel["cool_downs"] == 0
+
+
+def test_resume_from_blocked_auth_resets_notification(tmp_path):
+    """登录失效恢复后要能重新通知（换了 cookie 又过期时不能静默）。"""
+    manager = _mgr(tmp_path)
+    with sqlite3.connect(manager.db_path) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO upload_channels(provider,status,message,notified,updated_at,"
+            "resume_at,cool_downs) VALUES('bilibili','blocked_auth','登录失效',1,"
+            "'2026-10-28T00:00:00',0,2)"
+        )
+    assert manager.resume_channel("bilibili") is True
+    channel = manager.list_channels()[0]
+    assert channel["status"] == "active"
+    assert channel["notified"] == 0 and channel["cool_downs"] == 0
+
+
+def test_rate_limit_gives_back_last_attempt_so_backlog_survives(tmp_path):
+    """生产实况：48 条已烧到 attempts=4/5 的任务，撞 406 要退回 4 而不是直接终态失败。"""
+    from app.core.upload.models import UploadRateLimited
+
+    output = tmp_path / "sample_merged.mp4"
+    output.write_bytes(b"video")
+    config = _config()
+    config["uploads"]["max_attempts"] = 5
+    manager = _mgr(tmp_path, config)
+    state = {"status": "completed", "trigger": "auto", "summary": {"output_files": [str(output)]}}
+    manager.enqueue_pose_outputs("last-chance", state)
+    with sqlite3.connect(manager.db_path) as conn:
+        conn.execute("UPDATE upload_jobs SET attempts=4, next_attempt_at=0")
+
+    class LimitedProvider:
+        def upload(self, request, provider_config):
+            raise UploadRateLimited("Bilibili rate limited (code=406)", code=406)
+
+    manager._providers["bilibili"] = LimitedProvider()
+    manager._process(manager._next_job())
+
+    job = manager.list_jobs()[0]
+    assert job["status"] == "retrying"      # 不是 failed
+    assert job["attempts"] == 4             # 最后一次机会被退回

@@ -587,6 +587,11 @@ export default function MediaPage() {
                                                     {t("media.uploadBlockedChannel")}
                                                 </Badge>
                                             )}
+                                            {ch.status === "cooling" && (
+                                                <Badge variant="secondary">
+                                                    {t("media.uploadRateLimitedChannel")}
+                                                </Badge>
+                                            )}
                                         </label>
                                     ))}
                                 </div>
