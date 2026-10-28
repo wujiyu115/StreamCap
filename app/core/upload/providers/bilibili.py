@@ -4,9 +4,17 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
-from ..models import UploadAuthError, UploadRateLimited, UploadRequest, UploadResult
+from ....utils.logger import logger
+from ..models import (
+    UploadAuthError,
+    UploadLineUnavailable,
+    UploadRateLimited,
+    UploadRequest,
+    UploadResult,
+)
 
 _REMOTE_ID = re.compile(r"\b(BV[0-9A-Za-z]{10})\b")
 _AUTH_ERROR_PATTERNS = (
@@ -38,6 +46,25 @@ _CODE_RE = re.compile(r'"?code"?\s*[:=]\s*(-?\d+)')
 # 风控已经挂出待过的验证（B 站 601 响应会带 detail.v_voucher），能区分出「要人工过验证」
 _VERIFY_RE = re.compile(r"v_voucher|需要验证|请完成验证|短信验证|验证码")
 
+# 上传线路节点证书失效：2026-10-28 生产撞到 bldsa 线路三个节点里两个的 TLS 证书
+# 2026-07-11 就过期了（biliup 报 invalid peer certificate ... not valid after 1783746060），
+# biliup 用 rustls 严格校验、也没有 skip-verify 选项，同轮 4 次重试都打在同一台 → 必挂。
+# 探线是按延迟挑最快的，坏节点很容易被反复选中，所以撞上就临时钉一条备用线路，
+# 过一阵放回自动探线（否则那条快线修好了也永远用不到）。
+_CERT_ERROR_MARKERS = (
+    "invalid peer certificate",
+    "certificate expired",
+    "certificate is not valid after",
+)
+_LINE_FALLBACKS = ("tx", "bda2")
+_LINE_FORCE_SECONDS = 1800
+
+
+def detect_cert_error(output: str) -> bool:
+    """判断 biliup 输出里是否有上传线路的证书校验失败（平台侧坏节点）。"""
+    lowered = output.lower()
+    return any(marker in lowered for marker in _CERT_ERROR_MARKERS)
+
 
 def detect_rate_limit(output: str) -> tuple[int | None, bool] | None:
     """识别 biliup 输出里的风控/限流；不是这类错误时返回 None。
@@ -63,6 +90,30 @@ class BilibiliProvider:
     def __init__(self, run_path: str, executable: str = "biliup"):
         self.run_path = os.path.abspath(run_path)
         self.executable = executable
+        #: 临时钉住的线路（None = 交给 biliup 自动探线）；worker 是单线程，无需加锁
+        self._line: str | None = None
+        self._line_until = 0.0
+
+    def active_line(self) -> str | None:
+        """当前是否钉住了某条线路；过了冷却期就放回自动探线。"""
+        if self._line is None:
+            return None
+        if time.time() < self._line_until:
+            return self._line
+        logger.info(f"B站上传线路 {self._line} 观察期满，恢复自动探线")
+        self._line = None
+        self._line_until = 0.0
+        return None
+
+    def switch_line(self, reason: str) -> str:
+        """换一条备用线路并临时钉住，返回新线路。"""
+        candidates = [line for line in _LINE_FALLBACKS if line != self._line] or list(_LINE_FALLBACKS)
+        self._line = candidates[0]
+        self._line_until = time.time() + _LINE_FORCE_SECONDS
+        logger.warning(
+            f"B站上传线路 {reason} 不可用，临时改用 {self._line}（{_LINE_FORCE_SECONDS}s 后恢复自动探线）"
+        )
+        return self._line
 
     def _resolve_cookie_file(self, configured: str) -> str:
         path = Path(configured or "config/bilibili/cookies.json")
@@ -91,6 +142,10 @@ class BilibiliProvider:
             "--limit",
             str(max(1, int(config.get("upload_threads") or 3))),
         ]
+        line = self.active_line()
+        if line:
+            # 透传 biliup 的线路选择，绕开探线会选中的坏节点
+            command.extend(["--line", line])
         description = str(config.get("description") or "").strip()
         if description:
             command.extend(["--desc", description])
@@ -133,6 +188,12 @@ class BilibiliProvider:
                     f"Bilibili rate limited (code={code}): {tail}",
                     code=code,
                     needs_verify=needs_verify,
+                )
+            if detect_cert_error(tail):
+                line = self.switch_line("biliup 探线选中的节点证书过期")
+                raise UploadLineUnavailable(
+                    f"上传线路节点 TLS 证书校验失败（平台侧问题，不是发布失败），"
+                    f"已改走线路 {line} 重试：{tail}"
                 )
             raise RuntimeError(f"biliup upload failed: {tail}")
         match = _REMOTE_ID.search(output)

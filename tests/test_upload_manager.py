@@ -744,3 +744,101 @@ def test_list_channels_reports_pacing_and_next_slot(tmp_path):
             (now,),
         )
     assert manager.list_channels()[0]["next_slot_at"] == now + 3 * 1800
+
+
+REAL_CERT_ERROR_OUTPUT = (
+    "2026-10-28 14:33:03  INFO biliup::uploader::line: Line { os: Upos, "
+    'probe_url: "//upos-cs-upcdnbldsa.bilivideo.com/OK", '
+    'query: "probe_version=20250923&upcdn=bldsa&zone=cs", cost: 132 }\n'
+    "2026-10-28 14:33:04 ERROR rustls_platform_verifier::verification::others: "
+    "failed to verify TLS certificate: invalid peer certificate: certificate expired: "
+    "verification time 1793169184 (UNIX), but certificate is not valid after "
+    "1783746060 (9423124 seconds ago)\n"
+    "Error: Unknown Error\n"
+    "├╴at crates/biliup-cli/src/uploader.rs:606:14\n"
+    "╰─▶ invalid peer certificate: certificate expired: verification time 1793169200 "
+    "(UNIX), but certificate is not valid after 1783746060 (9423140 seconds ago)"
+)
+
+
+def test_cert_error_is_not_mistaken_for_rate_limit_or_auth():
+    """探线坏节点的 TLS 错误不能被认成风控/登录失效，否则会误冷却、误暂停渠道。"""
+    from app.core.upload.providers.bilibili import detect_cert_error, detect_rate_limit
+
+    assert detect_cert_error(REAL_CERT_ERROR_OUTPUT) is True
+    assert detect_rate_limit(REAL_CERT_ERROR_OUTPUT) is None
+    assert detect_cert_error(REAL_406_OUTPUT) is False
+    assert detect_cert_error("Error: file not found") is False
+
+
+def test_provider_switches_line_on_cert_error(tmp_path, monkeypatch):
+    """撞到线路坏节点：换一条备用线路，并把 --line 透传给 biliup。"""
+    import subprocess
+
+    from app.core.upload.models import UploadLineUnavailable
+
+    cookie = tmp_path / "cookies.json"
+    cookie.write_text("{}")
+    video = tmp_path / "v_merged.mp4"
+    video.write_bytes(b"video")
+    provider = BilibiliProvider(str(tmp_path), executable="/usr/bin/biliup")
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(a[0], 1, stdout=REAL_CERT_ERROR_OUTPUT),
+    )
+    provider_config = {**_config()["uploads"]["providers"]["bilibili"], "cookie_file": str(cookie)}
+    request = UploadRequest("job", [str(video)], "标题")
+
+    # 首次自动探线，不带 --line
+    assert "--line" not in provider.build_command(request, provider_config)
+
+    with pytest.raises(UploadLineUnavailable):
+        provider.upload(request, provider_config)
+    assert provider.active_line() == "tx"
+    command = provider.build_command(request, provider_config)
+    assert command[command.index("--line") + 1] == "tx"
+
+    # 备用线路也坏：换下一条
+    with pytest.raises(UploadLineUnavailable):
+        provider.upload(request, provider_config)
+    assert provider.active_line() == "bda2"
+
+    # 观察期满放回自动探线，给那条快线自愈的机会
+    provider._line_until = time.time() - 1
+    assert provider.active_line() is None
+    assert "--line" not in provider.build_command(request, provider_config)
+
+
+def test_line_unavailable_retries_without_burning_attempts(tmp_path):
+    """换线是可恢复的：不扣重试预算、不冷却渠道、也不判 failed。"""
+    from app.core.upload.models import UploadLineUnavailable
+
+    output = tmp_path / "sample_merged.mp4"
+    output.write_bytes(b"video")
+    config = _config()
+    manager = _mgr(tmp_path, config)
+    state = {"status": "completed", "trigger": "auto", "summary": {"output_files": [str(output)]}}
+    assert manager.enqueue_pose_outputs("line-task", state) == 1
+
+    class BadLineProvider:
+        def upload(self, request, provider_config):
+            raise UploadLineUnavailable("上传线路节点 TLS 证书校验失败")
+
+    manager._providers["bilibili"] = BadLineProvider()
+    # max_attempts=2，连撞 3 次也不会变成 failed
+    for _ in range(3):
+        with sqlite3.connect(manager.db_path) as conn:
+            conn.execute("UPDATE upload_jobs SET next_attempt_at=0")
+            conn.execute("UPDATE upload_channels SET last_attempt_at=0, pacing_until=0")
+        row = manager._next_job()
+        assert row is not None
+        manager._process(row)
+        job = manager.list_jobs()[0]
+        assert job["status"] == "retrying"
+        assert job["attempts"] == 0
+        assert job["next_attempt_at"] > time.time()
+
+    channel = manager.list_channels()[0]
+    assert channel["status"] == "active"   # 不冷却渠道
+    assert channel["resume_at"] == 0

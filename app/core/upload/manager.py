@@ -12,7 +12,7 @@ from pathlib import Path
 
 from ...messages.message_pusher import MessagePusher
 from ...utils.logger import logger
-from .models import UploadAuthError, UploadRateLimited, UploadRequest
+from .models import UploadAuthError, UploadLineUnavailable, UploadRateLimited, UploadRequest
 from .providers import BilibiliProvider
 
 _RETRY_DELAYS = (60, 300, 900, 3600)
@@ -33,6 +33,9 @@ _DEFAULT_MIN_INTERVAL_SECONDS = 1800
 
 # 一单里最多放几个分P。生产实测 5 个连发安全；再多就是在赌 pre_upload 的突发阈值。
 _DEFAULT_MAX_PAGES_PER_JOB = 5
+
+# 上传线路节点证书失效后的重试间隔：已经换线了，不必拖 5 分钟
+_LINE_RETRY_SECONDS = 60
 
 # 「任务还没结束」的状态：同一文件再次提交时不能重复入队
 _ACTIVE_STATUSES = ("pending", "uploading", "retrying", "blocked_auth")
@@ -535,6 +538,9 @@ class UploadManager:
         except UploadRateLimited as exc:
             self._cool_down(row, exc, attempts)
             return
+        except UploadLineUnavailable as exc:
+            self._retry_other_line(row, exc, attempts)
+            return
         except UploadAuthError as exc:
             self._block_auth(row, str(exc))
             return
@@ -633,6 +639,26 @@ class UploadManager:
                 "然后回到「设置 → 自动上传」点「恢复上传」。"
                 f"积压任务不会消耗重试次数，{max(1, round(delay / 60))} 分钟后也会自动再试。",
             )
+
+    def _retry_other_line(self, row: dict, exc: Exception, attempts: int) -> None:
+        """上传线路的节点证书失效（平台侧坏节点）：换线重试，不烧重试预算。
+
+        provider 已经自动钉了一条备用线路，这里只需排一次短重试。不判 failed：
+        这不是内容/账号问题，熬完 5 次预算变成 failed 反而要人工重提。
+        """
+        now_ts = time.time()
+        now = datetime.now().isoformat(timespec="seconds")
+        delay = _LINE_RETRY_SECONDS
+        message = str(exc)[-4000:]
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE upload_jobs SET status='retrying', attempts=?, next_attempt_at=?, "
+                "message=?, updated_at=? WHERE id=?",
+                (max(0, attempts - 1), now_ts + delay, message, now, row["id"]),
+            )
+        logger.warning(
+            f"上传线路不可用，{delay}s 后换线重试（attempt 不计数）: {row['provider']} -> 见任务日志"
+        )
 
     def _block_auth(self, row: dict, message: str) -> None:
         now = datetime.now().isoformat(timespec="seconds")
