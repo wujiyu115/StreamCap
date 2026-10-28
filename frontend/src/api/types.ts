@@ -266,6 +266,10 @@ export interface UploadChannel {
     resume_at: number
     /** 连续限流次数，成功后归零 */
     cool_downs: number
+    /** 该渠道两个投稿之间的最小间隔（秒），来自 uploads.min_interval_seconds */
+    min_interval_seconds: number
+    /** 下一次能投递的 Unix 秒（冷却到期或节奏门窗口）；0 表示现在就能投 */
+    next_slot_at: number
 }
 
 export interface UploadsResponse {

@@ -291,7 +291,7 @@
         "uploadAttempts": "attempts",
         "uploadRetry": "Retry now",
         "uploadResume": "Resume uploads",
-        "uploadChannelResumed": "Upload channel resumed",
+        "uploadChannelResumed": "Uploads resumed: one item starts now, the rest follow the minimum interval (see next submission slot below)",
         "uploadLoginExpired": "Bilibili login expired; automatic uploads are paused",
         "uploadLoginExpiredHint": "Update config/bilibili/cookies.json, then resume; queued tasks will not consume retries",
         "uploadStatusPending": "Pending",
@@ -449,7 +449,13 @@
         "scanLoginHint": "Douyin cookie expired? Sign in with a QR code instead of copying the cookie by hand.",
         "uploadRateLimited": "Bilibili rate-limited uploads; automatic uploads are paused",
         "uploadRateLimitedHint": "Post one video manually on bilibili.com or the app, clear the captcha/SMS check, then resume; cooling tasks do not consume retries",
-        "uploadRateLimitedUntil": "Cooling down until {time}, then retries automatically"
+        "uploadRateLimitedUntil": "Cooling down until {time}, then retries automatically",
+        "uploadPacing": "Upload pacing",
+        "uploadPacingHint": "Bilibili throttles by account frequency (\"you are uploading too fast\" / \"posting too frequently\"). This sets the minimum gap between two submissions. A folder upload queues one job per file, so picking 10 files queues 10 jobs.",
+        "uploadMinInterval": "Minimum interval (minutes)",
+        "uploadMinIntervalHint": "30 minutes per job by default (2 per hour). Too small a value hits the rate limiter, which cools the whole channel for 6h and escalates on repeat.",
+        "uploadNextSlot": "Next submission slot",
+        "uploadNextSlotNow": "Ready to submit now"
     },
     "bilibiliLogin": {
         "title": "Sign in to Bilibili",

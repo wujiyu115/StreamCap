@@ -294,8 +294,20 @@ class UploadManager:
                 "updated_at": None,
                 "resume_at": 0,
                 "cool_downs": 0,
+                "last_attempt_at": 0,
             }
             item["enabled"] = bool(provider_config.get("enabled"))
+            interval = self._channel_interval(name)
+            item["min_interval_seconds"] = interval
+            # 下一次能投递的时刻（0 = 现在就可以）：冷却中看 resume_at，否则看节奏门。
+            # 前端靠它告诉用户「点了恢复为什么队列还没动」。
+            next_slot = 0.0
+            if item.get("status") == "cooling":
+                next_slot = float(item.get("resume_at") or 0)
+            gate = float(item.get("last_attempt_at") or 0) + interval
+            if gate > time.time() and gate > next_slot:
+                next_slot = gate
+            item["next_slot_at"] = next_slot
             result.append(item)
         return result
 

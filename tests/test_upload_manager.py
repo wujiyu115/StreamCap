@@ -597,3 +597,32 @@ def test_channel_interval_config_and_floor(tmp_path):
     # 脏值回落默认
     config["uploads"]["providers"]["bilibili"]["min_interval_seconds"] = "abc"
     assert manager._channel_interval("bilibili") == 1800
+
+
+def test_list_channels_reports_pacing_and_next_slot(tmp_path):
+    """前端靠 next_slot_at 解释「点了恢复为什么队列还没动」，必须如实反映冷却与节奏门。"""
+    config = _config()
+    config["uploads"]["min_interval_seconds"] = 1800
+    manager = _mgr(tmp_path, config)
+    channel = manager.list_channels()[0]
+    assert channel["min_interval_seconds"] == 1800
+    assert channel["next_slot_at"] == 0                      # 没投过：现在就能投
+
+    # 刚投过一单：下一单要等到 +30 分钟
+    now = time.time()
+    with sqlite3.connect(manager.db_path) as conn:
+        conn.execute(
+            "INSERT INTO upload_channels(provider,status,message,notified,updated_at,last_attempt_at)"
+            " VALUES('bilibili','active','',0,'2026-10-28T12:26:51',?)",
+            (now,),
+        )
+    channel = manager.list_channels()[0]
+    assert abs(channel["next_slot_at"] - (now + 1800)) < 5
+
+    # 冷却中：取冷却到期时刻（比节奏门更晚的那个）
+    with sqlite3.connect(manager.db_path) as conn:
+        conn.execute(
+            "UPDATE upload_channels SET status='cooling', resume_at=?, cool_downs=1 WHERE provider='bilibili'",
+            (now + 9000,),
+        )
+    assert manager.list_channels()[0]["next_slot_at"] == now + 9000

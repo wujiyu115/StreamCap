@@ -499,6 +499,7 @@ function UploadSettings() {
     const uploads = (form.values.uploads ?? {}) as Rec
     const providers = (uploads.providers ?? {}) as Rec
     const bilibili = (providers.bilibili ?? {}) as Rec
+    const bilibiliChannel = (tasks.data?.channels ?? []).find((c) => c.provider === "bilibili")
     const setUpload = (key: string, value: unknown) => form.set("uploads", { ...uploads, [key]: value })
     const setBilibili = (key: string, value: unknown) => form.set("uploads", {
         ...uploads,
@@ -516,9 +517,39 @@ function UploadSettings() {
     return (
         <div className="space-y-4">
             <div className="rounded-lg border bg-card p-4">
-                <div className="flex items-center justify-between">
+                <div className="mb-4 flex items-center justify-between">
                     <div><h3 className="font-semibold">{t("settings.uploadEnabled")}</h3><p className="text-xs text-muted-foreground">{t("settings.uploadEnabledHint")}</p></div>
                     <Switch checked={Boolean(uploads.enabled)} onCheckedChange={(v) => setUpload("enabled", v)} />
+                </div>
+            </div>
+            <div className="rounded-lg border bg-card p-4">
+                <div className="mb-4">
+                    <h3 className="font-semibold">{t("settings.uploadPacing")}</h3>
+                    <p className="mt-1 text-xs text-muted-foreground">{t("settings.uploadPacingHint")}</p>
+                </div>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div className="space-y-1.5">
+                        <Label>{t("settings.uploadMinInterval")}</Label>
+                        <Input
+                            type="number"
+                            min={1}
+                            step={5}
+                            value={String(Math.round(Number(uploads.min_interval_seconds ?? 1800) / 60))}
+                            onChange={(e) => {
+                                const minutes = Math.max(1, Math.round(Number(e.target.value) || 0))
+                                setUpload("min_interval_seconds", minutes * 60)
+                            }}
+                        />
+                        <p className="text-xs text-muted-foreground">{t("settings.uploadMinIntervalHint")}</p>
+                    </div>
+                    <div className="space-y-1.5">
+                        <Label>{t("settings.uploadNextSlot")}</Label>
+                        <p className="text-sm" data-testid="upload-next-slot">
+                            {bilibiliChannel?.next_slot_at
+                                ? formatDateTime(new Date(bilibiliChannel.next_slot_at * 1000).toISOString(), lang)
+                                : t("settings.uploadNextSlotNow")}
+                        </p>
+                    </div>
                 </div>
             </div>
             <div className="rounded-lg border bg-card p-4">

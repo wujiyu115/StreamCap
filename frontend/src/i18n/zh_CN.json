@@ -291,7 +291,7 @@
         "uploadAttempts": "已尝试",
         "uploadRetry": "立即重试",
         "uploadResume": "恢复上传",
-        "uploadChannelResumed": "上传渠道已恢复",
+        "uploadChannelResumed": "已恢复上传：马上投一单，之后按「最小间隔」排队（看下方下一单投递时间）",
         "uploadLoginExpired": "B站登录已失效，自动上传已暂停",
         "uploadLoginExpiredHint": "请更新 config/bilibili/cookies.json 后再恢复；积压任务不会消耗重试次数",
         "uploadStatusPending": "等待中",
@@ -449,7 +449,13 @@
         "scanLoginHint": "抖音 Cookie 过期了？点右上角直接扫码登录，不用再去浏览器里手动复制 Cookie。",
         "uploadRateLimited": "B站风控限流，自动上传已暂停",
         "uploadRateLimitedHint": "去 B 站网页端或 App 手动投稿一次，把人机/短信验证过掉，再点「恢复上传」；冷却中的任务不会消耗重试次数",
-        "uploadRateLimitedUntil": "冷却至 {time}，之后会自动再试"
+        "uploadRateLimitedUntil": "冷却至 {time}，之后会自动再试",
+        "uploadPacing": "投稿节奏",
+        "uploadPacingHint": "B 站按账号频率风控（「您上传视频过快」/「投稿过于频繁」），这里控制相邻两次投稿的最小间隔。文件夹上传是每个文件一单，所以一次选 10 个文件就会排成 10 单。",
+        "uploadMinInterval": "最小间隔（分钟）",
+        "uploadMinIntervalHint": "默认 30 分钟一单（每小时 2 单）。填太小容易撞风控，撞上后整条渠道会冷却 6 小时起、且越撞越久。",
+        "uploadNextSlot": "下一单投递时间",
+        "uploadNextSlotNow": "现在就可以投递"
     },
     "bilibiliLogin": {
         "title": "扫码登录 Bilibili",
