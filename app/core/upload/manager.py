@@ -21,6 +21,12 @@ _RETRY_DELAYS = (60, 300, 900, 3600)
 _DEFAULT_COOLDOWN_SECONDS = 21600
 _DEFAULT_MAX_COOLDOWN_SECONDS = 86400
 
+# 投递节奏门：两个投稿之间的最小间隔（秒）。
+# 依据：2026-10-28 生产完全没有间隔时，10:40 一分钟内投了 4 单、13 分钟 11 单即触发 406；
+# 社区（biliup#1362）一天连续投 9 单开始回 21564。30 分钟/条 = 每小时 2 单，
+# 密度比出事时低一个量级，又不会让积压永远排不完。想更激进/更保守改 uploads.min_interval_seconds。
+_DEFAULT_MIN_INTERVAL_SECONDS = 1800
+
 # 「任务还没结束」的状态：同一文件再次提交时不能重复入队
 _ACTIVE_STATUSES = ("pending", "uploading", "retrying", "blocked_auth")
 
@@ -96,6 +102,10 @@ class UploadManager:
         if "cool_downs" not in columns:
             conn.execute(
                 "ALTER TABLE upload_channels ADD COLUMN cool_downs INTEGER NOT NULL DEFAULT 0"
+            )
+        if "last_attempt_at" not in columns:
+            conn.execute(
+                "ALTER TABLE upload_channels ADD COLUMN last_attempt_at REAL NOT NULL DEFAULT 0"
             )
 
     def _recover_interrupted(self) -> None:
@@ -310,10 +320,11 @@ class UploadManager:
                 "VALUES(?, 'active', '', 0, ?, 0, 0) "
                 "ON CONFLICT(provider) DO UPDATE SET status='active', message='', "
                 f"notified={notified}, updated_at=excluded.updated_at, resume_at=0, "
-                f"cool_downs={cool_downs}",
+                f"cool_downs={cool_downs}, last_attempt_at=0",
                 (provider, now),
             )
-            # 用户显式恢复：把等登录/等冷却的任务立刻放行（其他正常指数退避的不动）
+            # 用户显式恢复：把等登录/等冷却的任务立刻放行（其他正常指数退避的不动）；
+            # last_attempt_at 归零 = 也跳过节奏门，用户点了就立刻投一单
             conn.execute(
                 "UPDATE upload_jobs SET status='retrying', next_attempt_at=0, updated_at=? "
                 "WHERE provider=? AND (status='blocked_auth' "
@@ -353,22 +364,53 @@ class UploadManager:
             )
             return bool(cursor.rowcount)
 
+    def _channel_interval(self, provider: str) -> float:
+        """该渠道两个投稿之间的最小间隔：渠道配置优先于全局，60s 下限防手误设 0 打穿风控。"""
+        uploads = self._config_getter().get("uploads") or {}
+        provider_config = (uploads.get("providers") or {}).get(provider) or {}
+        raw = provider_config.get("min_interval_seconds")
+        if raw is None:
+            raw = uploads.get("min_interval_seconds")
+        try:
+            return max(60.0, float(raw if raw is not None else _DEFAULT_MIN_INTERVAL_SECONDS))
+        except (TypeError, ValueError):
+            return float(_DEFAULT_MIN_INTERVAL_SECONDS)
+
     def _next_job(self):
         with self._connect() as conn:
             now_ts = time.time()
-            row = conn.execute(
-                "SELECT j.* FROM upload_jobs j LEFT JOIN upload_channels c ON c.provider=j.provider "
+            # 多取几条候选：最早那条被节奏门挡住时，不该连带把别的渠道也锁死。
+            rows = conn.execute(
+                "SELECT j.*, COALESCE(c.status, 'active') AS channel_status, "
+                "COALESCE(c.resume_at, 0) AS channel_resume_at, "
+                "COALESCE(c.last_attempt_at, 0) AS channel_last_at "
+                "FROM upload_jobs j LEFT JOIN upload_channels c ON c.provider=j.provider "
                 "WHERE j.status IN ('pending','retrying') AND j.next_attempt_at <= ? "
                 "AND COALESCE(c.status, 'active')='active' "
-                "AND COALESCE(c.resume_at, 0) <= ? ORDER BY j.created_at LIMIT 1",
+                "AND COALESCE(c.resume_at, 0) <= ? ORDER BY j.created_at LIMIT 20",
                 (now_ts, now_ts),
-            ).fetchone()
+            ).fetchall()
+            row = None
+            for candidate in rows:
+                last_at = float(candidate["channel_last_at"] or 0)
+                if last_at + self._channel_interval(candidate["provider"]) > now_ts:
+                    continue  # 该渠道还没到下一个投稿窗口
+                row = candidate
+                break
             if row is None:
                 return None
             now = datetime.now().isoformat(timespec="seconds")
             conn.execute(
                 "UPDATE upload_jobs SET status='uploading', attempts=attempts+1, updated_at=? WHERE id=?",
                 (now, row["id"]),
+            )
+            # 节奏门计时起点是「真正开始投」那一刻，投稿耗时本身也算进间隔
+            conn.execute(
+                "INSERT INTO upload_channels"
+                "(provider,status,message,notified,updated_at,last_attempt_at) "
+                "VALUES(?, 'active', '', 0, ?, ?) "
+                "ON CONFLICT(provider) DO UPDATE SET last_attempt_at=excluded.last_attempt_at",
+                (row["provider"], now, now_ts),
             )
             return dict(row)
 

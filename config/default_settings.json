@@ -83,6 +83,7 @@
         "enabled": false,
         "auto_after_pose": true,
         "max_attempts": 5,
+        "min_interval_seconds": 1800,
         "rate_limit_cooldown_seconds": 21600,
         "rate_limit_max_cooldown_seconds": 86400,
         "notify_failures": true,

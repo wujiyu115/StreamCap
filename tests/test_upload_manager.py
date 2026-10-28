@@ -345,7 +345,7 @@ def test_rate_limit_cools_channel_without_burning_attempts(tmp_path):
 
     # 冷却到期后自己恢复
     with sqlite3.connect(manager.db_path) as conn:
-        conn.execute("UPDATE upload_channels SET resume_at=0, status='active'")
+        conn.execute("UPDATE upload_channels SET resume_at=0, status='active', last_attempt_at=0")
     resumed = manager._next_job()
     assert resumed["id"] == job["id"]
     assert resumed["attempts"] == 0
@@ -387,8 +387,11 @@ def test_cooldown_escalates_caps_and_notifies_once_per_episode(tmp_path):
         return channel["resume_at"] - time.time()
 
     def expire_cooldown():
+        # 同时把节奏门计时也拨回去，模拟「冷却和最小间隔都过去了」
         with sqlite3.connect(manager.db_path) as conn:
-            conn.execute("UPDATE upload_channels SET resume_at=0, status='active'")
+            conn.execute(
+                "UPDATE upload_channels SET resume_at=0, status='active', last_attempt_at=0"
+            )
             conn.execute("UPDATE upload_jobs SET next_attempt_at=0")
 
     assert cool_once() == pytest.approx(60, abs=2)
@@ -480,7 +483,7 @@ def test_old_channel_table_is_migrated_for_cooldown(tmp_path):
     manager = _mgr(tmp_path)
     with sqlite3.connect(manager.db_path) as conn:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(upload_channels)")}
-    assert {"resume_at", "cool_downs"} <= columns
+    assert {"resume_at", "cool_downs", "last_attempt_at"} <= columns
     channel = manager.list_channels()[0]
     assert channel["status"] == "blocked_auth"   # 老状态原样保留
     assert channel["message"] == "登录失效"
@@ -526,3 +529,71 @@ def test_rate_limit_gives_back_last_attempt_so_backlog_survives(tmp_path):
     job = manager.list_jobs()[0]
     assert job["status"] == "retrying"      # 不是 failed
     assert job["attempts"] == 4             # 最后一次机会被退回
+
+
+def test_min_interval_paces_consecutive_uploads(tmp_path):
+    """节奏门：上一单开始后没到最小间隔，下一单不取（生产 10:40 一分钟 4 单就是这么出事的）。"""
+    from app.core.upload.models import UploadResult
+
+    files = []
+    for i in range(2):
+        path = tmp_path / f"clip{i}_merged.mp4"
+        path.write_bytes(b"video")
+        files.append(str(path))
+    config = _config()
+    config["uploads"]["min_interval_seconds"] = 1800
+    manager = _mgr(tmp_path, config)
+    for i, path in enumerate(files):
+        state = {"status": "completed", "trigger": "auto", "summary": {"output_files": [path]}}
+        manager.enqueue_pose_outputs(f"pace-{i}", state)
+
+    class OkProvider:
+        def upload(self, request, provider_config):
+            return UploadResult(provider="bilibili", remote_id="BV1xx411c7mD", message="ok")
+
+    manager._providers["bilibili"] = OkProvider()
+    first = manager._next_job()
+    assert first is not None
+    manager._process(first)
+    # 上一单刚投过：30 分钟内不再取任务
+    assert manager._next_job() is None
+    # 把计时拨回 30 分钟前，下一单才放行
+    with sqlite3.connect(manager.db_path) as conn:
+        conn.execute("UPDATE upload_channels SET last_attempt_at=? WHERE provider='bilibili'", (time.time() - 1801,))
+    second = manager._next_job()
+    assert second is not None and second["id"] != first["id"]
+
+
+def test_resume_channel_skips_interval_gate(tmp_path):
+    """用户点「恢复上传」是显式动作，不能被节奏门再拖 30 分钟。"""
+    output = tmp_path / "sample_merged.mp4"
+    output.write_bytes(b"video")
+    config = _config()
+    config["uploads"]["min_interval_seconds"] = 1800
+    manager = _mgr(tmp_path, config)
+    state = {"status": "completed", "trigger": "auto", "summary": {"output_files": [str(output)]}}
+    manager.enqueue_pose_outputs("skip-gate", state)
+
+    assert manager._next_job() is not None          # 先占掉节奏门
+    with sqlite3.connect(manager.db_path) as conn:
+        conn.execute("UPDATE upload_jobs SET status='retrying', next_attempt_at=0")
+    assert manager._next_job() is None              # 被节奏门挡住
+
+    assert manager.resume_channel("bilibili") is True
+    assert manager._next_job() is not None          # 恢复后立即放行
+
+
+def test_channel_interval_config_and_floor(tmp_path):
+    config = _config()
+    config["uploads"]["min_interval_seconds"] = 900
+    manager = _mgr(tmp_path, config)
+    assert manager._channel_interval("bilibili") == 900
+    # 渠道配置覆盖全局
+    config["uploads"]["providers"]["bilibili"]["min_interval_seconds"] = 600
+    assert manager._channel_interval("bilibili") == 600
+    # 下限 60s：手误设 0/负数不能把风控打穿
+    config["uploads"]["providers"]["bilibili"]["min_interval_seconds"] = 0
+    assert manager._channel_interval("bilibili") == 60
+    # 脏值回落默认
+    config["uploads"]["providers"]["bilibili"]["min_interval_seconds"] = "abc"
+    assert manager._channel_interval("bilibili") == 1800
