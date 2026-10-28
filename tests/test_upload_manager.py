@@ -283,6 +283,16 @@ def test_rate_limit_detector_recognises_real_platform_output():
         'ResponseData { code: 21566, data: None, message: "投稿过于频繁，建议将APP升级至最新版本后再试", ttl: Some(1) }'
     ) == (21566, False)
     assert detect_rate_limit('Failed to pre_upload from {"code":21564,"message":"上传过于频繁请等待24小时"}') == (21564, False)
+    # issue #1583 / 生产 14:51：web 投稿接口（uploader.rs:201 submit_by_web）回的 137022，
+    # 文案是「投稿过于频繁，请稍后再试」，与 406 同类风控
+    assert detect_rate_limit(
+        'ResponseData { code: 137022, data: None, message: "投稿过于频繁，请稍后再试", ttl: Some(1) }'
+    ) == (137022, False)
+    # 即使文案变了/被截断，只要 code 在名单里也要认得出
+    assert detect_rate_limit('ResponseData { code: 137022, data: None, message: "", ttl: Some(1) }') == (
+        137022,
+        False,
+    )
     # 普通失败不能被误判成限流
     assert detect_rate_limit("Error: file not found") is None
     assert detect_rate_limit('Web 接口投稿失败: ResponseData { code: 21001, message: "参数错误" }') is None

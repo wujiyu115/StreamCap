@@ -31,8 +31,11 @@ _AUTH_ERROR_PATTERNS = (
 
 # 平台风控/限流：同一根因在不同版本、不同接口下给的 code 不一样——2026-10-28 生产
 # pre_upload 回的是 406，biliup issue #1565 里是 601，issue #1362 里 submit 回 21566
-# （还有 21564「上传过于频繁请等待24小时」）。所以既认 code，也认文案。
-_RATE_LIMIT_CODES = frozenset({406, 601, 21070, 21564, 21566})
+# （还有 21564「上传过于频繁请等待24小时」）。**137022「投稿过于频繁，请稍后再试」**
+# 是 web 投稿接口（biliup-cli uploader.rs:201 submit_by_web）回的，实测与 406 同类，
+# 都是同一个账号级风控（issue #1583 里我的体认：406/601/投稿频繁是同一个东西）。
+# 所以既认 code，也认文案。
+_RATE_LIMIT_CODES = frozenset({406, 601, 21070, 21564, 21566, 137022})
 _RATE_LIMIT_PATTERNS = (
     "上传视频过快",
     "上传过快",
