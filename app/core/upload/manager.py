@@ -21,11 +21,18 @@ _RETRY_DELAYS = (60, 300, 900, 3600)
 _DEFAULT_COOLDOWN_SECONDS = 21600
 _DEFAULT_MAX_COOLDOWN_SECONDS = 86400
 
-# 投递节奏门：两个投稿之间的最小间隔（秒）。
-# 依据：2026-10-28 生产完全没有间隔时，10:40 一分钟内投了 4 单、13 分钟 11 单即触发 406；
-# 社区（biliup#1362）一天连续投 9 单开始回 21564。30 分钟/条 = 每小时 2 单，
-# 密度比出事时低一个量级，又不会让积压永远排不完。想更激进/更保守改 uploads.min_interval_seconds。
+# 投递节奏门：**每个文件（分P）** 之间的最小间隔（秒），不是每单。
+# 依据：B 站 406「您上传视频过快」是从 pre_upload 抛出来的，而 biliup 对一单里的每个
+# 文件各发一次 pre_upload（生产 48 条任务的输出逐条数：5P→5 次，1P→1 次，投稿成功恒 1 次）。
+# 所以计价单位是文件而不是稿件：一单几 P 就占几个额度，否则「合并成一稿」会变成
+# 20 秒内打 20 次 pre_upload 的突发，正是 2026-10-28 事故的形态
+# （当天 13 次 pre_upload / 13 分钟 → 406；而单稿 5 次连发被反复验证安全）。
+# 默认 30 分钟/文件 = 每小时 2 个 pre_upload，比出事密度低一个量级。
+# 想更激进/更保守改 uploads.min_interval_seconds（或 providers.<name>.min_interval_seconds）。
 _DEFAULT_MIN_INTERVAL_SECONDS = 1800
+
+# 一单里最多放几个分P。生产实测 5 个连发安全；再多就是在赌 pre_upload 的突发阈值。
+_DEFAULT_MAX_PAGES_PER_JOB = 5
 
 # 「任务还没结束」的状态：同一文件再次提交时不能重复入队
 _ACTIVE_STATUSES = ("pending", "uploading", "retrying", "blocked_auth")
@@ -107,6 +114,12 @@ class UploadManager:
             conn.execute(
                 "ALTER TABLE upload_channels ADD COLUMN last_attempt_at REAL NOT NULL DEFAULT 0"
             )
+        # 节奏门到期时刻：按「这一单要占几个文件额度」预先算好，避免把 last_attempt_at
+        # 写成未来时间去表达同一件事（那样排查时会看不懂）。
+        if "pacing_until" not in columns:
+            conn.execute(
+                "ALTER TABLE upload_channels ADD COLUMN pacing_until REAL NOT NULL DEFAULT 0"
+            )
 
     def _recover_interrupted(self) -> None:
         with self._connect() as conn:
@@ -160,6 +173,9 @@ class UploadManager:
         if not uploads.get("enabled") or not uploads.get("auto_after_pose", True):
             return 0
         providers = uploads.get("providers") or {}
+        size = self.max_pages_per_job()
+        # 一单最多 size 个分P：生产实测 5 个连发安全，再多就是在赌 pre_upload 的突发阈值
+        groups = [files[i : i + size] for i in range(0, len(files), size)]
         now = datetime.now().isoformat(timespec="seconds")
         inserted = 0
         with self._connect() as conn:
@@ -168,28 +184,37 @@ class UploadManager:
                     continue
                 if not provider_config.get("enabled"):
                     continue
-                job_id = uuid.uuid4().hex
-                cursor = conn.execute(
-                    """
-                    INSERT OR IGNORE INTO upload_jobs
-                    (id, source_task_id, provider, status, files_json, title, metadata_json,
-                     attempts, next_attempt_at, created_at, updated_at)
-                    VALUES (?, ?, ?, 'pending', ?, ?, ?, 0, 0, ?, ?)
-                    """,
-                    (
-                        job_id,
-                        source_task_id,
-                        name,
-                        json.dumps(files, ensure_ascii=False),
-                        self._display_title(files, source_task_id),
-                        json.dumps({"rec_id": state.get("rec_id")}, ensure_ascii=False),
-                        now,
-                        now,
-                    ),
-                )
-                inserted += cursor.rowcount
+                for index, group in enumerate(groups):
+                    # 只有拆成多稿时才加后缀，单片仍用原 key：老库里已存在的任务不会被重复入队
+                    source_key = source_task_id if len(groups) == 1 else f"{source_task_id}#{index + 1}"
+                    title = self._display_title(group, source_task_id)
+                    if len(groups) > 1:
+                        title = f"{title} ({index + 1}/{len(groups)})"[:80]
+                    job_id = uuid.uuid4().hex
+                    cursor = conn.execute(
+                        """
+                        INSERT OR IGNORE INTO upload_jobs
+                        (id, source_task_id, provider, status, files_json, title, metadata_json,
+                         attempts, next_attempt_at, created_at, updated_at)
+                        VALUES (?, ?, ?, 'pending', ?, ?, ?, 0, 0, ?, ?)
+                        """,
+                        (
+                            job_id,
+                            source_key,
+                            name,
+                            json.dumps(group, ensure_ascii=False),
+                            title,
+                            json.dumps({"rec_id": state.get("rec_id")}, ensure_ascii=False),
+                            now,
+                            now,
+                        ),
+                    )
+                    inserted += cursor.rowcount
         if inserted:
-            logger.info(f"人体识别产物已加入上传队列: {source_task_id} ({inserted} channel(s))")
+            logger.info(
+                f"人体识别产物已加入上传队列: {source_task_id} "
+                f"({inserted} job(s) x 最多 {size} 分P)"
+            )
             self._prune_jobs()
         return inserted
 
@@ -295,6 +320,7 @@ class UploadManager:
                 "resume_at": 0,
                 "cool_downs": 0,
                 "last_attempt_at": 0,
+                "pacing_until": 0,
             }
             item["enabled"] = bool(provider_config.get("enabled"))
             interval = self._channel_interval(name)
@@ -304,7 +330,10 @@ class UploadManager:
             next_slot = 0.0
             if item.get("status") == "cooling":
                 next_slot = float(item.get("resume_at") or 0)
-            gate = float(item.get("last_attempt_at") or 0) + interval
+            gate = max(
+                float(item.get("pacing_until") or 0),
+                float(item.get("last_attempt_at") or 0) + interval,
+            )
             if gate > time.time() and gate > next_slot:
                 next_slot = gate
             item["next_slot_at"] = next_slot
@@ -332,7 +361,7 @@ class UploadManager:
                 "VALUES(?, 'active', '', 0, ?, 0, 0) "
                 "ON CONFLICT(provider) DO UPDATE SET status='active', message='', "
                 f"notified={notified}, updated_at=excluded.updated_at, resume_at=0, "
-                f"cool_downs={cool_downs}, last_attempt_at=0",
+                f"cool_downs={cool_downs}, last_attempt_at=0, pacing_until=0",
                 (provider, now),
             )
             # 用户显式恢复：把等登录/等冷却的任务立刻放行（其他正常指数退避的不动）；
@@ -377,7 +406,7 @@ class UploadManager:
             return bool(cursor.rowcount)
 
     def _channel_interval(self, provider: str) -> float:
-        """该渠道两个投稿之间的最小间隔：渠道配置优先于全局，60s 下限防手误设 0 打穿风控。"""
+        """每个文件（分P）之间的最小间隔：渠道配置优先于全局，60s 下限防手误设 0 打穿风控。"""
         uploads = self._config_getter().get("uploads") or {}
         provider_config = (uploads.get("providers") or {}).get(provider) or {}
         raw = provider_config.get("min_interval_seconds")
@@ -388,6 +417,19 @@ class UploadManager:
         except (TypeError, ValueError):
             return float(_DEFAULT_MIN_INTERVAL_SECONDS)
 
+    def max_pages_per_job(self) -> int:
+        """一单最多几个分P（识别产物切片按它切）。"""
+        uploads = self._config_getter().get("uploads") or {}
+        try:
+            value = int(uploads.get("max_pages_per_job") or _DEFAULT_MAX_PAGES_PER_JOB)
+        except (TypeError, ValueError):
+            return _DEFAULT_MAX_PAGES_PER_JOB
+        return max(1, value)
+
+    def _slot_seconds(self, provider: str, file_count: int) -> float:
+        """这一单要占多少额度：每个文件一次 pre_upload，所以按文件数计价。"""
+        return self._channel_interval(provider) * max(1, int(file_count))
+
     def _next_job(self):
         with self._connect() as conn:
             now_ts = time.time()
@@ -395,7 +437,8 @@ class UploadManager:
             rows = conn.execute(
                 "SELECT j.*, COALESCE(c.status, 'active') AS channel_status, "
                 "COALESCE(c.resume_at, 0) AS channel_resume_at, "
-                "COALESCE(c.last_attempt_at, 0) AS channel_last_at "
+                "COALESCE(c.last_attempt_at, 0) AS channel_last_at, "
+                "COALESCE(c.pacing_until, 0) AS channel_pacing_until "
                 "FROM upload_jobs j LEFT JOIN upload_channels c ON c.provider=j.provider "
                 "WHERE j.status IN ('pending','retrying') AND j.next_attempt_at <= ? "
                 "AND COALESCE(c.status, 'active')='active' "
@@ -405,7 +448,11 @@ class UploadManager:
             row = None
             for candidate in rows:
                 last_at = float(candidate["channel_last_at"] or 0)
-                if last_at + self._channel_interval(candidate["provider"]) > now_ts:
+                gate = max(
+                    float(candidate["channel_pacing_until"] or 0),
+                    last_at + self._channel_interval(candidate["provider"]),
+                )
+                if gate > now_ts:
                     continue  # 该渠道还没到下一个投稿窗口
                 row = candidate
                 break
@@ -416,13 +463,21 @@ class UploadManager:
                 "UPDATE upload_jobs SET status='uploading', attempts=attempts+1, updated_at=? WHERE id=?",
                 (now, row["id"]),
             )
-            # 节奏门计时起点是「真正开始投」那一刻，投稿耗时本身也算进间隔
+            # 节奏门计时起点是「真正开始投」那一刻，投稿耗时本身也算进间隔；
+            # 一单有 N 个文件就一次性占掉 N 个文件额度（pre_upload 是按文件发的）。
+            file_count = len(json.loads(row["files_json"]))
             conn.execute(
                 "INSERT INTO upload_channels"
-                "(provider,status,message,notified,updated_at,last_attempt_at) "
-                "VALUES(?, 'active', '', 0, ?, ?) "
-                "ON CONFLICT(provider) DO UPDATE SET last_attempt_at=excluded.last_attempt_at",
-                (row["provider"], now, now_ts),
+                "(provider,status,message,notified,updated_at,last_attempt_at,pacing_until) "
+                "VALUES(?, 'active', '', 0, ?, ?, ?) "
+                "ON CONFLICT(provider) DO UPDATE SET last_attempt_at=excluded.last_attempt_at, "
+                "pacing_until=excluded.pacing_until",
+                (
+                    row["provider"],
+                    now,
+                    now_ts,
+                    now_ts + self._slot_seconds(row["provider"], file_count),
+                ),
             )
             return dict(row)
 

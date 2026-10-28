@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import time
@@ -345,7 +346,7 @@ def test_rate_limit_cools_channel_without_burning_attempts(tmp_path):
 
     # 冷却到期后自己恢复
     with sqlite3.connect(manager.db_path) as conn:
-        conn.execute("UPDATE upload_channels SET resume_at=0, status='active', last_attempt_at=0")
+        conn.execute("UPDATE upload_channels SET resume_at=0, status='active', last_attempt_at=0, pacing_until=0")
     resumed = manager._next_job()
     assert resumed["id"] == job["id"]
     assert resumed["attempts"] == 0
@@ -390,7 +391,7 @@ def test_cooldown_escalates_caps_and_notifies_once_per_episode(tmp_path):
         # 同时把节奏门计时也拨回去，模拟「冷却和最小间隔都过去了」
         with sqlite3.connect(manager.db_path) as conn:
             conn.execute(
-                "UPDATE upload_channels SET resume_at=0, status='active', last_attempt_at=0"
+                "UPDATE upload_channels SET resume_at=0, status='active', last_attempt_at=0, pacing_until=0"
             )
             conn.execute("UPDATE upload_jobs SET next_attempt_at=0")
 
@@ -483,7 +484,7 @@ def test_old_channel_table_is_migrated_for_cooldown(tmp_path):
     manager = _mgr(tmp_path)
     with sqlite3.connect(manager.db_path) as conn:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(upload_channels)")}
-    assert {"resume_at", "cool_downs", "last_attempt_at"} <= columns
+    assert {"resume_at", "cool_downs", "last_attempt_at", "pacing_until"} <= columns
     channel = manager.list_channels()[0]
     assert channel["status"] == "blocked_auth"   # 老状态原样保留
     assert channel["message"] == "登录失效"
@@ -559,7 +560,10 @@ def test_min_interval_paces_consecutive_uploads(tmp_path):
     assert manager._next_job() is None
     # 把计时拨回 30 分钟前，下一单才放行
     with sqlite3.connect(manager.db_path) as conn:
-        conn.execute("UPDATE upload_channels SET last_attempt_at=? WHERE provider='bilibili'", (time.time() - 1801,))
+        conn.execute(
+            "UPDATE upload_channels SET last_attempt_at=?, pacing_until=0 WHERE provider='bilibili'",
+            (time.time() - 1801,),
+        )
     second = manager._next_job()
     assert second is not None and second["id"] != first["id"]
 
@@ -599,6 +603,87 @@ def test_channel_interval_config_and_floor(tmp_path):
     assert manager._channel_interval("bilibili") == 1800
 
 
+def test_interval_charged_per_file_not_per_job(tmp_path):
+    """计价单位是文件：B 站 406 从 pre_upload 抛，一单几 P 就发几次，所以按 P 数扣额度。"""
+    files = []
+    for i in range(3):
+        path = tmp_path / f"p{i}_merged.mp4"
+        path.write_bytes(b"video")
+        files.append(str(path))
+    config = _config()
+    config["uploads"]["min_interval_seconds"] = 600
+    manager = _mgr(tmp_path, config)
+    manager.enqueue_pose_outputs(
+        "multi-p", {"status": "completed", "trigger": "auto", "summary": {"output_files": files}}
+    )
+
+    row = manager._next_job()
+    assert row is not None and len(json.loads(row["files_json"])) == 3
+    with sqlite3.connect(manager.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        channel = conn.execute("SELECT * FROM upload_channels WHERE provider='bilibili'").fetchone()
+    # 3 个文件 = 3 个额度，不是 1 个
+    assert abs(channel["pacing_until"] - (channel["last_attempt_at"] + 3 * 600)) < 2
+
+    # 把这一单放回队列（否则下面的 None 只是「队列空了」，证明不了门在起作用）
+    with sqlite3.connect(manager.db_path) as conn:
+        conn.execute("UPDATE upload_jobs SET status='pending', next_attempt_at=0")
+    assert manager._next_job() is None
+
+    # 只过了 1.5 个额度：仍然不放行
+    with sqlite3.connect(manager.db_path) as conn:
+        conn.execute(
+            "UPDATE upload_channels SET last_attempt_at=?, pacing_until=? WHERE provider='bilibili'",
+            (time.time() - 900, time.time() + 900),
+        )
+    assert manager._next_job() is None
+    # 额度用完才放行
+    with sqlite3.connect(manager.db_path) as conn:
+        conn.execute("UPDATE upload_channels SET pacing_until=? WHERE provider='bilibili'", (time.time() - 1,))
+    assert manager._next_job() is not None
+
+
+def test_pose_outputs_split_into_max_pages_per_job(tmp_path):
+    """一单最多 5 个分P（生产实测 5 次连续 pre_upload 安全），多出来的切多稿。"""
+    files = []
+    for i in range(12):
+        path = tmp_path / f"clip{i}_merged.mp4"
+        path.write_bytes(b"video")
+        files.append(str(path))
+    config = _config()
+    manager = _mgr(tmp_path, config)
+    inserted = manager.enqueue_pose_outputs(
+        "twelve", {"status": "completed", "trigger": "auto", "summary": {"output_files": files}}
+    )
+    assert inserted == 3
+    with sqlite3.connect(manager.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT source_task_id, files_json, title FROM upload_jobs ORDER BY source_task_id"
+        ).fetchall()
+    assert [r["source_task_id"] for r in rows] == ["twelve#1", "twelve#2", "twelve#3"]
+    assert [len(json.loads(r["files_json"])) for r in rows] == [5, 5, 2]
+    assert rows[0]["title"].endswith("(1/3)")
+    # 同一个识别任务重复回调不会重复入队
+    assert manager.enqueue_pose_outputs(
+        "twelve", {"status": "completed", "trigger": "auto", "summary": {"output_files": files}}
+    ) == 0
+
+
+def test_pose_outputs_single_group_keeps_plain_source_key(tmp_path):
+    """不切稿时仍用原 source_task_id，老库里已有的任务不应该被新 key 再入一次。"""
+    files = []
+    for i in range(2):
+        path = tmp_path / f"solo{i}_merged.mp4"
+        path.write_bytes(b"video")
+        files.append(str(path))
+    manager = _mgr(tmp_path, _config())
+    manager.enqueue_pose_outputs("solo", {"status": "completed", "trigger": "auto", "summary": {"output_files": files}})
+    with sqlite3.connect(manager.db_path) as conn:
+        keys = [row[0] for row in conn.execute("SELECT source_task_id FROM upload_jobs")]
+    assert keys == ["solo"]
+
+
 def test_list_channels_reports_pacing_and_next_slot(tmp_path):
     """前端靠 next_slot_at 解释「点了恢复为什么队列还没动」，必须如实反映冷却与节奏门。"""
     config = _config()
@@ -626,3 +711,12 @@ def test_list_channels_reports_pacing_and_next_slot(tmp_path):
             (now + 9000,),
         )
     assert manager.list_channels()[0]["next_slot_at"] == now + 9000
+
+    # 多 P 单预扣的额度也要算进 next_slot_at（否则界面会说「现在就能投」）
+    with sqlite3.connect(manager.db_path) as conn:
+        conn.execute(
+            "UPDATE upload_channels SET status='active', resume_at=0, last_attempt_at=?, "
+            "pacing_until=? WHERE provider='bilibili'",
+            (now, now + 5400),
+        )
+    assert manager.list_channels()[0]["next_slot_at"] == now + 5400

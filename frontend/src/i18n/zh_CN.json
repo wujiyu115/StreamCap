@@ -451,9 +451,9 @@
         "uploadRateLimitedHint": "去 B 站网页端或 App 手动投稿一次，把人机/短信验证过掉，再点「恢复上传」；冷却中的任务不会消耗重试次数",
         "uploadRateLimitedUntil": "冷却至 {time}，之后会自动再试",
         "uploadPacing": "投稿节奏",
-        "uploadPacingHint": "B 站按账号频率风控（「您上传视频过快」/「投稿过于频繁」），这里控制相邻两次投稿的最小间隔。文件夹上传是每个文件一单，所以一次选 10 个文件就会排成 10 单。",
+        "uploadPacingHint": "B 站按账号频率风控（「您上传视频过快」/「投稿过于频繁」）。间隔按每个文件（分P）计价，不是按稿件：一单 5 个分P 就占 5 个额度。文件夹上传是每个文件一单，一次选 10 个文件就排成 10 单。",
         "uploadMinInterval": "最小间隔（分钟）",
-        "uploadMinIntervalHint": "默认 30 分钟一单（每小时 2 单）。填太小容易撞风控，撞上后整条渠道会冷却 6 小时起、且越撞越久。",
+        "uploadMinIntervalHint": "默认 30 分钟/文件（每小时 2 次上传预检）。填太小容易撞风控，撞上后整条渠道会冷却 6 小时起、且越撞越久。一单最多 5 个分P。",
         "uploadNextSlot": "下一单投递时间",
         "uploadNextSlotNow": "现在就可以投递"
     },
