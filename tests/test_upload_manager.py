@@ -484,7 +484,7 @@ def test_old_channel_table_is_migrated_for_cooldown(tmp_path):
     manager = _mgr(tmp_path)
     with sqlite3.connect(manager.db_path) as conn:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(upload_channels)")}
-    assert {"resume_at", "cool_downs", "last_attempt_at", "pacing_until"} <= columns
+    assert {"resume_at", "cool_downs", "last_attempt_at", "pacing_until", "last_attempt_files"} <= columns
     channel = manager.list_channels()[0]
     assert channel["status"] == "blocked_auth"   # 老状态原样保留
     assert channel["message"] == "登录失效"
@@ -637,10 +637,34 @@ def test_interval_charged_per_file_not_per_job(tmp_path):
             (time.time() - 900, time.time() + 900),
         )
     assert manager._next_job() is None
-    # 额度用完才放行
+    # 额度用完才放行（文件数留在 last_attempt_files，额度按当前间隔重算）
     with sqlite3.connect(manager.db_path) as conn:
-        conn.execute("UPDATE upload_channels SET pacing_until=? WHERE provider='bilibili'", (time.time() - 1,))
+        conn.execute("UPDATE upload_channels SET last_attempt_at=? WHERE provider='bilibili'", (time.time() - 1801,))
     assert manager._next_job() is not None
+
+
+def test_changing_interval_takes_effect_immediately(tmp_path):
+    """改间隔要立即反映到下一单时刻：否则用户把间隔调小后界面还是旧时刻，看起来像「改了没用」。"""
+    files = []
+    for i in range(2):
+        path = tmp_path / f"iv{i}_merged.mp4"
+        path.write_bytes(b"video")
+        files.append(str(path))
+    config = _config()
+    config["uploads"]["min_interval_seconds"] = 1800
+    manager = _mgr(tmp_path, config)
+    manager.enqueue_pose_outputs("iv", {"status": "completed", "trigger": "auto", "summary": {"output_files": files}})
+    assert manager._next_job() is not None          # 2 文件 × 1800s = 1 小时额度
+    assert manager.list_channels()[0]["next_slot_at"] == pytest.approx(time.time() + 3600, abs=5)
+
+    # 用户把间隔改小：预扣的 pacing_until 不该再把门卡在旧时刻
+    config["uploads"]["min_interval_seconds"] = 600
+    assert manager.list_channels()[0]["next_slot_at"] == pytest.approx(time.time() + 1200, abs=5)
+    assert manager.list_channels()[0]["min_interval_seconds"] == 600
+
+    # 改大也是一样的实时生效
+    config["uploads"]["min_interval_seconds"] = 3600
+    assert manager.list_channels()[0]["next_slot_at"] == pytest.approx(time.time() + 7200, abs=5)
 
 
 def test_pose_outputs_split_into_max_pages_per_job(tmp_path):
@@ -712,11 +736,11 @@ def test_list_channels_reports_pacing_and_next_slot(tmp_path):
         )
     assert manager.list_channels()[0]["next_slot_at"] == now + 9000
 
-    # 多 P 单预扣的额度也要算进 next_slot_at（否则界面会说「现在就能投」）
+    # 多 P 单的额度也要算进 next_slot_at（否则界面会说「现在就能投」）
     with sqlite3.connect(manager.db_path) as conn:
         conn.execute(
             "UPDATE upload_channels SET status='active', resume_at=0, last_attempt_at=?, "
-            "pacing_until=? WHERE provider='bilibili'",
-            (now, now + 5400),
+            "last_attempt_files=3 WHERE provider='bilibili'",
+            (now,),
         )
-    assert manager.list_channels()[0]["next_slot_at"] == now + 5400
+    assert manager.list_channels()[0]["next_slot_at"] == now + 3 * 1800

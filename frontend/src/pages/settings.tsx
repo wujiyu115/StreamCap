@@ -780,6 +780,8 @@ function useSettingsForm(delay = 1200) {
         onSuccess: (result: SettingsWriteResult, { sent }) => {
             baseline.current = sent
             absorb(result)
+            // 改了「最小间隔」这类键会立刻改变下一单时刻，让上传面板重新取一次渠道数据
+            queryClient.invalidateQueries({ queryKey: ["uploads"] })
             toast.success(t("settings.saved"))
         },
         onError: onWriteError,

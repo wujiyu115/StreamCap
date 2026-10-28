@@ -120,6 +120,16 @@ class UploadManager:
             conn.execute(
                 "ALTER TABLE upload_channels ADD COLUMN pacing_until REAL NOT NULL DEFAULT 0"
             )
+        # 上一次投了几个文件：额度要按「当前」间隔重算，否则用户把间隔调小后，
+        # 预扣的 pacing_until 还是按旧间隔算的，界面会一直显示旧时刻（2026-10-28 实测到）。
+        if "last_attempt_files" not in columns:
+            conn.execute(
+                "ALTER TABLE upload_channels ADD COLUMN last_attempt_files INTEGER NOT NULL DEFAULT 0"
+            )
+            # 老数据不知道当时几个文件，按最小的一单（1 个）补；宁可早一点放行，也别永久卡住
+            conn.execute(
+                "UPDATE upload_channels SET last_attempt_files=1 WHERE last_attempt_at > 0"
+            )
 
     def _recover_interrupted(self) -> None:
         with self._connect() as conn:
@@ -321,6 +331,7 @@ class UploadManager:
                 "cool_downs": 0,
                 "last_attempt_at": 0,
                 "pacing_until": 0,
+                "last_attempt_files": 0,
             }
             item["enabled"] = bool(provider_config.get("enabled"))
             interval = self._channel_interval(name)
@@ -330,10 +341,7 @@ class UploadManager:
             next_slot = 0.0
             if item.get("status") == "cooling":
                 next_slot = float(item.get("resume_at") or 0)
-            gate = max(
-                float(item.get("pacing_until") or 0),
-                float(item.get("last_attempt_at") or 0) + interval,
-            )
+            gate = self._gate_at(item)
             if gate > time.time() and gate > next_slot:
                 next_slot = gate
             item["next_slot_at"] = next_slot
@@ -361,7 +369,7 @@ class UploadManager:
                 "VALUES(?, 'active', '', 0, ?, 0, 0) "
                 "ON CONFLICT(provider) DO UPDATE SET status='active', message='', "
                 f"notified={notified}, updated_at=excluded.updated_at, resume_at=0, "
-                f"cool_downs={cool_downs}, last_attempt_at=0, pacing_until=0",
+                f"cool_downs={cool_downs}, last_attempt_at=0, pacing_until=0, last_attempt_files=0",
                 (provider, now),
             )
             # 用户显式恢复：把等登录/等冷却的任务立刻放行（其他正常指数退避的不动）；
@@ -430,6 +438,19 @@ class UploadManager:
         """这一单要占多少额度：每个文件一次 pre_upload，所以按文件数计价。"""
         return self._channel_interval(provider) * max(1, int(file_count))
 
+    def _gate_at(self, channel) -> float:
+        """节奏门放行时刻：按**当前**间隔 × 上次投的文件数算，改间隔立即生效。
+
+        pacing_until 是领取时按当时间隔预扣的值，只作兜底（老数据 / 文件数未知），
+        否则用户把间隔调小以后还得等旧额度走完，界面上看起来像「改了没用」。
+        """
+        last_at = float(channel.get("last_attempt_at") or 0)
+        files = int(channel.get("last_attempt_files") or 0)
+        if last_at > 0:
+            # files=0 是迁移前的老行（文件数未知），按最小的一单算，别永久卡住
+            return last_at + self._slot_seconds(channel.get("provider") or "", max(1, files))
+        return float(channel.get("pacing_until") or 0)
+
     def _next_job(self):
         with self._connect() as conn:
             now_ts = time.time()
@@ -438,7 +459,8 @@ class UploadManager:
                 "SELECT j.*, COALESCE(c.status, 'active') AS channel_status, "
                 "COALESCE(c.resume_at, 0) AS channel_resume_at, "
                 "COALESCE(c.last_attempt_at, 0) AS channel_last_at, "
-                "COALESCE(c.pacing_until, 0) AS channel_pacing_until "
+                "COALESCE(c.pacing_until, 0) AS channel_pacing_until, "
+                "COALESCE(c.last_attempt_files, 0) AS channel_last_files "
                 "FROM upload_jobs j LEFT JOIN upload_channels c ON c.provider=j.provider "
                 "WHERE j.status IN ('pending','retrying') AND j.next_attempt_at <= ? "
                 "AND COALESCE(c.status, 'active')='active' "
@@ -447,12 +469,14 @@ class UploadManager:
             ).fetchall()
             row = None
             for candidate in rows:
-                last_at = float(candidate["channel_last_at"] or 0)
-                gate = max(
-                    float(candidate["channel_pacing_until"] or 0),
-                    last_at + self._channel_interval(candidate["provider"]),
-                )
-                if gate > now_ts:
+                if self._gate_at(
+                    {
+                        "provider": candidate["provider"],
+                        "last_attempt_at": candidate["channel_last_at"],
+                        "last_attempt_files": candidate["channel_last_files"],
+                        "pacing_until": candidate["channel_pacing_until"],
+                    }
+                ) > now_ts:
                     continue  # 该渠道还没到下一个投稿窗口
                 row = candidate
                 break
@@ -468,15 +492,18 @@ class UploadManager:
             file_count = len(json.loads(row["files_json"]))
             conn.execute(
                 "INSERT INTO upload_channels"
-                "(provider,status,message,notified,updated_at,last_attempt_at,pacing_until) "
-                "VALUES(?, 'active', '', 0, ?, ?, ?) "
+                "(provider,status,message,notified,updated_at,last_attempt_at,pacing_until,"
+                "last_attempt_files) "
+                "VALUES(?, 'active', '', 0, ?, ?, ?, ?) "
                 "ON CONFLICT(provider) DO UPDATE SET last_attempt_at=excluded.last_attempt_at, "
-                "pacing_until=excluded.pacing_until",
+                "pacing_until=excluded.pacing_until, "
+                "last_attempt_files=excluded.last_attempt_files",
                 (
                     row["provider"],
                     now,
                     now_ts,
                     now_ts + self._slot_seconds(row["provider"], file_count),
+                    file_count,
                 ),
             )
             return dict(row)
