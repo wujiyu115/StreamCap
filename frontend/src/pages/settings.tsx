@@ -1,6 +1,6 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { CheckCircle2, ExternalLink, Loader2, QrCode, RefreshCw, RotateCcw, XCircle } from "lucide-react"
+import { CheckCircle2, ChevronDown, ExternalLink, Loader2, Pause, Play, QrCode, RefreshCw, RotateCcw, Trash2, XCircle } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { douyinApi, settingsApi, uploadsApi } from "@/api"
 import type {
@@ -11,6 +11,7 @@ import type {
     UploadJob,
 } from "@/api/types"
 import { BilibiliLoginDialog } from "@/components/bilibili-login-dialog"
+import { useConfirm } from "@/components/confirm-dialog"
 import { DouyinLoginDialog } from "@/components/douyin-login-dialog"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -483,6 +484,31 @@ function UploadSettings() {
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ["uploads"] }),
         onError: (e: Error) => toast.error(translateError(e.message)),
     })
+    const pauseJob = useMutation({
+        mutationFn: uploadsApi.pause,
+        onSuccess: () => {
+            toast.success(t("settings.uploadJobPausedToast"))
+            queryClient.invalidateQueries({ queryKey: ["uploads"] })
+        },
+        onError: (e: Error) => toast.error(translateError(e.message)),
+    })
+    const resumeJob = useMutation({
+        mutationFn: uploadsApi.resumeJob,
+        onSuccess: () => {
+            toast.success(t("settings.uploadJobResumedToast"))
+            queryClient.invalidateQueries({ queryKey: ["uploads"] })
+        },
+        onError: (e: Error) => toast.error(translateError(e.message)),
+    })
+    const removeJob = useMutation({
+        mutationFn: uploadsApi.removeJob,
+        onSuccess: () => {
+            toast.success(t("settings.uploadJobDeletedToast"))
+            queryClient.invalidateQueries({ queryKey: ["uploads"] })
+        },
+        onError: (e: Error) => toast.error(translateError(e.message)),
+    })
+    const jobBusy = pauseJob.isPending || resumeJob.isPending || removeJob.isPending
     const resume = useMutation({
         mutationFn: uploadsApi.resumeChannel,
         onSuccess: () => {
@@ -605,7 +631,18 @@ function UploadSettings() {
                 ) : (
                     <div className="space-y-2" data-testid="upload-tasks">
                         {tasks.data?.jobs.map((job) => (
-                            <UploadJobRow key={job.id} job={job} retrying={retry.isPending} onRetry={() => retry.mutate(job.id)} t={t} lang={lang} />
+                            <UploadJobRow
+                                key={job.id}
+                                job={job}
+                                busy={retry.isPending || jobBusy}
+                                onRetry={() => retry.mutate(job.id)}
+                                onPause={() => pauseJob.mutate(job.id)}
+                                onResume={() => resumeJob.mutate(job.id)}
+                                onDelete={() => removeJob.mutate(job.id)}
+                                t={t}
+                                tf={tf}
+                                lang={lang}
+                            />
                         ))}
                     </div>
                 )}
@@ -647,32 +684,85 @@ function UploadSettings() {
     )
 }
 
-function UploadJobRow({ job, retrying, onRetry, t, lang }: { job: UploadJob; retrying: boolean; onRetry: () => void; t: (key: string) => string; lang: LangCode }) {
+function UploadJobRow({ job, busy, onRetry, onPause, onResume, onDelete, t, tf, lang }: {
+    job: UploadJob
+    busy: boolean
+    onRetry: () => void
+    onPause: () => void
+    onResume: () => void
+    onDelete: () => void
+    t: (key: string) => string
+    tf: (key: string, params: Record<string, string | number>) => string
+    lang: LangCode
+}) {
+    const confirmBox = useConfirm()
+    // 合集（多P）稿件在列表里只看到「5 文件」，要能展开确认真投了哪几个
+    const [expanded, setExpanded] = useState(false)
     const success = job.status === "completed"
     const failed = job.status === "failed" || job.status === "blocked_auth"
     const finished = success || failed
+    const paused = job.status === "paused"
+    const uploading = job.status === "uploading"
+    const canPause = job.status === "pending" || job.status === "retrying"
     const label = t(`settings.uploadStatus${job.status.replace(/(^|_)(\w)/g, (_, _p, c) => c.toUpperCase())}`)
+    const handleDelete = async () => {
+        const ok = await confirmBox({
+            description: tf("settings.uploadDeleteConfirm", { title: job.title }),
+            confirmText: t("settings.uploadDelete"),
+            destructive: true,
+        })
+        if (ok) onDelete()
+    }
     return (
-        <div className="rounded border p-3 text-sm">
+        <div className="rounded border p-3 text-sm" data-testid="upload-job" data-status={job.status}>
             {/* 手机上标题/按钮竖排，别让标题被按钮挤成省略号 */}
             <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
                 <div className="min-w-0 flex-1">
                     <div className="flex items-start gap-2">
-                        {success ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-green-600" /> : failed ? <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" /> : <Loader2 className={`mt-0.5 h-4 w-4 shrink-0 ${job.status === "uploading" ? "animate-spin" : ""}`} />}
+                        {success ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-green-600" /> : failed ? <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" /> : paused ? <Pause className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" /> : <Loader2 className={`mt-0.5 h-4 w-4 shrink-0 ${uploading ? "animate-spin" : ""}`} />}
                         <span className="min-w-0 flex-1 break-all font-medium leading-snug line-clamp-2" title={job.title}>{job.title}</span>
-                        <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-xs">{label}</span>
+                        <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-xs" data-testid="upload-job-status">{label}</span>
                     </div>
                     <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
-                        <span>{job.files.length} {t("settings.uploadFiles")}</span>
+                        {job.files.length > 0 ? (
+                            <button
+                                type="button"
+                                className="inline-flex items-center gap-0.5 rounded hover:text-foreground"
+                                onClick={() => setExpanded((v) => !v)}
+                                data-testid="upload-files-toggle"
+                                aria-expanded={expanded}
+                            >
+                                <ChevronDown className={`h-3 w-3 transition-transform ${expanded ? "rotate-180" : ""}`} />
+                                {job.files.length > 1
+                                    ? tf("settings.uploadParts", { count: job.files.length })
+                                    : `${job.files.length} ${t("settings.uploadFiles")}`}
+                            </button>
+                        ) : (
+                            <span>{job.files.length} {t("settings.uploadFiles")}</span>
+                        )}
                         <span>{t("settings.uploadAttempts")} {job.attempts}</span>
                         <span>{t("settings.uploadCreatedAt")} {formatDateTime(job.created_at, lang)}</span>
                         {finished && <span>{t("settings.uploadFinishedAt")} {formatDateTime(job.updated_at, lang)}</span>}
                     </div>
+                    {expanded && job.files.length > 0 && (
+                        <ol className="mt-1 space-y-0.5 rounded bg-muted/40 p-2 text-xs" data-testid="upload-files-list">
+                            {job.files.map((file, index) => (
+                                <li key={`${index}-${file}`} className="flex gap-1.5">
+                                    <span className="shrink-0 tabular-nums text-muted-foreground">P{index + 1}</span>
+                                    <span className="min-w-0 break-all" title={file}>{file.split("/").pop() || file}</span>
+                                </li>
+                            ))}
+                        </ol>
+                    )}
                     {job.message && failed && <p className="mt-1 line-clamp-2 break-all text-xs text-destructive" title={job.message}>{job.message}</p>}
                 </div>
                 <div className="flex shrink-0 flex-wrap gap-1">
                     {job.remote_id && <Button asChild variant="outline" size="sm"><a href={`https://www.bilibili.com/video/${job.remote_id}`} target="_blank" rel="noreferrer">{job.remote_id}<ExternalLink className="ml-1 h-3 w-3" /></a></Button>}
-                    {failed && <Button variant="outline" size="sm" onClick={onRetry} disabled={retrying || job.status === "blocked_auth"}>{t("settings.uploadRetry")}</Button>}
+                    {failed && <Button variant="outline" size="sm" onClick={onRetry} disabled={busy || job.status === "blocked_auth"}>{t("settings.uploadRetry")}</Button>}
+                    {canPause && <Button variant="outline" size="sm" onClick={onPause} disabled={busy} data-testid="upload-job-pause"><Pause className="mr-1 h-3 w-3" />{t("settings.uploadJobPause")}</Button>}
+                    {paused && <Button variant="outline" size="sm" onClick={onResume} disabled={busy} data-testid="upload-job-resume"><Play className="mr-1 h-3 w-3" />{t("settings.uploadJobResume")}</Button>}
+                    {/* 正在上传的不给删（后端也拒），避免出现「界面没了但进程还在跑」 */}
+                    {!uploading && <Button variant="outline" size="sm" onClick={handleDelete} disabled={busy} data-testid="upload-job-delete"><Trash2 className="mr-1 h-3 w-3" />{t("settings.uploadDelete")}</Button>}
                 </div>
             </div>
         </div>

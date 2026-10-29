@@ -72,6 +72,35 @@ async def retry_upload(job_id: str, request: Request, user: str = Depends(get_cu
     return {"ok": True}
 
 
+@router.post("/{job_id}/pause")
+async def pause_upload(job_id: str, request: Request, user: str = Depends(get_current_user)):
+    """手动暂停排队中的任务；正在上传的不接受（进程已经在跑，暂停=杀进程，见 manager.pause）。"""
+    manager = _manager(request)
+    if manager.is_uploading(job_id):
+        raise HTTPException(status_code=409, detail="err.uploadJobBusy")
+    if not manager.pause(job_id):
+        raise HTTPException(status_code=404, detail="err.uploadJobNotFound")
+    return {"ok": True}
+
+
+@router.post("/{job_id}/resume")
+async def resume_upload(job_id: str, request: Request, user: str = Depends(get_current_user)):
+    if not _manager(request).resume_job(job_id):
+        raise HTTPException(status_code=404, detail="err.uploadJobNotFound")
+    return {"ok": True}
+
+
+@router.delete("/{job_id}")
+async def delete_upload(job_id: str, request: Request, user: str = Depends(get_current_user)):
+    """删除上传任务（只删队列记录，不动磁盘上的视频文件）。正在上传的拒绝。"""
+    manager = _manager(request)
+    if manager.is_uploading(job_id):
+        raise HTTPException(status_code=409, detail="err.uploadJobBusy")
+    if not manager.delete(job_id):
+        raise HTTPException(status_code=404, detail="err.uploadJobNotFound")
+    return {"ok": True}
+
+
 @router.post("/channels/{provider}/resume")
 async def resume_channel(provider: str, request: Request, user: str = Depends(get_current_user)):
     if not _manager(request).resume_channel(provider):

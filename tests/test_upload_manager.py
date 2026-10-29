@@ -852,3 +852,61 @@ def test_line_unavailable_retries_without_burning_attempts(tmp_path):
     channel = manager.list_channels()[0]
     assert channel["status"] == "active"   # 不冷却渠道
     assert channel["resume_at"] == 0
+
+
+def test_pause_resume_and_delete_job(tmp_path):
+    path = tmp_path / "a.mp4"
+    path.write_bytes(b"video")
+    manager = _mgr(tmp_path)
+    manager.enqueue_files([str(path)], ["bilibili"])
+    job_id = manager.list_jobs()[0]["id"]
+
+    assert manager.pause(job_id) is True
+    assert manager.list_jobs()[0]["status"] == "paused"
+    # 暂停后调度器领不到；重复入队也不该多排一条（paused 同样占着这个文件）
+    assert manager._next_job() is None
+    assert manager.enqueue_files([str(path)], ["bilibili"])["skipped_queued"] == 1
+    assert manager.count_jobs() == 1
+
+    assert manager.resume_job(job_id) is True
+    assert manager.list_jobs()[0]["status"] == "pending"
+    # 恢复→再暂停→删除，可以反复操作
+    assert manager.pause(job_id) is True
+    assert manager.delete(job_id) is True
+    assert manager.count_jobs() == 0
+    # 删掉之后再操作返回 False，路由据此给 404
+    assert manager.delete(job_id) is False
+    assert manager.pause(job_id) is False
+    assert manager.resume_job(job_id) is False
+
+
+def test_pause_and_delete_refuse_uploading_job(tmp_path):
+    path = tmp_path / "b.mp4"
+    path.write_bytes(b"video")
+    manager = _mgr(tmp_path)
+    manager.enqueue_files([str(path)], ["bilibili"])
+    job_id = manager.list_jobs()[0]["id"]
+    with sqlite3.connect(manager.db_path) as conn:
+        conn.execute("UPDATE upload_jobs SET status='uploading' WHERE id=?", (job_id,))
+
+    assert manager.is_uploading(job_id) is True
+    # 正在跑 biliup 的任务不能暂停/删除（路由层据此返回 409）
+    assert manager.pause(job_id) is False
+    assert manager.delete(job_id) is False
+    assert manager.count_jobs() == 1
+
+
+def test_prune_jobs_keeps_paused_tasks(tmp_path):
+    files = []
+    for index in range(3):
+        path = tmp_path / f"p{index}.mp4"
+        path.write_bytes(b"video")
+        files.append(str(path))
+    manager = _mgr(tmp_path)
+    manager.enqueue_files(files, ["bilibili"])
+    with sqlite3.connect(manager.db_path) as conn:
+        conn.execute("UPDATE upload_jobs SET status='completed' WHERE files_json LIKE ?", (f"%{files[0]}%",))
+        conn.execute("UPDATE upload_jobs SET status='paused' WHERE files_json LIKE ?", (f"%{files[1]}%",))
+    manager.MAX_JOBS = 2  # 超出 1 条，只该清理那条已完成的
+    assert manager._prune_jobs() == 1
+    assert sorted(job["status"] for job in manager.list_jobs()) == ["paused", "pending"]

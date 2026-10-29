@@ -38,7 +38,8 @@ _DEFAULT_MAX_PAGES_PER_JOB = 5
 _LINE_RETRY_SECONDS = 60
 
 # 「任务还没结束」的状态：同一文件再次提交时不能重复入队
-_ACTIVE_STATUSES = ("pending", "uploading", "retrying", "blocked_auth")
+# 入队去重时视为「还占着这个文件」的状态；paused 是用户手动暂停，同样不能再排一条新任务
+_ACTIVE_STATUSES = ("pending", "uploading", "retrying", "blocked_auth", "paused")
 
 
 class UploadManager:
@@ -144,7 +145,7 @@ class UploadManager:
     def _prune_jobs(self) -> int:
         """超过 MAX_JOBS 时按创建时间删最旧的已结束记录。
 
-        未结束（排队/上传/重试/等登录）的一律保留，否则会丢队列。
+        未结束（排队/上传/重试/等登录/手动暂停）的一律保留，否则会丢队列。
         """
         with self._connect() as conn:
             total = conn.execute("SELECT COUNT(*) FROM upload_jobs").fetchone()[0]
@@ -154,7 +155,7 @@ class UploadManager:
             cursor = conn.execute(
                 "DELETE FROM upload_jobs WHERE id IN ("
                 "SELECT id FROM upload_jobs "
-                "WHERE status NOT IN ('pending', 'uploading', 'retrying', 'blocked_auth') "
+                "WHERE status NOT IN ('pending', 'uploading', 'retrying', 'blocked_auth', 'paused') "
                 "ORDER BY created_at ASC, rowid ASC LIMIT ?)",
                 (excess,),
             )
@@ -415,6 +416,50 @@ class UploadManager:
                 (now, job_id),
             )
             return bool(cursor.rowcount)
+
+    def pause(self, job_id: str) -> bool:
+        """手动暂停一条还没开投的任务。
+
+        uploading 的不能暂停：biliup 子进程已经把字节发出去了，暂停只能是杀进程，
+        半截任务会变成「不知道投没投成功」，比等它跑完更糟，所以这里直接不认。
+        """
+        now = datetime.now().isoformat(timespec="seconds")
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "UPDATE upload_jobs SET status='paused', next_attempt_at=0, updated_at=? "
+                "WHERE id=? AND status IN ('pending', 'retrying')",
+                (now, job_id),
+            )
+            return bool(cursor.rowcount)
+
+    def resume_job(self, job_id: str) -> bool:
+        """恢复手动暂停的任务；顺手清掉退避时间，用户点了就立刻排队。"""
+        now = datetime.now().isoformat(timespec="seconds")
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "UPDATE upload_jobs SET status='pending', next_attempt_at=0, updated_at=? "
+                "WHERE id=? AND status='paused'",
+                (now, job_id),
+            )
+            return bool(cursor.rowcount)
+
+    def delete(self, job_id: str) -> bool:
+        """删除一条上传记录/任务。
+
+        正在上传的不让删：worker 手里还握着这一行，跑完还会回来写 remote_id，
+        先删掉会得到一条「幽灵任务」。要放弃就等它跑完再删。
+        """
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "DELETE FROM upload_jobs WHERE id=? AND status!='uploading'",
+                (job_id,),
+            )
+            return bool(cursor.rowcount)
+
+    def is_uploading(self, job_id: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute("SELECT status FROM upload_jobs WHERE id=?", (job_id,)).fetchone()
+        return bool(row and row["status"] == "uploading")
 
     def _channel_interval(self, provider: str) -> float:
         """每个文件（分P）之间的最小间隔：渠道配置优先于全局，60s 下限防手误设 0 打穿风控。"""

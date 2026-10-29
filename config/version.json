@@ -1,10 +1,35 @@
 {
   "introduction": {
-    "en": "A free application dedicated to recording videos from online live streaming platforms. By integrating FFmpeg, it efficiently and reliably records live streams from over 40 major platforms including Douyin, TikTok, Kuaishou, Huya, Douyu, Bilibili, Rednote, Baidu, Weibo, Kuwo, Migu, Twitch, YouTube, PandaTV, SoopLive, FlexTV(TTing), PopKontv, Twitcasting, WinkTV, 17Live, Acfun, CHZZK, and Shopee.",
-    "zh_CN": "一款专注于录制在线直播平台视频的免费应用。通过集成FFmpeg，高效、稳定地录制抖音、TikTok、快手、虎牙、斗鱼、B站、小红书、百度、微博、酷狗、咪咕、Twitch、YouTube、PandaTV、SoopLive、FlexTV(TTing)、PopKontv、Twitcasting、WinkTV、17Live、Acfun、CHZZK 和 Shopee 等40+主流平台的直播流。"
+    "en": "A free application dedicated to recording videos from online live streaming platforms. By integrating FFmpeg, it efficiently and reliably records live streams from over 40 major platforms including Douyin, TikTok, Kuaishou, Huya, Douyu, Bilibili, Rednote, Baidu, Weibo, Kuwo, Migu, Twitch, YouTube, PandaTV, SoopLive, FlexTV(TTing), PopKontv, Twitcasting, WinkTV, 17Live, Acfun, CHZZK, and Shopee. Beyond recording, it ships a Web console: follow-list and recommended-live browsing on Douyin, YOLOv8 person detection that extracts human-only clips, and an automatic Bilibili upload queue that merges clips into multi-part submissions with pacing control and rate-limit cooldowns.",
+    "zh_CN": "一款专注于录制在线直播平台视频的免费应用。通过集成FFmpeg，高效、稳定地录制抖音、TikTok、快手、虎牙、斗鱼、B站、小红书、百度、微博、酷狗、咪咕、Twitch、YouTube、PandaTV、SoopLive、FlexTV(TTing)、PopKontv、Twitcasting、WinkTV、17Live、Acfun、CHZZK 和 Shopee 等40+主流平台的直播流。除录制外还提供 Web 控制台：抖音关注列表与推荐直播浏览、基于 YOLOv8 的人体识别剪辑，以及带节奏门与限流冷却的 B 站自动投稿队列（同系列片段自动合并成一稿多P）。"
   },
   "open_source_license": "Apache License 2.0",
   "version_updates": [
+    {
+      "version": "1.1.0",
+      "kernel_version": "4.0.10",
+      "updates": {
+        "en": [
+          "Add automatic Bilibili upload queue: person-detected clips are submitted after recording",
+          "Merge same-streamer clips into one multi-part submission (up to 5 parts per submission)",
+          "Pacing gate: a minimum interval between submissions, counted per video part",
+          "Channel-level rate-limit detection (406/601/137022) with exponential cooldown, no retry budget burned",
+          "Automatic upload-line fallback when a CDN line fails (e.g. expired TLS certificate)",
+          "Upload tasks can be expanded to show every part, and paused, resumed or deleted manually",
+          "Douyin following list and recommended-live browsing, plus QR-code login for Douyin and Bilibili"
+        ],
+        "zh_CN": [
+          "新增 B 站自动投稿队列：人体识别完成后按渠道自动上传",
+          "同一主播的片段自动合并为一稿多P（单稿最多 5 个分P）",
+          "投稿节奏门：按分P计价的投稿最小间隔，改设置即时生效",
+          "渠道级限流识别（406/601/137022）+ 指数退避冷却，限流不消耗重试次数",
+          "上传线路失败自动换线重试（如 CDN 线路 TLS 证书过期）",
+          "上传任务可展开查看每个分P的文件名，并支持手动暂停/恢复/删除",
+          "抖音关注列表与推荐直播浏览，抖音/B站支持扫码登录"
+        ]
+      },
+      "release_date": "2026-10-29"
+    },
     {
       "version": "1.0.3",
       "kernel_version": "4.0.10",

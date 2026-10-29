@@ -27,7 +27,23 @@ StreamCap is a multi-platform live stream recording client based on FFmpeg and S
 - **Scheduled Tasks**: Checks live stream status within a set time range.
 - **Multiple Output Formats**: Supports ts, flv, mkv, mov, mp4, mp3, m4a, and other formats.
 - **Automatic Transcoding**: Automatically transcodes recorded files to mp4 format after recording.
+- **Person Detection Clips**: YOLOv8 detection + pose estimation trims recordings down to the segments that actually contain a person (optionally right after recording).
+- **Automatic Bilibili Upload**: Detected clips are uploaded automatically; clips from the same streamer are merged into one multi-part submission (max 5 parts per submission), with a pacing gate, rate-limit cooldowns and automatic upload-line fallback.
+- **Following & Recommended Live**: Browse your Douyin following list and recommended live rooms; recommendations work without login, scanning the QR code unlocks the following list.
+- **QR-code Login**: Scan to log in to Douyin / Bilibili, with cookie expiry reminders.
 - **Message Push**: Supports live stream status push notifications to keep you informed of live status.
+
+## 📤Automatic Upload to Bilibili
+
+The whole chain — recording → person-detection clips → upload — is configured in the Web UI (Settings → Uploads).
+
+- **Multi-part submissions**: Clips from the same streamer / same recording task are merged into a single submission (5 parts per submission by default, overflowing clips are split into extra submissions). Note that Bilibili parts only reduce the number of *submission* calls: every part is still an independent upload, so merging does **not** lower the upload request rate.
+- **Pacing gate**: priced per part — if the previous submission had N parts, the next one waits `N × min_interval_seconds` (default 600 s per part, so a 5-part submission pushes the next one ~50 min out). Changing the setting takes effect immediately, no restart.
+- **Rate-limit cooldown**: Bilibili `406` (uploading too fast), `601`, `137022` (submitting too frequently) are recognised as channel-level rate limits, pausing the whole queue with exponential backoff (6h → 12h → 24h) and resuming from where it stopped. Rate limits do **not** consume a job's retry budget (the default 5 attempts are left for real failures).
+- **Upload-line fallback**: when a CDN line (e.g. `bldsa`) has an expired TLS certificate or misbehaves, the uploader switches to a backup line (`tx`, `bda2`) and returns to auto-probing 30 minutes later.
+- **Task controls**: the upload task list in Settings can be expanded to show the file name of every part, and tasks can be paused, resumed or deleted manually. Tasks that are currently uploading refuse pause/delete, so no half-finished submission is left behind.
+
+Measured on a single account with web submissions: at ~1 submission/minute a `406` appeared after 13 minutes and cleared naturally ~38 minutes later; `137022` lasts longer (hours), and if it does not clear, submit one video manually in the Bilibili web UI to pass the captcha/SMS check.
 
 ## 📸Recording Interface
 

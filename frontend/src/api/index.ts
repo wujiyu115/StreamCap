@@ -126,6 +126,11 @@ export const uploadsApi = {
     list: (page = 1, perPage = 15) =>
         api.get<import("./types").UploadsResponse>(`/uploads?page=${page}&per_page=${perPage}`),
     retry: (jobId: string) => api.post<{ ok: boolean }>(`/uploads/${jobId}/retry`),
+    /** 暂停排队中的任务（正在上传的会被后端 409 拒掉） */
+    pause: (jobId: string) => api.post<{ ok: boolean }>(`/uploads/${jobId}/pause`),
+    resumeJob: (jobId: string) => api.post<{ ok: boolean }>(`/uploads/${jobId}/resume`),
+    /** 只删队列记录，不动磁盘视频 */
+    removeJob: (jobId: string) => api.del<{ ok: boolean }>(`/uploads/${jobId}`),
     resumeChannel: (provider: string) =>
         api.post<{ ok: boolean }>(`/uploads/channels/${provider}/resume`),
     channels: () => api.get<{ channels: import("./types").UploadChannel[] }>("/uploads/channels"),

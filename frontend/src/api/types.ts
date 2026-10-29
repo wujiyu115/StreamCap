@@ -244,7 +244,7 @@ export interface UploadJob {
     id: string
     source_task_id: string
     provider: string
-    status: "pending" | "uploading" | "retrying" | "completed" | "failed" | "blocked_auth"
+    status: "pending" | "uploading" | "retrying" | "paused" | "completed" | "failed" | "blocked_auth"
     files: string[]
     title: string
     attempts: number
