@@ -615,19 +615,28 @@ function UploadSettings() {
                 <div className="mb-3 flex items-center justify-between">
                     <h3 className="font-semibold">{t("settings.uploadTasks")}</h3>
                     <div className="flex items-center gap-1">
-                        {(tasks.data?.channels ?? []).map((channel) => channel.status === "active" && (
-                            <Button
-                                key={channel.provider}
-                                variant="outline"
-                                size="sm"
-                                onClick={() => pauseQueue.mutate(channel.provider)}
-                                disabled={pauseQueue.isPending}
-                                data-testid="upload-queue-pause"
-                            >
-                                <Pause className="mr-1 h-3 w-3" />
-                                {t("settings.uploadQueuePause")}
-                            </Button>
-                        ))}
+                        {/* 同一个位置只放一个开关：先摆成「暂停队列」再换成横幅里的「继续队列」，
+                            浏览器会在 DOM 换掉的瞬间把 click 派发到新按钮上，刚暂停就被自动恢复。 */}
+                        {(tasks.data?.channels ?? []).map((channel) => {
+                            const paused = channel.status === "paused"
+                            const busy = pauseQueue.isPending || resumeQueue.isPending
+                            const toggle = paused
+                                ? () => resumeQueue.mutate(channel.provider)
+                                : () => pauseQueue.mutate(channel.provider)
+                            return (channel.status === "active" || paused) && (
+                                <Button
+                                    key={channel.provider}
+                                    variant={paused ? "default" : "outline"}
+                                    size="sm"
+                                    onClick={toggle}
+                                    disabled={busy}
+                                    data-testid={paused ? "upload-queue-resume" : "upload-queue-pause"}
+                                >
+                                    {paused ? <Play className="mr-1 h-3 w-3" /> : <Pause className="mr-1 h-3 w-3" />}
+                                    {paused ? t("settings.uploadQueueResume") : t("settings.uploadQueuePause")}
+                                </Button>
+                            )
+                        })}
                         <Button variant="ghost" size="sm" onClick={() => tasks.refetch()} disabled={tasks.isFetching}>
                             <RefreshCw className={`mr-1 h-4 w-4 ${tasks.isFetching ? "animate-spin" : ""}`} />
                             {t("common.refresh")}
@@ -636,13 +645,8 @@ function UploadSettings() {
                 </div>
                 {(tasks.data?.channels ?? []).map((channel) => channel.status === "paused" && (
                     <div key={channel.provider} className="mb-3 rounded border bg-muted/40 p-3" data-testid="upload-queue-paused">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                            <div>
-                                <p className="font-medium">{t("settings.uploadQueuePaused")}</p>
-                                <p className="mt-1 text-xs text-muted-foreground">{t("settings.uploadQueuePausedHint")}</p>
-                            </div>
-                            <Button size="sm" onClick={() => resumeQueue.mutate(channel.provider)} disabled={resumeQueue.isPending} data-testid="upload-queue-resume">{t("settings.uploadQueueResume")}</Button>
-                        </div>
+                        <p className="font-medium">{t("settings.uploadQueuePaused")}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">{t("settings.uploadQueuePausedHint")}</p>
                     </div>
                 ))}
                 {(tasks.data?.channels ?? []).map((channel) => channel.status === "cooling" && (
