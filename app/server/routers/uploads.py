@@ -101,6 +101,16 @@ async def delete_upload(job_id: str, request: Request, user: str = Depends(get_c
     return {"ok": True}
 
 
+@router.post("/channels/{provider}/pause")
+async def pause_channel(provider: str, request: Request, user: str = Depends(get_current_user)):
+    """手动暂停整条渠道。不打中断：正在上传的那单跑完就停，队列原样保留。"""
+    manager = _manager(request)
+    if provider not in {item["provider"] for item in manager.list_channels()}:
+        raise HTTPException(status_code=404, detail="err.uploadChannelNotFound")
+    manager.pause_channel(provider)
+    return {"ok": True}
+
+
 @router.post("/channels/{provider}/resume")
 async def resume_channel(provider: str, request: Request, user: str = Depends(get_current_user)):
     if not _manager(request).resume_channel(provider):

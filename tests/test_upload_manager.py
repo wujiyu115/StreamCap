@@ -910,3 +910,127 @@ def test_prune_jobs_keeps_paused_tasks(tmp_path):
     manager.MAX_JOBS = 2  # 超出 1 条，只该清理那条已完成的
     assert manager._prune_jobs() == 1
     assert sorted(job["status"] for job in manager.list_jobs()) == ["paused", "pending"]
+
+
+def test_pause_channel_stops_dispatch_but_not_the_running_job(tmp_path):
+    files = []
+    for index in range(2):
+        path = tmp_path / f"q{index}.mp4"
+        path.write_bytes(b"video")
+        files.append(str(path))
+    manager = _mgr(tmp_path)
+    manager.enqueue_files(files, ["bilibili"])
+    with sqlite3.connect(manager.db_path) as conn:
+        conn.execute("UPDATE upload_jobs SET status='uploading' WHERE files_json LIKE ?", (f"%{files[0]}%",))
+
+    assert manager.pause_channel("bilibili") is True
+    assert manager.list_channels()[0]["status"] == "paused"
+    assert manager._next_job() is None  # 不再领取新任务
+    # 正在跑的那单不被改写（不能把进程中的任务改成 paused）
+    with sqlite3.connect(manager.db_path) as conn:
+        statuses = [row[0] for row in conn.execute("SELECT status FROM upload_jobs")]
+    assert sorted(statuses) == ["pending", "uploading"]
+
+    # 恢复后立刻能领到那条 pending（没设过节奏门，不该被挡）
+    assert manager.resume_channel("bilibili") is True
+    assert manager._next_job() is not None
+
+    # 暂停幂等；未知渠道返回 False（路由层给 404）
+    assert manager.pause_channel("bilibili") is True
+    assert manager.pause_channel("youtube") is False
+
+
+def test_resume_channel_after_manual_pause_keeps_pacing_gate(tmp_path):
+    path = tmp_path / "r.mp4"
+    path.write_bytes(b"video")
+    manager = _mgr(tmp_path)
+    manager.enqueue_files([str(path)], ["bilibili"])
+    manager.pause_channel("bilibili")
+    # 模拟暂停前刚投过一单：节奏门数据必须保留，否则一点「继续」就又撞 406
+    with sqlite3.connect(manager.db_path) as conn:
+        conn.execute("UPDATE upload_channels SET last_attempt_at=?, last_attempt_files=1, cool_downs=2",
+                     (time.time(),))
+
+    assert manager.resume_channel("bilibili") is True
+    channel = manager.list_channels()[0]
+    assert channel["status"] == "active"
+    assert channel["cool_downs"] == 2  # 保留退避计数
+    assert channel["last_attempt_at"] > 0  # 节奏门没被清零
+    assert channel["next_slot_at"] > time.time()  # 前端拿到的仍是「还没到点」
+    assert manager._next_job() is None  # 节奏门还在挡，不会立刻投
+
+
+def test_partially_deleted_files_upload_the_rest(tmp_path):
+    from app.core.upload.models import UploadResult
+
+    files = []
+    for index in range(3):
+        path = tmp_path / f"keep{index}.mp4"
+        path.write_bytes(b"video")
+        files.append(str(path))
+    manager = _mgr(tmp_path)
+    # 人体识别的多产物 → 合成一稿多P（enqueue_files 是一条文件一单，测不到「部分缺失」）
+    assert manager.enqueue_pose_outputs(
+        "task-1", {"status": "completed", "trigger": "auto", "summary": {"output_files": files}}
+    ) == 1
+    assert len(manager.list_jobs()[0]["files"]) == 3
+    os.remove(files[1])  # 中间那个被手动删了
+
+    seen = {}
+
+    class OkProvider:
+        def upload(self, request, provider_config):
+            seen["files"] = list(request.files)
+            return UploadResult(provider="bilibili", remote_id="BV1xx411c7mD", message="ok")
+
+    manager._providers["bilibili"] = OkProvider()
+    manager._process(manager._next_job())
+
+    assert seen["files"] == [files[0], files[2]]  # 缺的跳过，其余照投
+    job = manager.list_jobs()[0]
+    assert job["status"] == "completed" and job["files"] == [files[0], files[2]]
+    assert job["attempts"] == 1  # 跳过缺失文件不额外消耗重试
+
+
+def test_all_files_deleted_fails_fast_without_burning_retries(tmp_path):
+    path = tmp_path / "gone.mp4"
+    path.write_bytes(b"video")
+    manager = _mgr(tmp_path)
+    manager.enqueue_files([str(path)], ["bilibili"])
+    os.remove(path)  # 文件删了，但目录还在 → 真被删，不是存储掉线
+
+    class BoomProvider:
+        def upload(self, request, provider_config):
+            raise AssertionError("文件都不在了，不该再调 biliup")
+
+    manager._providers["bilibili"] = BoomProvider()
+    manager._process(manager._next_job())
+
+    job = manager.list_jobs()[0]
+    assert job["status"] == "failed"
+    assert job["attempts"] == 0  # 领任务时 +1 已退回，不占 5 次预算
+    assert job["next_attempt_at"] == 0
+    assert "deleted from disk" in job["message"]
+
+
+def test_unmounted_storage_keeps_job_retrying(tmp_path):
+    missing_dir = tmp_path / "nas-not-mounted"
+    manager = _mgr(tmp_path)
+    files = [str(missing_dir / "a.mp4"), str(missing_dir / "b.mp4")]
+    with sqlite3.connect(manager.db_path) as conn:
+        conn.execute(
+            "INSERT INTO upload_jobs (id, source_task_id, provider, status, files_json, title,"
+            " metadata_json, attempts, next_attempt_at, remote_id, message, created_at, updated_at)"
+            " VALUES ('job-x', 'task-x', 'bilibili', 'pending', ?, '标题', '{}', 1, 0, NULL, '',"
+            " '2026-10-29T00:00:00', '2026-10-29T00:00:00')",
+            (json.dumps(files),),
+        )
+    row = manager._next_job()
+    assert row is not None
+    manager._process(row)
+    job = manager.list_jobs()[0]
+    # 目录整个不见 = 存储没挂上：留在队列里稍后重试，不吃重试次数
+    assert job["status"] == "retrying"
+    assert job["attempts"] == 1
+    assert job["next_attempt_at"] > time.time() + 60
+    assert "storage unavailable" in job["message"]

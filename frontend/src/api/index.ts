@@ -133,6 +133,9 @@ export const uploadsApi = {
     removeJob: (jobId: string) => api.del<{ ok: boolean }>(`/uploads/${jobId}`),
     resumeChannel: (provider: string) =>
         api.post<{ ok: boolean }>(`/uploads/channels/${provider}/resume`),
+    /** 手动暂停整条渠道：不再领新任务，正在上传的那单跑完为止 */
+    pauseChannel: (provider: string) =>
+        api.post<{ ok: boolean }>(`/uploads/channels/${provider}/pause`),
     channels: () => api.get<{ channels: import("./types").UploadChannel[] }>("/uploads/channels"),
     enqueue: (paths: string[], providers: string[]) =>
         api.post<import("./types").UploadEnqueueResponse>("/uploads/enqueue", { paths, providers }),

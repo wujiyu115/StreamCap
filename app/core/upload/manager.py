@@ -37,6 +37,9 @@ _DEFAULT_MAX_PAGES_PER_JOB = 5
 # 上传线路节点证书失效后的重试间隔：已经换线了，不必拖 5 分钟
 _LINE_RETRY_SECONDS = 60
 
+# 文件整体找不到（目录也消失 = NAS 没挂上）时的重查间隔；不烧重试次数
+_MISSING_RETRY_SECONDS = 900
+
 # 「任务还没结束」的状态：同一文件再次提交时不能重复入队
 # 入队去重时视为「还占着这个文件」的状态；paused 是用户手动暂停，同样不能再排一条新任务
 _ACTIVE_STATUSES = ("pending", "uploading", "retrying", "blocked_auth", "paused")
@@ -340,8 +343,8 @@ class UploadManager:
             item["enabled"] = bool(provider_config.get("enabled"))
             interval = self._channel_interval(name)
             item["min_interval_seconds"] = interval
-            # 下一次能投递的时刻（0 = 现在就可以）：冷却中看 resume_at，否则看节奏门。
-            # 前端靠它告诉用户「点了恢复为什么队列还没动」。
+            # 下一次能投递的时刻（0 = 现在就可以）：冷却中看 resume_at，手动暂停看「恢复后再说」，
+            # 否则看节奏门。前端靠它告诉用户「点了恢复为什么队列还没动」。
             next_slot = 0.0
             if item.get("status") == "cooling":
                 next_slot = float(item.get("resume_at") or 0)
@@ -352,6 +355,26 @@ class UploadManager:
             result.append(item)
         return result
 
+    def pause_channel(self, provider: str) -> bool:
+        """手动暂停整条渠道：不再领取新任务，正在跑的那单跑完为止。
+
+        与冷却（cooling）的区别：冷却由平台限流自动触发且带到期时间，这个纯手动、不会自己恢复。
+        不动 last_attempt_at / cool_downs——恢复后仍要遵守节奏门，免得一点「继续」就又撞 406。
+        """
+        if provider not in self._providers:
+            return False
+        now = datetime.now().isoformat(timespec="seconds")
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO upload_channels"
+                "(provider,status,message,notified,updated_at,resume_at,cool_downs) "
+                "VALUES(?, 'paused', '', 0, ?, 0, 0) "
+                "ON CONFLICT(provider) DO UPDATE SET status='paused', message='', "
+                "updated_at=excluded.updated_at, resume_at=0",
+                (provider, now),
+            )
+        return True
+
     def resume_channel(self, provider: str) -> bool:
         if provider not in self._providers:
             return False
@@ -361,19 +384,24 @@ class UploadManager:
             current = conn.execute(
                 "SELECT status FROM upload_channels WHERE provider=?", (provider,)
             ).fetchone()
+            current_status = (current["status"] if current else "active")
             # 从限流冷却里恢复：保留 cool_downs/notified——用户没先去过验证就又撞上风控时，
             # 退避继续翻倍且不重复推送（否则每次点「恢复上传」都会再拉一次 600s + 一条通知）。
             # 从登录失效里恢复不一定是新 bug，但也可能是新的 cookie：通知重新计一次。
-            keep_episode = bool(current) and current["status"] == "cooling"
+            keep_episode = current_status in ("cooling", "paused")
             notified = "notified" if keep_episode else "0"
             cool_downs = "cool_downs" if keep_episode else "0"
+            # 手动暂停的渠道恢复时不清节奏门：暂停前刚投过一单的话，立刻再投就是自找 406。
+            gate_reset = "" if current_status == "paused" else (
+                ", last_attempt_at=0, pacing_until=0, last_attempt_files=0"
+            )
             conn.execute(
                 "INSERT INTO upload_channels"
                 "(provider,status,message,notified,updated_at,resume_at,cool_downs) "
                 "VALUES(?, 'active', '', 0, ?, 0, 0) "
                 "ON CONFLICT(provider) DO UPDATE SET status='active', message='', "
                 f"notified={notified}, updated_at=excluded.updated_at, resume_at=0, "
-                f"cool_downs={cool_downs}, last_attempt_at=0, pacing_until=0, last_attempt_files=0",
+                f"cool_downs={cool_downs}{gate_reset}",
                 (provider, now),
             )
             # 用户显式恢复：把等登录/等冷却的任务立刻放行（其他正常指数退避的不动）；
@@ -563,16 +591,68 @@ class UploadManager:
                 continue
             self._process(row)
 
+    def _files_on_disk(self, row: dict) -> list[str]:
+        """投递前确认文件还在：磁盘上的文件被删了就跳过，别让 biliup 报错烧光重试次数。
+
+        三种情形：
+        - 部分缺失 → 缩成剩下的分P 继续投，message 里备注缺了几个
+        - 全缺但目录还在 → 真被删了，直接判 failed（重试没意义）
+        - 全缺且目录也没了 → 存储没挂上（NAS 掉线），放回 retrying 稍后再试，不烧额度
+        """
+        files = json.loads(row["files_json"])
+        missing = [path for path in files if not os.path.exists(path)]
+        if not missing:
+            return files
+        remaining = [path for path in files if os.path.exists(path)]
+        now = datetime.now().isoformat(timespec="seconds")
+        names = ", ".join(Path(path).name for path in missing)[:160]
+        with self._connect() as conn:
+            if remaining:
+                conn.execute(
+                    "UPDATE upload_jobs SET files_json=?, message=?, updated_at=? WHERE id=?",
+                    (
+                        json.dumps(remaining),
+                        f"{len(missing)} of {len(files)} file(s) missing on disk, skipped",
+                        now,
+                        row["id"],
+                    ),
+                )
+            elif any(os.path.isdir(os.path.dirname(path) or ".") for path in files):
+                conn.execute(
+                    "UPDATE upload_jobs SET status='failed', message=?, next_attempt_at=0, "
+                    "attempts=MAX(0, attempts-1), updated_at=? WHERE id=?",
+                    (f"file(s) deleted from disk: {names}", now, row["id"]),
+                )
+            else:
+                conn.execute(
+                    "UPDATE upload_jobs SET status='retrying', message=?, next_attempt_at=?, "
+                    "attempts=MAX(0, attempts-1), updated_at=? WHERE id=?",
+                    (
+                        f"storage unavailable, files not found: {names}",
+                        time.time() + _MISSING_RETRY_SECONDS,
+                        now,
+                        row["id"],
+                    ),
+                )
+        logger.warning(
+            f"上传任务 {row['id']} 有 {len(missing)}/{len(files)} 个文件不在磁盘上，"
+            f"剩 {len(remaining)} 个：{names}"
+        )
+        return remaining
+
     def _process(self, row: dict) -> None:
         provider_name = row["provider"]
         provider = self._providers.get(provider_name)
         uploads = self._config_getter().get("uploads") or {}
         config = (uploads.get("providers") or {}).get(provider_name) or {}
+        files = self._files_on_disk(row)
+        if not files:
+            return
         attempts = int(row["attempts"]) + 1
         max_attempts = max(1, int(uploads.get("max_attempts") or 5))
         request = UploadRequest(
             job_id=row["id"],
-            files=json.loads(row["files_json"]),
+            files=files,
             title=row["title"],
             metadata=json.loads(row["metadata_json"]),
         )

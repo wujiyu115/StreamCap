@@ -258,7 +258,7 @@ export interface UploadJob {
 export interface UploadChannel {
     provider: string
     enabled: boolean
-    status: "active" | "blocked_auth" | "cooling"
+    status: "active" | "blocked_auth" | "cooling" | "paused"
     message: string
     notified: number
     updated_at: string | null

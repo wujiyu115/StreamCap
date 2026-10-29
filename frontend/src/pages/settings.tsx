@@ -517,6 +517,23 @@ function UploadSettings() {
         },
         onError: (e: Error) => toast.error(translateError(e.message)),
     })
+    // 手动暂停整条渠道（与限流冷却不同：不会自己恢复，也不清节奏门）
+    const pauseQueue = useMutation({
+        mutationFn: uploadsApi.pauseChannel,
+        onSuccess: () => {
+            toast.success(t("settings.uploadQueuePausedToast"))
+            queryClient.invalidateQueries({ queryKey: ["uploads"] })
+        },
+        onError: (e: Error) => toast.error(translateError(e.message)),
+    })
+    const resumeQueue = useMutation({
+        mutationFn: uploadsApi.resumeChannel,
+        onSuccess: () => {
+            toast.success(t("settings.uploadQueueResumedToast"))
+            queryClient.invalidateQueries({ queryKey: ["uploads"] })
+        },
+        onError: (e: Error) => toast.error(translateError(e.message)),
+    })
 
     if (form.isLoading || !form.data) {
         return <div className="flex justify-center py-20"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
@@ -597,11 +614,37 @@ function UploadSettings() {
             <div className="rounded-lg border bg-card p-4">
                 <div className="mb-3 flex items-center justify-between">
                     <h3 className="font-semibold">{t("settings.uploadTasks")}</h3>
-                    <Button variant="ghost" size="sm" onClick={() => tasks.refetch()} disabled={tasks.isFetching}>
-                        <RefreshCw className={`mr-1 h-4 w-4 ${tasks.isFetching ? "animate-spin" : ""}`} />
-                        {t("common.refresh")}
-                    </Button>
+                    <div className="flex items-center gap-1">
+                        {(tasks.data?.channels ?? []).map((channel) => channel.status === "active" && (
+                            <Button
+                                key={channel.provider}
+                                variant="outline"
+                                size="sm"
+                                onClick={() => pauseQueue.mutate(channel.provider)}
+                                disabled={pauseQueue.isPending}
+                                data-testid="upload-queue-pause"
+                            >
+                                <Pause className="mr-1 h-3 w-3" />
+                                {t("settings.uploadQueuePause")}
+                            </Button>
+                        ))}
+                        <Button variant="ghost" size="sm" onClick={() => tasks.refetch()} disabled={tasks.isFetching}>
+                            <RefreshCw className={`mr-1 h-4 w-4 ${tasks.isFetching ? "animate-spin" : ""}`} />
+                            {t("common.refresh")}
+                        </Button>
+                    </div>
                 </div>
+                {(tasks.data?.channels ?? []).map((channel) => channel.status === "paused" && (
+                    <div key={channel.provider} className="mb-3 rounded border bg-muted/40 p-3" data-testid="upload-queue-paused">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                                <p className="font-medium">{t("settings.uploadQueuePaused")}</p>
+                                <p className="mt-1 text-xs text-muted-foreground">{t("settings.uploadQueuePausedHint")}</p>
+                            </div>
+                            <Button size="sm" onClick={() => resumeQueue.mutate(channel.provider)} disabled={resumeQueue.isPending} data-testid="upload-queue-resume">{t("settings.uploadQueueResume")}</Button>
+                        </div>
+                    </div>
+                ))}
                 {(tasks.data?.channels ?? []).map((channel) => channel.status === "cooling" && (
                     <div key={channel.provider} className="mb-3 rounded border border-amber-500/40 bg-amber-500/5 p-3" data-testid="upload-rate-limited">
                         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -721,7 +764,6 @@ function UploadJobRow({ job, busy, onRetry, onPause, onResume, onDelete, t, tf, 
                     <div className="flex items-start gap-2">
                         {success ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-green-600" /> : failed ? <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" /> : paused ? <Pause className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" /> : <Loader2 className={`mt-0.5 h-4 w-4 shrink-0 ${uploading ? "animate-spin" : ""}`} />}
                         <span className="min-w-0 flex-1 break-all font-medium leading-snug line-clamp-2" title={job.title}>{job.title}</span>
-                        <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-xs" data-testid="upload-job-status">{label}</span>
                     </div>
                     <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
                         {job.files.length > 0 ? (
@@ -756,7 +798,9 @@ function UploadJobRow({ job, busy, onRetry, onPause, onResume, onDelete, t, tf, 
                     )}
                     {job.message && failed && <p className="mt-1 line-clamp-2 break-all text-xs text-destructive" title={job.message}>{job.message}</p>}
                 </div>
-                <div className="flex shrink-0 flex-wrap gap-1">
+                {/* 徽章跟按钮放同一行并 items-center：之前徽章在标题行 top 对齐，比 32px 高的按钮高出一截 */}
+                <div className="flex shrink-0 flex-wrap items-center gap-1">
+                    <span className="mr-0.5 shrink-0 rounded bg-muted px-1.5 py-0.5 text-xs leading-5" data-testid="upload-job-status">{label}</span>
                     {job.remote_id && <Button asChild variant="outline" size="sm"><a href={`https://www.bilibili.com/video/${job.remote_id}`} target="_blank" rel="noreferrer">{job.remote_id}<ExternalLink className="ml-1 h-3 w-3" /></a></Button>}
                     {failed && <Button variant="outline" size="sm" onClick={onRetry} disabled={busy || job.status === "blocked_auth"}>{t("settings.uploadRetry")}</Button>}
                     {canPause && <Button variant="outline" size="sm" onClick={onPause} disabled={busy} data-testid="upload-job-pause"><Pause className="mr-1 h-3 w-3" />{t("settings.uploadJobPause")}</Button>}
