@@ -320,3 +320,61 @@ def test_wait_upload_done_keeps_waiting_while_detecting():
     with pytest.raises(RuntimeError) as excinfo:
         DouyinProvider("/tmp")._wait_upload_done(page, __import__("time").time() + 0.8)
     assert "上传/转码超时" in str(excinfo.value)
+
+
+class _Crash(Exception):
+    """仿 Playwright 渲染进程崩溃的报错（真机日志原文）。"""
+
+
+def test_upload_retries_once_when_renderer_crashes_before_publish(tmp_path):
+    """renderer 崩了但还没点发布 → 重建浏览器重试一次（不烧队列的重试预算）。"""
+    path = _write(tmp_path, "ok.mp4", _STANDARD_MP4)
+    calls = []
+
+    def runner(cookies, file_path, title, description, config):
+        calls.append(file_path)
+        if len(calls) == 1:
+            raise _Crash("Page.wait_for_timeout: Page crashed")
+        return "7412345678901234567"
+
+    provider = DouyinProvider(str(tmp_path), cookie_getter=lambda: "sessionid=abc", page_runner=runner)
+    result = provider.upload(UploadRequest("job", [path], "标题"), _config())
+    assert len(calls) == 2
+    assert result.remote_id == "7412345678901234567"
+
+
+def test_upload_does_not_retry_after_publish_click(tmp_path):
+    """已经点过发布再崩 → 绝不重试，否则账号里会多一条重复作品。"""
+    path = _write(tmp_path, "ok.mp4", _STANDARD_MP4)
+    calls = []
+
+    def runner(cookies, file_path, title, description, config):
+        calls.append(file_path)
+        provider._publish_started = True  # 真流程里 ``_publish`` 点发布前就是这么置位的
+        raise _Crash("Target crashed")
+
+    provider = DouyinProvider(str(tmp_path), cookie_getter=lambda: "sessionid=abc", page_runner=runner)
+    with pytest.raises(_Crash):
+        provider.upload(UploadRequest("job", [path], "标题"), _config())
+    assert len(calls) == 1
+
+
+def test_upload_gives_up_after_second_crash(tmp_path):
+    """连续两次崩就不再重试，把错误抛给 manager 走正常退避。"""
+    path = _write(tmp_path, "ok.mp4", _STANDARD_MP4)
+    calls = []
+
+    def runner(cookies, file_path, title, description, config):
+        calls.append(file_path)
+        raise _Crash("Page crashed")
+
+    provider = DouyinProvider(str(tmp_path), cookie_getter=lambda: "sessionid=abc", page_runner=runner)
+    with pytest.raises(_Crash):
+        provider.upload(UploadRequest("job", [path], "标题"), _config())
+    assert len(calls) == 2
+
+
+def test_is_page_crash_markers():
+    assert douyin._is_page_crash(Exception("Page.wait_for_timeout: Page crashed"))
+    assert douyin._is_page_crash(Exception("Target crashed"))
+    assert not douyin._is_page_crash(RuntimeError("抖音素材上传/转码超时（没等到「上传成功」）"))

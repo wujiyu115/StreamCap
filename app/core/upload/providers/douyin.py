@@ -211,6 +211,15 @@ def build_caption(request: UploadRequest, config: dict) -> tuple[str, str]:
     return title, description
 
 
+def _is_page_crash(exc: BaseException) -> bool:
+    """Playwright 里「渲染进程没了」的几种报法（都跟稿件内容无关，重建浏览器能恢复）。"""
+    text = str(exc)
+    return any(
+        marker in text
+        for marker in ("Page crashed", "Target crashed", "Target closed", "browser has been closed")
+    )
+
+
 def looks_like_standard_mp4(path: str) -> bool:
     """前 1MB 里要有完整 moov，且不能出现 moof 分片。
 
@@ -300,6 +309,8 @@ class DouyinProvider:
         self._cookie_getter = cookie_getter or (lambda: "")
         #: 测试注入点：``page_runner(cookies, path, title, description, config) -> str|None``
         self._page_runner = page_runner
+        #: 已经点过「发布」按钮 —— 崩溃重试用它守住，避免重复投递同一稿件
+        self._publish_started = False
 
     def build_caption(self, request: UploadRequest, config: dict) -> tuple[str, str]:
         return build_caption(request, config)
@@ -327,8 +338,20 @@ class DouyinProvider:
 
         title, description = self.build_caption(request, config)
         runner = self._page_runner or self._run_browser
+        remote_id = None
         try:
-            remote_id = runner(cookies, path, title, description, config)
+            for attempt in (1, 2):
+                self._publish_started = False
+                try:
+                    remote_id = runner(cookies, path, title, description, config)
+                    break
+                except Exception as exc:
+                    # 渲染进程崩溃（Playwright 报 Page/Target crashed）跟稿件本身无关，重试能捡回来。
+                    # 但已经点过「发布」就绝不能重来：会发出去两条一模一样的作品。
+                    if attempt == 2 or self._publish_started or not _is_page_crash(exc):
+                        raise
+                    logger.warning(f"抖音：浏览器渲染进程崩了（{exc}），重建浏览器重试一次")
+                    time.sleep(3)
         finally:
             if temp_path:
                 try:
@@ -394,6 +417,7 @@ class DouyinProvider:
         if bool(config.get("only_self", True)):
             self._select_self_only(page)
 
+        self._publish_started = True
         self._publish_click(page, deadline)
         remote_id = self._read_back(page, deadline, title)
         logger.success(f"抖音：发布完成 {remote_id or '(未取到作品 ID)'}")
@@ -437,6 +461,8 @@ class DouyinProvider:
         不能拿整页文案当判据：编辑页常驻「点击发布后，如作品还在上传中…」的提示语，
         任何「上传中」字样都会永远命中。
         """
+        scans = 0
+        text = ""
         while time.time() < deadline:
             toast = self._toast_text(page)
             if any(marker in toast for marker in _UPLOAD_DONE_MARKERS):
@@ -444,7 +470,11 @@ class DouyinProvider:
             failure = detect_failure(toast)
             if failure:
                 raise RuntimeError(f"抖音上传失败：{failure}")
-            text = self._body_text(page)
+            # ``_body_text`` 要深拷整个 DOM（抖音编辑页很大），每 0.5s 拷一次会白烧渲染进程内存，
+            # 实测大文件上传时能把 renderer 拷崩 → 降到 2s 一次；toast 仍旧 0.5s 一着。
+            if scans % 4 == 0:
+                text = self._body_text(page)
+            scans += 1
             if detect_auth(text):
                 raise UploadAuthError("抖音 Cookie 已失效（上传中被要求登录）")
             transient = detect_transient(text)
