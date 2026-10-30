@@ -89,6 +89,7 @@ class BilibiliProvider:
     """通过活跃维护的开源 biliup CLI 投稿，隔离平台私有协议变化。"""
 
     name = "bilibili"
+    display_name = "B站"
 
     def __init__(self, run_path: str, executable: str = "biliup"):
         self.run_path = os.path.abspath(run_path)

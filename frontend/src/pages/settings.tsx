@@ -452,16 +452,33 @@ function PoseSettings() {
 
 const UPLOAD_PAGE_SIZE = 15
 
+/** 渠道展示名：provider 就是后端渠道名，tab 顺序也按这个来 */
+const UPLOAD_CHANNELS: { provider: string; label: string }[] = [
+    { provider: "bilibili", label: "Bilibili" },
+    { provider: "douyin", label: "抖音" },
+]
+
 function UploadSettings() {
     const { t, tf, lang } = useI18n()
     const form = useSettingsForm()
     const queryClient = useQueryClient()
+    // 每个渠道一个 tab：开关、投稿节奏、凭据、任务队列都只看自己那一路，
+    // 一个渠道撞风控/暂停不会牵连另一个渠道。
+    const [channel, setChannel] = useState(UPLOAD_CHANNELS[0].provider)
     const [bilibiliLoginOpen, setBilibiliLoginOpen] = useState(false)
+    const [douyinLoginOpen, setDouyinLoginOpen] = useState(false)
     const [page, setPage] = useState(1)
-    const uploadsQueryKey = ["uploads", page] as const
+    // 抖音 Cookie 寿命只解析本地 sid_guard（没登录态时也能提醒）
+    const cookieStatus = useQuery({
+        queryKey: ["douyin-cookie"],
+        queryFn: douyinApi.cookieStatus,
+        staleTime: 60_000,
+    })
+    const uploadsQueryKey = ["uploads", channel, page] as const
     const tasks = useQuery({
         queryKey: uploadsQueryKey,
-        queryFn: () => uploadsApi.list(page, UPLOAD_PAGE_SIZE),
+        // 列表按渠道过滤：各 tab 只看自己那一路的队列
+        queryFn: () => uploadsApi.list(page, UPLOAD_PAGE_SIZE, channel),
         // 翻页时保留上一页数据：否则 total 会瞬间变 0、页码被下面的越界保护退回第 1 页
         placeholderData: keepPreviousData,
         refetchInterval: (query) =>
@@ -473,6 +490,11 @@ function UploadSettings() {
     const totalPages = Math.max(1, Math.ceil(total / UPLOAD_PAGE_SIZE))
     // 页码标签跟当前显示的这批数据对齐（翻页瞬间还在显示上一页）
     const shownPage = tasks.data?.page ?? page
+
+    // 换渠道从第一页看起（各渠道条数不同，页码不能沿用）
+    useEffect(() => {
+        setPage(1)
+    }, [channel])
 
     // 记录只留最近 100 条，翻到末页后再有新任务/清理，页码可能越界，退到末页；
     // 新页数据还没回来时 total 不可信，别在这里判
@@ -541,192 +563,358 @@ function UploadSettings() {
 
     const uploads = (form.values.uploads ?? {}) as Rec
     const providers = (uploads.providers ?? {}) as Rec
-    const bilibili = (providers.bilibili ?? {}) as Rec
-    const bilibiliChannel = (tasks.data?.channels ?? []).find((c) => c.provider === "bilibili")
+    const channels = tasks.data?.channels ?? []
+    const globalMinutes = Math.round(Number(uploads.min_interval_seconds ?? 1800) / 60)
     const setUpload = (key: string, value: unknown) => form.set("uploads", { ...uploads, [key]: value })
-    const setBilibili = (key: string, value: unknown) => form.set("uploads", {
-        ...uploads,
-        providers: { ...providers, bilibili: { ...bilibili, [key]: value } },
-    })
-
-    const input = (key: string, type = "text") => (
+    const setProvider = (provider: string, key: string, value: unknown) =>
+        form.set("uploads", {
+            ...uploads,
+            providers: { ...providers, [provider]: { ...((providers[provider] ?? {}) as Rec), [key]: value } },
+        })
+    const providerInput = (provider: string, key: string, type = "text") => (
         <Input
             type={type}
-            value={String(bilibili[key] ?? "")}
-            onChange={(e) => setBilibili(key, type === "number" ? Number(e.target.value) : e.target.value)}
+            value={String(((providers[provider] ?? {}) as Rec)[key] ?? "")}
+            onChange={(e) => setProvider(provider, key, type === "number" ? Number(e.target.value) : e.target.value)}
         />
     )
+    const cookieLine = cookieExpiryLine(cookieStatus.data, lang, t, tf)
+
+    const channelBadge = (provider: string) => {
+        const info = channels.find((item) => item.provider === provider)
+        const config = (providers[provider] ?? {}) as Rec
+        const [text, className] = !config.enabled
+            ? [t("settings.uploadChannelDisabled"), "border bg-muted text-muted-foreground"]
+            : info?.status === "paused"
+                ? [t("settings.uploadChannelPaused"), "border bg-muted text-muted-foreground"]
+                : info?.status === "cooling"
+                    ? [t("settings.uploadChannelCooling"), "border border-amber-500/40 bg-amber-500/10 text-amber-600"]
+                    : info?.status === "blocked_auth"
+                        ? [t("settings.uploadChannelBlocked"), "border border-destructive/40 bg-destructive/10 text-destructive"]
+                        : [t("settings.uploadChannelActive"), "border border-green-600/40 bg-green-600/10 text-green-700 dark:text-green-500"]
+        return (
+            <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] leading-none ${className}`} data-testid={`upload-channel-status-${provider}`}>
+                {text}
+            </span>
+        )
+    }
+
+    /** 一个渠道的完整面板：开关 + 凭据 + 节奏 + 渠道设置 + 该渠道任务 */
+    const renderChannel = (provider: string, label: string) => {
+        const config = (providers[provider] ?? {}) as Rec
+        const info = channels.find((item) => item.provider === provider)
+        const paused = info?.status === "paused"
+        const queueBusy = pauseQueue.isPending || resumeQueue.isPending
+        const toggleQueue = paused
+            ? () => resumeQueue.mutate(provider)
+            : () => pauseQueue.mutate(provider)
+        // 该渠道单独设的间隔（没设 = 跟随全局）；只有覆盖过才显示「跟随全局」按钮
+        const overridden = Boolean(info?.interval_overridden)
+        const intervalMinutes = overridden ? Math.round(Number(config.min_interval_seconds ?? 0) / 60) : globalMinutes
+
+        return (
+            <div className="space-y-4" data-testid={`upload-channel-panel-${provider}`}>
+                <div className="rounded-lg border bg-card p-4">
+                    <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                                <h3 className="font-semibold">{label}</h3>
+                                {channelBadge(provider)}
+                                {(info?.active_jobs ?? 0) > 0 && (
+                                    <span className="text-xs text-muted-foreground" data-testid={`upload-channel-pending-${provider}`}>
+                                        {tf("settings.uploadChannelPending", { count: info?.active_jobs ?? 0 })}
+                                    </span>
+                                )}
+                            </div>
+                            <p className="mt-1 text-xs text-muted-foreground">{t(`settings.${provider}Hint`)}</p>
+                        </div>
+                        <Switch
+                            data-testid={`upload-channel-enabled-${provider}`}
+                            checked={Boolean(config.enabled)}
+                            onCheckedChange={(v) => setProvider(provider, "enabled", v)}
+                        />
+                    </div>
+                    <p className="mt-3 text-xs text-muted-foreground">{t("settings.uploadChannelEnabledHint")}</p>
+                </div>
+
+                <div className="rounded-lg border bg-card p-4">
+                    <div className="mb-3 flex items-center justify-between gap-2">
+                        <h3 className="font-semibold">{tf("settings.uploadChannelPace", { channel: label })}</h3>
+                        {provider === "bilibili" && (
+                            <Button size="sm" variant="outline" onClick={() => setBilibiliLoginOpen(true)} data-testid="bilibili-scan-login-upload">
+                                <QrCode className="mr-1 h-4 w-4" />{t("following.scanLogin")}
+                            </Button>
+                        )}
+                        {provider === "douyin" && (
+                            <Button size="sm" variant="outline" onClick={() => setDouyinLoginOpen(true)} data-testid="douyin-scan-login-upload">
+                                <QrCode className="mr-1 h-4 w-4" />{t("following.scanLogin")}
+                            </Button>
+                        )}
+                    </div>
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                        <div className="space-y-1.5">
+                            <div className="flex min-h-5 items-center gap-1.5">
+                                <Label>{t("settings.uploadChannelInterval")}</Label>
+                                {overridden && (
+                                    <button
+                                        type="button"
+                                        disabled={form.resetting}
+                                        onClick={() => form.resetKey(`uploads.providers.${provider}.min_interval_seconds`)}
+                                        className="inline-flex items-center gap-0.5 rounded border px-1 py-0.5 text-[10px] leading-none text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
+                                        data-testid={`upload-channel-interval-reset-${provider}`}
+                                    >
+                                        <RotateCcw className="h-2.5 w-2.5" />
+                                        {tf("settings.uploadChannelFollowGlobal", { minutes: globalMinutes })}
+                                    </button>
+                                )}
+                            </div>
+                            <Input
+                                type="number"
+                                min={1}
+                                step={5}
+                                data-testid={`upload-channel-interval-${provider}`}
+                                value={String(intervalMinutes)}
+                                onChange={(e) =>
+                                    setProvider(
+                                        provider,
+                                        "min_interval_seconds",
+                                        Math.max(1, Math.round(Number(e.target.value) || 0)) * 60,
+                                    )
+                                }
+                            />
+                            <p className="text-xs text-muted-foreground">{t("settings.uploadChannelIntervalHint")}</p>
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label>{t("settings.uploadNextSlot")}</Label>
+                            <p className="text-sm" data-testid={`upload-next-slot-${provider}`}>
+                                {info?.next_slot_at
+                                    ? formatDateTime(new Date(info.next_slot_at * 1000).toISOString(), lang)
+                                    : t("settings.uploadNextSlotNow")}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                                {t(provider === "douyin" ? "settings.uploadPacingHintDouyin" : "settings.uploadPacingHintBilibili")}
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="rounded-lg border bg-card p-4">
+                    <h3 className="mb-3 font-semibold">{tf("settings.uploadChannelConfig", { channel: label })}</h3>
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                        {provider === "bilibili" ? (
+                            <>
+                                <div className="space-y-1.5"><Label>{t("settings.bilibiliCookieFile")}</Label>{providerInput("bilibili", "cookie_file")}</div>
+                                <div className="space-y-1.5"><Label>{t("settings.bilibiliTid")}</Label>{providerInput("bilibili", "tid", "number")}</div>
+                                <div className="space-y-1.5"><Label>{t("settings.bilibiliTags")}</Label>{providerInput("bilibili", "tags")}</div>
+                                <div className="space-y-1.5"><Label>{t("settings.bilibiliDescription")}</Label>{providerInput("bilibili", "description")}</div>
+                                <div className="flex items-center justify-between rounded border p-3"><Label>{t("settings.bilibiliOnlySelf")}</Label><Switch checked={Boolean(config.only_self)} onCheckedChange={(v) => setProvider("bilibili", "only_self", v)} /></div>
+                                <div className="flex items-center justify-between rounded border p-3"><Label>{t("settings.bilibiliNoReprint")}</Label><Switch checked={Boolean(config.no_reprint)} onCheckedChange={(v) => setProvider("bilibili", "no_reprint", v)} /></div>
+                            </>
+                        ) : (
+                            <>
+                                <div className="space-y-1.5 md:col-span-2">
+                                    <Label>{t("settings.douyinCookie")}</Label>
+                                    <p className="text-sm" data-testid="upload-douyin-cookie-state">
+                                        {cookieStatus.data?.has_cookie ? t("settings.douyinCookieReady") : t("settings.douyinCookieMissing")}
+                                    </p>
+                                    {cookieLine && <p className={`text-xs ${cookieLine.className}`}>{cookieLine.text}</p>}
+                                    <p className="text-xs text-muted-foreground">{t("settings.douyinCookieShared")}</p>
+                                </div>
+                                <div className="space-y-1.5"><Label>{t("settings.douyinTitlePrefix")}</Label>{providerInput("douyin", "title_prefix")}</div>
+                                <div className="space-y-1.5"><Label>{t("settings.douyinTags")}</Label>{providerInput("douyin", "tags")}</div>
+                                <div className="space-y-1.5 md:col-span-2"><Label>{t("settings.douyinDescription")}</Label>{providerInput("douyin", "description")}</div>
+                                <div className="flex items-center justify-between gap-3 rounded border p-3 md:col-span-2">
+                                    <div>
+                                        <Label>{t("settings.douyinOnlySelf")}</Label>
+                                        <p className="mt-1 text-xs text-muted-foreground">{t("settings.douyinOnlySelfHint")}</p>
+                                    </div>
+                                    <Switch data-testid="upload-douyin-only-self" checked={Boolean(config.only_self)} onCheckedChange={(v) => setProvider("douyin", "only_self", v)} />
+                                </div>
+                                <p className="text-xs text-muted-foreground md:col-span-2">{t("settings.douyinTagsHint")}</p>
+                            </>
+                        )}
+                    </div>
+                </div>
+
+                <div className="rounded-lg border bg-card p-4">
+                    <div className="mb-3 flex items-center justify-between gap-2">
+                        <div>
+                            <h3 className="font-semibold">{tf("settings.uploadChannelTasks", { channel: label })}</h3>
+                            <p className="mt-1 text-xs text-muted-foreground">{t("settings.uploadChannelTasksHint")}</p>
+                        </div>
+                        <div className="flex items-center gap-1">
+                            {/* 同一个位置只放一个开关：先摆成「暂停队列」再换成「继续队列」，
+                                浏览器会在 DOM 换掉的瞬间把 click 派发到新按钮上，刚暂停就被自动恢复。 */}
+                            {(info?.status === "active" || paused) && (
+                                <Button
+                                    variant={paused ? "default" : "outline"}
+                                    size="sm"
+                                    onClick={toggleQueue}
+                                    disabled={queueBusy}
+                                    data-testid={paused ? `upload-queue-resume-${provider}` : `upload-queue-pause-${provider}`}
+                                >
+                                    {paused ? <Play className="mr-1 h-3 w-3" /> : <Pause className="mr-1 h-3 w-3" />}
+                                    {paused ? t("settings.uploadQueueResume") : t("settings.uploadQueuePause")}
+                                </Button>
+                            )}
+                            <Button variant="ghost" size="sm" onClick={() => tasks.refetch()} disabled={tasks.isFetching}>
+                                <RefreshCw className={`mr-1 h-4 w-4 ${tasks.isFetching ? "animate-spin" : ""}`} />
+                                {t("common.refresh")}
+                            </Button>
+                        </div>
+                    </div>
+                    {paused && (
+                        <div className="mb-3 rounded border bg-muted/40 p-3" data-testid="upload-queue-paused">
+                            <p className="font-medium">{t("settings.uploadQueuePaused")}</p>
+                            <p className="mt-1 text-xs text-muted-foreground">{t("settings.uploadQueuePausedHint")}</p>
+                        </div>
+                    )}
+                    {info?.status === "cooling" && (
+                        <div className="mb-3 rounded border border-amber-500/40 bg-amber-500/5 p-3" data-testid="upload-rate-limited">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div>
+                                    <p className="font-medium text-amber-600">{tf("settings.uploadChannelRateLimited", { channel: label })}</p>
+                                    <p className="mt-1 text-xs text-muted-foreground">{tf("settings.uploadChannelRateLimitedHint", { channel: label })}</p>
+                                    <p className="mt-1 text-xs text-muted-foreground" data-testid="upload-rate-limited-until">
+                                        {tf("settings.uploadRateLimitedUntil", { time: formatDateTime(info.resume_at ? new Date(info.resume_at * 1000).toISOString() : null, lang) })}
+                                    </p>
+                                </div>
+                                <Button size="sm" onClick={() => resume.mutate(provider)} disabled={resume.isPending}>{t("settings.uploadResume")}</Button>
+                            </div>
+                        </div>
+                    )}
+                    {info?.status === "blocked_auth" && (
+                        <div className="mb-3 rounded border border-destructive/40 bg-destructive/5 p-3">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div>
+                                    <p className="font-medium text-destructive">{tf("settings.uploadChannelLoginExpired", { channel: label })}</p>
+                                    <p className="mt-1 text-xs text-muted-foreground">{tf("settings.uploadChannelLoginExpiredHint", { channel: label })}</p>
+                                </div>
+                                <Button size="sm" onClick={() => resume.mutate(provider)} disabled={resume.isPending}>{t("settings.uploadResume")}</Button>
+                            </div>
+                        </div>
+                    )}
+                    {tasks.isLoading ? (
+                        <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin" /></div>
+                    ) : (tasks.data?.jobs.length ?? 0) === 0 ? (
+                        <p className="py-8 text-center text-sm text-muted-foreground">{t("settings.uploadTasksEmpty")}</p>
+                    ) : (
+                        <div className="space-y-2" data-testid="upload-tasks">
+                            {tasks.data?.jobs.map((job) => (
+                                <UploadJobRow
+                                    key={job.id}
+                                    job={job}
+                                    busy={retry.isPending || jobBusy}
+                                    onRetry={() => retry.mutate(job.id)}
+                                    onPause={() => pauseJob.mutate(job.id)}
+                                    onResume={() => resumeJob.mutate(job.id)}
+                                    onDelete={() => removeJob.mutate(job.id)}
+                                    t={t}
+                                    tf={tf}
+                                    lang={lang}
+                                />
+                            ))}
+                        </div>
+                    )}
+                    {total > 0 && (
+                        <div
+                            // 手机上底部固定导航会遮住页面最下面一截；这里留出间距，滚动到底后分页条稳稳露在导航上方
+                            className="mb-2 mt-3 flex flex-wrap items-center justify-between gap-2 border-t pt-3"
+                        >
+                            <span className="text-xs text-muted-foreground" data-testid="upload-total">
+                                {tf("settings.uploadTotal", { count: total })}
+                            </span>
+                            <div className="flex items-center gap-2">
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    data-testid="upload-prev"
+                                    disabled={page <= 1 || tasks.isFetching}
+                                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                                >
+                                    {t("settings.uploadPrevPage")}
+                                </Button>
+                                <span className="whitespace-nowrap text-xs text-muted-foreground" data-testid="upload-page">
+                                    {tf("settings.uploadPageOf", { page: shownPage, max: totalPages })}
+                                </span>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    data-testid="upload-next"
+                                    disabled={page >= totalPages || tasks.isFetching}
+                                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                                >
+                                    {t("settings.uploadNextPage")}
+                                </Button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
+        )
+    }
 
     return (
         <div className="space-y-4">
             <div className="rounded-lg border bg-card p-4">
-                <div className="mb-4 flex items-center justify-between">
-                    <div><h3 className="font-semibold">{t("settings.uploadEnabled")}</h3><p className="text-xs text-muted-foreground">{t("settings.uploadEnabledHint")}</p></div>
-                    <Switch checked={Boolean(uploads.enabled)} onCheckedChange={(v) => setUpload("enabled", v)} />
+                <div className="flex items-center justify-between gap-3">
+                    <div>
+                        <h3 className="font-semibold">{t("settings.uploadEnabled")}</h3>
+                        <p className="mt-1 text-xs text-muted-foreground">{t("settings.uploadEnabledHint")}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">{t("settings.uploadMasterHint")}</p>
+                    </div>
+                    <Switch data-testid="upload-enabled" checked={Boolean(uploads.enabled)} onCheckedChange={(v) => setUpload("enabled", v)} />
                 </div>
             </div>
             <div className="rounded-lg border bg-card p-4">
                 <div className="mb-4">
                     <h3 className="font-semibold">{t("settings.uploadPacing")}</h3>
+                    <p className="mt-1 text-xs text-muted-foreground">{t("settings.uploadPacingGlobalHint")}</p>
                     <p className="mt-1 text-xs text-muted-foreground">{t("settings.uploadPacingHint")}</p>
                 </div>
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                    <div className="space-y-1.5">
-                        <Label>{t("settings.uploadMinInterval")}</Label>
-                        <Input
-                            type="number"
-                            min={1}
-                            step={5}
-                            value={String(Math.round(Number(uploads.min_interval_seconds ?? 1800) / 60))}
-                            onChange={(e) => {
-                                const minutes = Math.max(1, Math.round(Number(e.target.value) || 0))
-                                setUpload("min_interval_seconds", minutes * 60)
-                            }}
-                        />
-                        <p className="text-xs text-muted-foreground">{t("settings.uploadMinIntervalHint")}</p>
-                    </div>
-                    <div className="space-y-1.5">
-                        <Label>{t("settings.uploadNextSlot")}</Label>
-                        <p className="text-sm" data-testid="upload-next-slot">
-                            {bilibiliChannel?.next_slot_at
-                                ? formatDateTime(new Date(bilibiliChannel.next_slot_at * 1000).toISOString(), lang)
-                                : t("settings.uploadNextSlotNow")}
-                        </p>
-                    </div>
+                <div className="max-w-xs space-y-1.5">
+                    <Label>{t("settings.uploadMinInterval")}</Label>
+                    <Input
+                        type="number"
+                        min={1}
+                        step={5}
+                        data-testid="upload-min-interval"
+                        value={String(globalMinutes)}
+                        onChange={(e) =>
+                            setUpload(
+                                "min_interval_seconds",
+                                Math.max(1, Math.round(Number(e.target.value) || 0)) * 60,
+                            )
+                        }
+                    />
+                    <p className="text-xs text-muted-foreground">{t("settings.uploadMinIntervalHint")}</p>
                 </div>
             </div>
-            <div className="rounded-lg border bg-card p-4">
-                <div className="mb-4 flex items-center justify-between">
-                    <div><div className="flex items-center gap-3"><h3 className="font-semibold">Bilibili</h3><Button size="sm" variant="outline" onClick={() => setBilibiliLoginOpen(true)}><QrCode className="mr-1 h-4 w-4" />{t("following.scanLogin")}</Button></div><p className="mt-1 text-xs text-muted-foreground">{t("settings.bilibiliHint")}</p></div>
-                    <Switch checked={Boolean(bilibili.enabled)} onCheckedChange={(v) => setBilibili("enabled", v)} />
-                </div>
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                    <div className="space-y-1.5"><Label>{t("settings.bilibiliCookieFile")}</Label>{input("cookie_file")}</div>
-                    <div className="space-y-1.5"><Label>{t("settings.bilibiliTid")}</Label>{input("tid", "number")}</div>
-                    <div className="space-y-1.5"><Label>{t("settings.bilibiliTags")}</Label>{input("tags")}</div>
-                    <div className="space-y-1.5"><Label>{t("settings.bilibiliDescription")}</Label>{input("description")}</div>
-                    <div className="flex items-center justify-between rounded border p-3"><Label>{t("settings.bilibiliOnlySelf")}</Label><Switch checked={Boolean(bilibili.only_self)} onCheckedChange={(v) => setBilibili("only_self", v)} /></div>
-                    <div className="flex items-center justify-between rounded border p-3"><Label>{t("settings.bilibiliNoReprint")}</Label><Switch checked={Boolean(bilibili.no_reprint)} onCheckedChange={(v) => setBilibili("no_reprint", v)} /></div>
-                </div>
-            </div>
+            <Tabs value={channel} onValueChange={setChannel}>
+                <TabsList className="w-full overflow-x-auto whitespace-nowrap sm:w-auto">
+                    {UPLOAD_CHANNELS.map(({ provider, label }) => (
+                        <TabsTrigger key={provider} value={provider} data-testid={`upload-channel-tab-${provider}`}>
+                            {label}
+                        </TabsTrigger>
+                    ))}
+                </TabsList>
+                {UPLOAD_CHANNELS.map(({ provider, label }) => (
+                    // 非激活面板靠 hidden 属性隐藏，内容区带了布局类就必须再补 data-[state=inactive]:hidden
+                    <TabsContent key={provider} value={provider} className="mt-4 data-[state=inactive]:hidden">
+                        {renderChannel(provider, label)}
+                    </TabsContent>
+                ))}
+            </Tabs>
 
             <BilibiliLoginDialog open={bilibiliLoginOpen} onOpenChange={setBilibiliLoginOpen} />
-            <div className="rounded-lg border bg-card p-4">
-                <div className="mb-3 flex items-center justify-between">
-                    <h3 className="font-semibold">{t("settings.uploadTasks")}</h3>
-                    <div className="flex items-center gap-1">
-                        {/* 同一个位置只放一个开关：先摆成「暂停队列」再换成横幅里的「继续队列」，
-                            浏览器会在 DOM 换掉的瞬间把 click 派发到新按钮上，刚暂停就被自动恢复。 */}
-                        {(tasks.data?.channels ?? []).map((channel) => {
-                            const paused = channel.status === "paused"
-                            const busy = pauseQueue.isPending || resumeQueue.isPending
-                            const toggle = paused
-                                ? () => resumeQueue.mutate(channel.provider)
-                                : () => pauseQueue.mutate(channel.provider)
-                            return (channel.status === "active" || paused) && (
-                                <Button
-                                    key={channel.provider}
-                                    variant={paused ? "default" : "outline"}
-                                    size="sm"
-                                    onClick={toggle}
-                                    disabled={busy}
-                                    data-testid={paused ? "upload-queue-resume" : "upload-queue-pause"}
-                                >
-                                    {paused ? <Play className="mr-1 h-3 w-3" /> : <Pause className="mr-1 h-3 w-3" />}
-                                    {paused ? t("settings.uploadQueueResume") : t("settings.uploadQueuePause")}
-                                </Button>
-                            )
-                        })}
-                        <Button variant="ghost" size="sm" onClick={() => tasks.refetch()} disabled={tasks.isFetching}>
-                            <RefreshCw className={`mr-1 h-4 w-4 ${tasks.isFetching ? "animate-spin" : ""}`} />
-                            {t("common.refresh")}
-                        </Button>
-                    </div>
-                </div>
-                {(tasks.data?.channels ?? []).map((channel) => channel.status === "paused" && (
-                    <div key={channel.provider} className="mb-3 rounded border bg-muted/40 p-3" data-testid="upload-queue-paused">
-                        <p className="font-medium">{t("settings.uploadQueuePaused")}</p>
-                        <p className="mt-1 text-xs text-muted-foreground">{t("settings.uploadQueuePausedHint")}</p>
-                    </div>
-                ))}
-                {(tasks.data?.channels ?? []).map((channel) => channel.status === "cooling" && (
-                    <div key={channel.provider} className="mb-3 rounded border border-amber-500/40 bg-amber-500/5 p-3" data-testid="upload-rate-limited">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                            <div>
-                                <p className="font-medium text-amber-600">{t("settings.uploadRateLimited")}</p>
-                                <p className="mt-1 text-xs text-muted-foreground">{t("settings.uploadRateLimitedHint")}</p>
-                                <p className="mt-1 text-xs text-muted-foreground" data-testid="upload-rate-limited-until">
-                                    {tf("settings.uploadRateLimitedUntil", { time: formatDateTime(channel.resume_at ? new Date(channel.resume_at * 1000).toISOString() : null, lang) })}
-                                </p>
-                            </div>
-                            <Button size="sm" onClick={() => resume.mutate(channel.provider)} disabled={resume.isPending}>{t("settings.uploadResume")}</Button>
-                        </div>
-                    </div>
-                ))}
-                {(tasks.data?.channels ?? []).map((channel) => channel.status === "blocked_auth" && (
-                    <div key={channel.provider} className="mb-3 rounded border border-destructive/40 bg-destructive/5 p-3">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                            <div><p className="font-medium text-destructive">{t("settings.uploadLoginExpired")}</p><p className="mt-1 text-xs text-muted-foreground">{t("settings.uploadLoginExpiredHint")}</p></div>
-                            <Button size="sm" onClick={() => resume.mutate(channel.provider)} disabled={resume.isPending}>{t("settings.uploadResume")}</Button>
-                        </div>
-                    </div>
-                ))}
-                {tasks.isLoading ? (
-                    <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin" /></div>
-                ) : (tasks.data?.jobs.length ?? 0) === 0 ? (
-                    <p className="py-8 text-center text-sm text-muted-foreground">{t("settings.uploadTasksEmpty")}</p>
-                ) : (
-                    <div className="space-y-2" data-testid="upload-tasks">
-                        {tasks.data?.jobs.map((job) => (
-                            <UploadJobRow
-                                key={job.id}
-                                job={job}
-                                busy={retry.isPending || jobBusy}
-                                onRetry={() => retry.mutate(job.id)}
-                                onPause={() => pauseJob.mutate(job.id)}
-                                onResume={() => resumeJob.mutate(job.id)}
-                                onDelete={() => removeJob.mutate(job.id)}
-                                t={t}
-                                tf={tf}
-                                lang={lang}
-                            />
-                        ))}
-                    </div>
-                )}
-                {total > 0 && (
-                    <div
-                        // 手机上底部固定导航会遮住页面最下面一截；这里留出间距，滚动到底后分页条稳稳露在导航上方
-                        className="mb-2 mt-3 flex flex-wrap items-center justify-between gap-2 border-t pt-3"
-                    >
-                        <span className="text-xs text-muted-foreground" data-testid="upload-total">
-                            {tf("settings.uploadTotal", { count: total })}
-                        </span>
-                        <div className="flex items-center gap-2">
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                data-testid="upload-prev"
-                                disabled={page <= 1 || tasks.isFetching}
-                                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                            >
-                                {t("settings.uploadPrevPage")}
-                            </Button>
-                            <span className="whitespace-nowrap text-xs text-muted-foreground" data-testid="upload-page">
-                                {tf("settings.uploadPageOf", { page: shownPage, max: totalPages })}
-                            </span>
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                data-testid="upload-next"
-                                disabled={page >= totalPages || tasks.isFetching}
-                                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                            >
-                                {t("settings.uploadNextPage")}
-                            </Button>
-                        </div>
-                    </div>
-                )}
-            </div>
+            <DouyinLoginDialog
+                open={douyinLoginOpen}
+                onOpenChange={setDouyinLoginOpen}
+                onSuccess={() => {
+                    // 登录成功后端已写盘 cookies.json：刷新 Cookie 状态
+                    void queryClient.invalidateQueries({ queryKey: ["douyin-cookie"] })
+                }}
+            />
         </div>
     )
 }

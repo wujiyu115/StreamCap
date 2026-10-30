@@ -101,6 +101,15 @@
                 "no_reprint": false,
                 "upload_threads": 3,
                 "timeout_seconds": 21600
+            },
+            "douyin": {
+                "enabled": false,
+                "title_prefix": "",
+                "description": "",
+                "tags": "",
+                "only_self": true,
+                "timeout_seconds": 900,
+                "headless": true
             }
         }
     },

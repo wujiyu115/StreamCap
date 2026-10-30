@@ -28,7 +28,7 @@ StreamCap is a multi-platform live stream recording client based on FFmpeg and S
 - **Multiple Output Formats**: Supports ts, flv, mkv, mov, mp4, mp3, m4a, and other formats.
 - **Automatic Transcoding**: Automatically transcodes recorded files to mp4 format after recording.
 - **Person Detection Clips**: YOLOv8 detection + pose estimation trims recordings down to the segments that actually contain a person (optionally right after recording).
-- **Automatic Bilibili Upload**: Detected clips are uploaded automatically; clips from the same streamer are merged into one multi-part submission (max 5 parts per submission), with a pacing gate, rate-limit cooldowns and automatic upload-line fallback.
+- **Automatic Upload (Bilibili / Douyin)**: Detected clips are uploaded automatically; clips from the same streamer are merged into one multi-part submission (max 5 parts per submission), with a pacing gate, rate-limit cooldowns and automatic upload-line fallback. Each channel has its own tab in Settings — switches, pacing and submission options are fully independent.
 - **Following & Recommended Live**: Browse your Douyin following list and recommended live rooms; recommendations work without login, scanning the QR code unlocks the following list.
 - **QR-code Login**: Scan to log in to Douyin / Bilibili, with cookie expiry reminders.
 - **Message Push**: Supports live stream status push notifications to keep you informed of live status.
@@ -44,6 +44,15 @@ The whole chain — recording → person-detection clips → upload — is confi
 - **Task controls**: the upload task list in Settings can be expanded to show the file name of every part, and tasks can be paused, resumed or deleted manually. Tasks that are currently uploading refuse pause/delete, so no half-finished submission is left behind.
 
 Measured on a single account with web submissions: at ~1 submission/minute a `406` appeared after 13 minutes and cleared naturally ~38 minutes later; `137022` lasts longer (hours), and if it does not clear, submit one video manually in the Bilibili web UI to pass the captcha/SMS check.
+
+### Douyin channel
+
+Settings → Uploads has two tabs, **Bilibili** and **Douyin**, each with its own switch, minimum interval (leave empty to follow the global default) and submission options; the task list is filtered per channel too. Turning a channel off only affects that channel — its queue is kept and a submission that is already running finishes.
+
+- **Creator-center web automation**: no official open-platform access needed; it reuses the Douyin login under Settings → Cookies (shared with the following list). An expired cookie pauses the channel and sends a notification.
+- **One video per post**: Douyin has no multi-part posts, so clips are split into one job per file. Each file must be ≤1 hour / ≤16 GB and a standard mp4 (re-wrap fragmented recordings losslessly with `ffmpeg -i in.mp4 -c copy -movflags +faststart out.mp4`).
+- **Private by default**: pressing publish makes the post public on Douyin, so uploads default to "only visible to me"; change visibility in the creator center once you have reviewed it.
+- **Throttling is per account**: "too many operations" or a slider/SMS captcha cools down the whole Douyin channel and asks for manual action; it does not consume job retry attempts.
 
 ## 📸Recording Interface
 

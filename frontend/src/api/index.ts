@@ -123,8 +123,10 @@ export const bilibiliApi = {
 }
 
 export const uploadsApi = {
-    list: (page = 1, perPage = 15) =>
-        api.get<import("./types").UploadsResponse>(`/uploads?page=${page}&per_page=${perPage}`),
+    list: (page = 1, perPage = 15, provider?: string) =>
+        api.get<import("./types").UploadsResponse>(
+            `/uploads?page=${page}&per_page=${perPage}${provider ? `&provider=${encodeURIComponent(provider)}` : ""}`,
+        ),
     retry: (jobId: string) => api.post<{ ok: boolean }>(`/uploads/${jobId}/retry`),
     /** 暂停排队中的任务（正在上传的会被后端 409 拒掉） */
     pause: (jobId: string) => api.post<{ ok: boolean }>(`/uploads/${jobId}/pause`),

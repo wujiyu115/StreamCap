@@ -23,15 +23,18 @@ async def list_uploads(
     request: Request,
     page: int = Query(1, ge=1),
     per_page: int = Query(15, ge=1, le=100),
+    provider: str | None = Query(None),
     user: str = Depends(get_current_user),
 ):
+    """上传任务列表。``provider`` 非空时只返回该渠道的任务（设置页按渠道分 tab）。"""
     manager = _manager(request)
     return {
-        "jobs": manager.list_jobs(page, per_page),
+        "jobs": manager.list_jobs(page, per_page, provider),
         "channels": manager.list_channels(),
-        "total": manager.count_jobs(),
+        "total": manager.count_jobs(provider),
         "page": page,
         "per_page": per_page,
+        "provider": provider,
     }
 
 

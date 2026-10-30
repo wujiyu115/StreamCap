@@ -13,7 +13,7 @@ from pathlib import Path
 from ...messages.message_pusher import MessagePusher
 from ...utils.logger import logger
 from .models import UploadAuthError, UploadLineUnavailable, UploadRateLimited, UploadRequest
-from .providers import BilibiliProvider
+from .providers import BilibiliProvider, DouyinProvider
 
 _RETRY_DELAYS = (60, 300, 900, 3600)
 
@@ -51,13 +51,30 @@ class UploadManager:
     # 上传记录只留最近这么多条（队列里未结束的任务永不删除）
     MAX_JOBS = 100
 
-    def __init__(self, run_path: str, config_getter: Callable[[], dict], settings=None):
+    def __init__(
+        self,
+        run_path: str,
+        config_getter: Callable[[], dict],
+        settings=None,
+        cookie_getter: Callable[[], dict] | None = None,
+    ):
         self.run_path = os.path.abspath(run_path)
         self._config_getter = config_getter
         self._message_pusher = MessagePusher(settings) if settings is not None else None
         self.db_path = os.path.join(run_path, "config", "uploads.sqlite3")
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        self._providers = {"bilibili": BilibiliProvider(run_path)}
+        # 抖音复用「设置 → Cookie」里那份登录态（与关注列表同一个键），不单独存
+        if cookie_getter is None:
+            cookie_getter = (
+                (lambda: settings.get_cookies_value("douyin") or "")
+                if settings is not None
+                else (lambda: "")
+            )
+        self._cookie_getter = cookie_getter
+        self._providers = {
+            "bilibili": BilibiliProvider(run_path),
+            "douyin": DouyinProvider(run_path, cookie_getter=cookie_getter),
+        }
         self._stop = threading.Event()
         self._init_db()
         self._recover_interrupted()
@@ -190,17 +207,20 @@ class UploadManager:
         if not uploads.get("enabled") or not uploads.get("auto_after_pose", True):
             return 0
         providers = uploads.get("providers") or {}
-        size = self.max_pages_per_job()
-        # 一单最多 size 个分P：生产实测 5 个连发安全，再多就是在赌 pre_upload 的突发阈值
-        groups = [files[i : i + size] for i in range(0, len(files), size)]
         now = datetime.now().isoformat(timespec="seconds")
         inserted = 0
+        sizes: dict[str, int] = {}
         with self._connect() as conn:
             for name, provider_config in providers.items():
                 if name not in self._providers or not isinstance(provider_config, dict):
                     continue
                 if not provider_config.get("enabled"):
                     continue
+                # 每个渠道各算各的分片大小：B 站一稿可放多个分P，抖音一作品只能一个视频
+                size = self._max_pages(name)
+                sizes[name] = size
+                # 一单最多 size 个分P：生产实测 5 个连发安全，再多就是在赌 pre_upload 的突发阈值
+                groups = [files[i : i + size] for i in range(0, len(files), size)]
                 for index, group in enumerate(groups):
                     # 只有拆成多稿时才加后缀，单片仍用原 key：老库里已存在的任务不会被重复入队
                     source_key = source_task_id if len(groups) == 1 else f"{source_task_id}#{index + 1}"
@@ -228,10 +248,8 @@ class UploadManager:
                     )
                     inserted += cursor.rowcount
         if inserted:
-            logger.info(
-                f"人体识别产物已加入上传队列: {source_task_id} "
-                f"({inserted} job(s) x 最多 {size} 分P)"
-            )
+            detail = ", ".join(f"{name} x 最多 {size} 分P" for name, size in sizes.items())
+            logger.info(f"人体识别产物已加入上传队列: {source_task_id} ({inserted} job(s) · {detail})")
             self._prune_jobs()
         return inserted
 
@@ -324,6 +342,14 @@ class UploadManager:
         configured = (self._config_getter().get("uploads") or {}).get("providers") or {}
         with self._connect() as conn:
             rows = {row["provider"]: dict(row) for row in conn.execute("SELECT * FROM upload_channels")}
+            counts = {
+                row["provider"]: (row["total"], row["active"])
+                for row in conn.execute(
+                    "SELECT provider, COUNT(*) AS total, "
+                    "SUM(CASE WHEN status IN ('pending','retrying') THEN 1 ELSE 0 END) AS active "
+                    "FROM upload_jobs GROUP BY provider"
+                )
+            }
         result = []
         for name, provider_config in configured.items():
             if name not in self._providers or not isinstance(provider_config, dict):
@@ -343,6 +369,12 @@ class UploadManager:
             item["enabled"] = bool(provider_config.get("enabled"))
             interval = self._channel_interval(name)
             item["min_interval_seconds"] = interval
+            # 该渠道自己的间隔是不是被单独覆盖过（设置页要能区分「跟全局」和「自己设的」）
+            item["interval_overridden"] = provider_config.get("min_interval_seconds") is not None
+            item["supports_multi_parts"] = self._max_pages(name) > 1
+            total_jobs, active_jobs = counts.get(name, (0, 0))
+            item["total_jobs"] = int(total_jobs or 0)
+            item["active_jobs"] = int(active_jobs or 0)
             # 下一次能投递的时刻（0 = 现在就可以）：冷却中看 resume_at，手动暂停看「恢复后再说」，
             # 否则看节奏门。前端靠它告诉用户「点了恢复为什么队列还没动」。
             next_slot = 0.0
@@ -414,14 +446,19 @@ class UploadManager:
             )
         return True
 
-    def list_jobs(self, page: int = 1, per_page: int = 15) -> list[dict]:
-        """按创建时间倒序分页；created_at 只到秒，同秒内再用 rowid 兜底保证翻页稳定。"""
+    def list_jobs(self, page: int = 1, per_page: int = 15, provider: str | None = None) -> list[dict]:
+        """按创建时间倒序分页；created_at 只到秒，同秒内再用 rowid 兜底保证翻页稳定。
+
+        ``provider`` 非空时只返回该渠道的任务（设置页按渠道分 tab，各看各的）。
+        """
         per_page = max(1, min(per_page, self.MAX_JOBS))
         offset = (max(1, page) - 1) * per_page
+        where = " WHERE provider=?" if provider else ""
+        params: tuple = (provider, per_page, offset) if provider else (per_page, offset)
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM upload_jobs ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?",
-                (per_page, offset),
+                f"SELECT * FROM upload_jobs{where} ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?",
+                params,
             ).fetchall()
         result = []
         for row in rows:
@@ -431,8 +468,12 @@ class UploadManager:
             result.append(item)
         return result
 
-    def count_jobs(self) -> int:
+    def count_jobs(self, provider: str | None = None) -> int:
         with self._connect() as conn:
+            if provider:
+                return int(
+                    conn.execute("SELECT COUNT(*) FROM upload_jobs WHERE provider=?", (provider,)).fetchone()[0]
+                )
             return int(conn.execute("SELECT COUNT(*) FROM upload_jobs").fetchone()[0])
 
     def retry(self, job_id: str) -> bool:
@@ -510,6 +551,28 @@ class UploadManager:
             return _DEFAULT_MAX_PAGES_PER_JOB
         return max(1, value)
 
+    def _max_pages(self, provider: str) -> int:
+        """该渠道一单能放几个文件：不支持多 P 的（抖音）恒为 1。"""
+        impl = self._providers.get(provider)
+        if impl is not None and not getattr(impl, "supports_multi_parts", True):
+            return 1
+        return self.max_pages_per_job()
+
+    def _enabled_providers(self) -> set[str]:
+        """当前允许派发任务的渠道：渠道开关关掉的连队列里的旧任务也不领。
+
+        ``uploads.enabled`` 是总闸：关掉就不再派发任何渠道（队列原样保留），
+        和「关闭后什么都不投」这个直觉一致，不用去逐渠道关一遍。
+        """
+        uploads = self._config_getter().get("uploads") or {}
+        if not uploads.get("enabled"):
+            return set()
+        enabled = set()
+        for name, provider_config in (uploads.get("providers") or {}).items():
+            if name in self._providers and isinstance(provider_config, dict) and provider_config.get("enabled"):
+                enabled.add(name)
+        return enabled
+
     def _slot_seconds(self, provider: str, file_count: int) -> float:
         """这一单要占多少额度：每个文件一次 pre_upload，所以按文件数计价。"""
         return self._channel_interval(provider) * max(1, int(file_count))
@@ -544,7 +607,10 @@ class UploadManager:
                 (now_ts, now_ts),
             ).fetchall()
             row = None
+            enabled = self._enabled_providers()
             for candidate in rows:
+                if candidate["provider"] not in enabled:
+                    continue  # 渠道开关关掉（或总闸关掉）：不领新任务，队列原样留着
                 if self._gate_at(
                     {
                         "provider": candidate["provider"],
@@ -753,13 +819,16 @@ class UploadManager:
         )
         if should_notify:
             needs_verify = bool(getattr(exc, "needs_verify", False))
+            label = self._channel_label(row["provider"])
+            where = "网页端/App" if row["provider"] == "bilibili" else "创作者中心网页端/App"
+            action = "手动投稿一次" if row["provider"] == "bilibili" else "手动发布一条"
             hint = (
-                "平台已经挂出待过的验证：去 B 站网页端/App 手动投稿一次，把弹出的人机或短信验证过掉，"
+                f"平台已经挂出待过的验证：去{label}{where}{action}，把弹出的人机或短信验证过掉，"
                 if needs_verify
-                else "去 B 站网页端或 App 手动投稿一次（会要求人机/短信验证），把验证过掉，"
+                else f"去{label}{where}{action}（会要求人机/短信验证），把验证过掉，"
             )
             self._notify(
-                "StreamCap B站上传被限流",
+                f"StreamCap {label}上传被限流",
                 f"{hint}"
                 "然后回到「设置 → 自动上传」点「恢复上传」。"
                 f"积压任务不会消耗重试次数，{max(1, round(delay / 60))} 分钟后也会自动再试。",
@@ -807,10 +876,19 @@ class UploadManager:
             )
         logger.error(f"上传渠道登录失效，已暂停: {row['provider']}: {message}")
         if should_notify:
-            self._notify(
-                "StreamCap B站登录失效",
-                "Bilibili 自动上传已暂停，请重新扫码登录后在自动上传页恢复渠道。",
-            )
+            label = self._channel_label(row["provider"])
+            if row["provider"] == "douyin":
+                content = (
+                    "抖音自动上传已暂停：请到「设置 → Cookie」重新扫码或粘贴抖音登录态（与关注列表共用），"
+                    "保存后回到「设置 → 自动上传」恢复该渠道队列。"
+                )
+            else:
+                content = "Bilibili 自动上传已暂停，请重新扫码登录后在自动上传页恢复渠道。"
+            self._notify(f"StreamCap {label}登录失效", content)
+
+    def _channel_label(self, provider: str) -> str:
+        impl = self._providers.get(provider)
+        return str(getattr(impl, "display_name", provider))
 
     def _notify(self, title: str, content: str) -> None:
         if self._message_pusher is None:

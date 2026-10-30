@@ -1034,3 +1034,122 @@ def test_unmounted_storage_keeps_job_retrying(tmp_path):
     assert job["attempts"] == 1
     assert job["next_attempt_at"] > time.time() + 60
     assert "storage unavailable" in job["message"]
+
+
+# --------------------------------------------------------------------------- 渠道隔离
+def _two_channel_config(bilibili_enabled=True, douyin_enabled=True, douyin_interval=None):
+    douyin = {
+        "enabled": douyin_enabled,
+        "title_prefix": "",
+        "tags": "录播,直播",
+        "description": "",
+    }
+    if douyin_interval is not None:
+        douyin["min_interval_seconds"] = douyin_interval
+    return {
+        "uploads": {
+            "enabled": True,
+            "auto_after_pose": True,
+            "max_attempts": 2,
+            "min_interval_seconds": 1800,
+            "max_pages_per_job": 5,
+            "providers": {
+                "bilibili": {
+                    "enabled": bilibili_enabled,
+                    "cookie_file": "config/bilibili/cookies.json",
+                    "tid": 138,
+                },
+                "douyin": douyin,
+            },
+        }
+    }
+
+
+def test_channel_switch_gates_dispatch_without_dropping_the_queue(tmp_path):
+    (tmp_path / "a.mp4").write_bytes(b"video")
+    config = _two_channel_config(bilibili_enabled=False)
+    manager = _mgr(tmp_path, config)
+    manager.enqueue_files([str(tmp_path / "a.mp4")], ["bilibili", "douyin"])
+    assert sorted(job["provider"] for job in manager.list_jobs()) == ["bilibili", "douyin"]
+
+    # B 站关掉：它的任务留在队列里，但不会被领走；抖音照常派发
+    assert manager._enabled_providers() == {"douyin"}
+    row = manager._next_job()
+    assert row is not None and row["provider"] == "douyin"
+
+    # 两个都关：一条都不领，队列原样保留
+    config["uploads"]["providers"]["douyin"]["enabled"] = False
+    assert manager._enabled_providers() == set()
+    assert manager._next_job() is None
+    assert len(manager.list_jobs()) == 2
+
+    # 总闸关掉时逐渠道开关没意义
+    config["uploads"]["providers"]["douyin"]["enabled"] = True
+    config["uploads"]["enabled"] = False
+    assert manager._enabled_providers() == set()
+
+
+def test_channel_interval_override_and_list_channels_metadata(tmp_path):
+    config = _two_channel_config(douyin_interval=120)
+    manager = _mgr(tmp_path, config)
+
+    # 渠道自己设的间隔优先于全局
+    assert manager._channel_interval("douyin") == 120
+    assert manager._channel_interval("bilibili") == 1800
+
+    channels = {item["provider"]: item for item in manager.list_channels()}
+    assert channels["douyin"]["interval_overridden"] is True
+    assert channels["douyin"]["min_interval_seconds"] == 120
+    assert channels["bilibili"]["interval_overridden"] is False
+    assert channels["bilibili"]["min_interval_seconds"] == 1800
+    # 抖音不支持多 P（前端靠这个决定是否提示「一视频一作品」）
+    assert channels["douyin"]["supports_multi_parts"] is False
+    assert channels["bilibili"]["supports_multi_parts"] is True
+
+    # 手误填 1 秒也不打穿风控
+    config["uploads"]["providers"]["douyin"]["min_interval_seconds"] = 1
+    assert manager._channel_interval("douyin") == 60
+
+
+def test_pose_outputs_split_per_provider_page_limit(tmp_path):
+    files = []
+    for name in ("p1.mp4", "p2.mp4", "p3.mp4"):
+        path = tmp_path / name
+        path.write_bytes(b"video")
+        files.append(str(path))
+    manager = _mgr(tmp_path, _two_channel_config())
+    state = {"status": "completed", "trigger": "auto", "summary": {"output_files": files}}
+    # B 站：3 个文件塞进一稿（≤5 分P）；抖音：一作品一个视频 → 3 单
+    assert manager.enqueue_pose_outputs("task-split", state) == 4
+
+    jobs = manager.list_jobs()
+    bili = [job for job in jobs if job["provider"] == "bilibili"]
+    douyin = [job for job in jobs if job["provider"] == "douyin"]
+    assert len(bili) == 1 and len(bili[0]["files"]) == 3
+    assert len(douyin) == 3 and all(len(job["files"]) == 1 for job in douyin)
+
+
+def test_list_jobs_filters_by_provider(tmp_path):
+    (tmp_path / "a.mp4").write_bytes(b"video")
+    manager = _mgr(tmp_path, _two_channel_config())
+    manager.enqueue_files([str(tmp_path / "a.mp4")], ["bilibili", "douyin"])
+    assert [job["provider"] for job in manager.list_jobs(provider="douyin")] == ["douyin"]
+    assert manager.count_jobs(provider="douyin") == 1
+    assert manager.count_jobs() == 2
+    assert manager.count_jobs(provider="nope") == 0
+
+
+def test_douyin_auth_failure_blocks_only_its_own_channel(tmp_path):
+    (tmp_path / "a.mp4").write_bytes(b"video")
+    manager = _mgr(tmp_path, _two_channel_config())
+    manager.enqueue_files([str(tmp_path / "a.mp4")], ["douyin"])
+
+    class NoCookieProvider:
+        def upload(self, request, provider_config):
+            raise UploadAuthError("抖音 Cookie 未配置")
+
+    manager._providers["douyin"] = NoCookieProvider()
+    manager._process(manager._next_job())
+
+    statuses = {item["provider"]: item["status"] for item in manager.list_channels()}
+    assert statuses == {"bilibili": "active", "douyin": "blocked_auth"}

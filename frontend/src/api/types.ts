@@ -266,8 +266,15 @@ export interface UploadChannel {
     resume_at: number
     /** 连续限流次数，成功后归零 */
     cool_downs: number
-    /** 该渠道两个投稿之间的最小间隔（秒），来自 uploads.min_interval_seconds */
+    /** 该渠道两个投稿之间的最小间隔（秒），来自 uploads.min_interval_seconds（或渠道自己覆盖的值） */
     min_interval_seconds: number
+    /** 渠道是否单独设了自己的间隔（false = 跟随全局节奏） */
+    interval_overridden: boolean
+    /** 该渠道一单能放几个文件（抖音不支持多 P，为 false） */
+    supports_multi_parts: boolean
+    /** 该渠道的任务总数 / 还没投完的数量（tab 徽标用） */
+    total_jobs: number
+    active_jobs: number
     /** 下一次能投递的 Unix 秒（冷却到期或节奏门窗口）；0 表示现在就能投 */
     next_slot_at: number
 }
@@ -278,6 +285,7 @@ export interface UploadsResponse {
     total: number
     page: number
     per_page: number
+    provider?: string | null
 }
 
 export interface UploadEnqueueResponse {
