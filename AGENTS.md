@@ -66,6 +66,9 @@
   - **兜底面板的按钮会被底部工具栏盖住**：`.player-stagebar` 是 `z-10`、失败/未开播面板没设 z-index → 用户点不动「重试」（Playwright 报 `intercepts pointer events`）。失败/未开播这类阻塞态下要收起底部工具栏
   - **竖屏直播别用固定宽舞台**：`max-w-4xl` 舞台里放 9:16 直播 → 两边各留 ~250px 黑边。用 `loadedmetadata`/`resize` 量 `<video>` 的真实盒子宽度回写给舞台（移动端 `≤640px` 走铺满视口的沉浸布局，不参与这个联动）
   - 播放直链**不需要后端代理**：抖音 CDN 回 `access-control-allow-origin: *`，签名无 IP 字段（7 天有效），只需把直链 http 升级成 https 防反代部署的 mixed content
+  - **「关注在播」列表已自带可直用直链，推荐流不带（2026-10-30 真机实测）**：`webcast/web/feed/follow` 的 `room.stream_url.live_core_sdk_data.pull_data.stream_data`（**JSON 字符串**）里 `main.flv` 就挂着 h264 全画质签名直链（实测 1088x1920，与 room enter 的 `quality=OD` 同档、https + CORS 可用），`extract_direct_play()`（`douyin_following.py`）挑 h264 里码率最高的一档塞进 room 的 `play_url/playback/quality/codec/expire_at`，前端 `live-player-dialog.tsx` 有直链就直接播、**不发 `/douyin/live/stream`**（实测 0 请求），失败了才回落取流接口。推荐流（`webcast/feed`）虽然也带 `stream_url`，但 20/20 房间主画质全是 h265，唯一 h264 变体只有 240x423，`support_h265=0`/`codec_support=h264` 协商也改不动 → **推荐流必须继续走 `/live/stream`**
+  - **直链里的 `expire` 是十六进制**（`expire=6aed544d` → 2026-11-06），按十进制解析恒为 0（`_expire_at()` 两种都认）；`ao` 档是纯音频（`only_audio=1`），不能当播放地址
+  - **headless 验 flv 直链时夹具必须带音轨**：播放器 `mpegts.createPlayer(..., {hasAudio: true})` 是硬编码的，拿纯视频 flv（`ffmpeg -f lavfi -i testsrc`）会建 audio SourceBuffer 失败 → `MediaSource onSourceEnded` 后 `readyState` 永远是 0、`videoWidth` 0（很像「编解码器不支持」的假象）。夹具要 `-f lavfi -i anullsrc ... -c:a aac`
 
 ## Unraid 生产容器更新流程
 

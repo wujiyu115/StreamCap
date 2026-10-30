@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import math
 import time
 import urllib.parse
@@ -138,6 +139,20 @@ def _query_param(url: str, name: str) -> str:
 
 def _https(value: str) -> str:
     return value.replace("http://", "https://", 1) if value.startswith("http://") else value
+
+
+def _expire_at(url: str) -> int:
+    """直链签名里的 ``expire`` 是**十六进制**时间戳（``expire=6aed544d``），不是十进制。
+
+    以前统一按十进制解析，生产上恒为 0；这里两种都认（纯数字串按十进制，其它按十六进制）。
+    """
+    raw = _query_param(url, "expire").strip()
+    if not raw:
+        return 0
+    try:
+        return int(raw) if raw.isdigit() else int(raw, 16)
+    except ValueError:
+        return 0
 
 
 def parse_cookie_value(cookie: str, name: str) -> str:
@@ -282,6 +297,79 @@ def normalize_following_page(payload: dict) -> dict:
     }
 
 
+# pull_data.stream_data 的档位名 → 抖音网页上的清晰度叫法
+_PULL_QUALITY_LABELS = {
+    "origin": "原画",
+    "uhd": "蓝光",
+    "hd": "超清",
+    "sd": "标清",
+    "ld": "流畅",
+    "md": "移动",
+}
+
+
+def _pull_stream_map(stream_url: Any) -> dict[str, Any]:
+    """``live_core_sdk_data.pull_data.stream_data`` 是个 **JSON 字符串**，拆出档位表。"""
+    if not isinstance(stream_url, dict):
+        return {}
+    pull = stream_url.get("live_core_sdk_data")
+    raw = ((pull.get("pull_data") or {}) if isinstance(pull, dict) else {}).get("stream_data")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            return {}
+    if not isinstance(raw, dict):
+        return {}
+    data = raw.get("data")
+    return data if isinstance(data, dict) else {}
+
+
+def extract_direct_play(stream_url: Any) -> dict:
+    """从列表接口（关注在播）的 ``room.stream_url`` 里挑一条浏览器能直解的直链。
+
+    结论来自 2026-10-30 生产实测：``webcast/web/feed/follow`` 返回的签名直链在播关注那批
+    就是 **h264 全画质**（1088x1920，与 room enter 取的档次一致），可以直接拿来播，
+    省掉一次 ``/live/stream``（一次后端请求 + 一到两次上游请求）。
+
+    只认 ``pull_data`` 里 ``sdk_params.VCodec == h264`` 的档位：h265 的 flv 容器 mpegts.js
+    解不了（桌面 Chromium 也没 HEVC 解码器）。legacy ``flv_pull_url``（FULL_HD1 那套）
+    不带编码信息，不参与选择。
+
+    **推荐直播（``webcast/feed``）不要用这个**：实测 20/20 房间主画质全是 h265，唯一的 h264
+    档位是 240x423（``md``），而走 room enter 能拿到 1088x1920 的 h264，画质降级太狠。
+    """
+    best: dict | None = None
+    best_bitrate = -1
+    for key, node in _pull_stream_map(stream_url).items():
+        main = node.get("main") if isinstance(node, dict) else None
+        if not isinstance(main, dict):
+            continue
+        url = main.get("flv") or ""
+        # ao 档是纯音频（only_audio=1），塞给 <video> 只会黑屏
+        if not url or "only_audio=1" in url:
+            continue
+        try:
+            params = json.loads(main.get("sdk_params") or "{}")
+        except (TypeError, ValueError):
+            params = {}
+        if not isinstance(params, dict) or str(params.get("VCodec") or "").lower() != "h264":
+            continue
+        bitrate = _int(params.get("vbitrate")) or 0
+        if bitrate <= best_bitrate:
+            continue
+        best_bitrate = bitrate
+        best = {
+            # 与 /live/stream 一致：统一升 https（反代部署下 http 直链会被 mixed content 拦）
+            "play_url": _https(url),
+            "playback": "flv",
+            "quality": _PULL_QUALITY_LABELS.get(key) or str(params.get("resolution") or key),
+            "codec": "h264",
+            "expire_at": _expire_at(url),
+        }
+    return best or {"play_url": "", "playback": "", "quality": "", "codec": "", "expire_at": 0}
+
+
 def normalize_live_rooms(payload: dict) -> list[dict] | None:
     """``webcast/web/feed/follow`` 响应 → 正在直播的关注用户；结构不符返回 None。"""
     if not isinstance(payload, dict):
@@ -322,6 +410,8 @@ def normalize_live_rooms(payload: dict) -> list[dict] | None:
                     "avatar": _https(_first_url(owner.get("avatar_thumb"))),
                     "web_rid": str(owner.get("web_rid") or ""),
                 },
+                # 列表里自带的签名直链（h264 时可直接播，省一次 /live/stream）
+                **extract_direct_play(room.get("stream_url")),
             }
         )
     return rooms
@@ -498,7 +588,7 @@ def normalize_stream_info(web_rid: str, info: Any) -> dict:
         "codec": codec,
         "title": getattr(info, "title", "") or "",
         "anchor_name": getattr(info, "anchor_name", "") or "",
-        "expire_at": _int(_query_param(source, "expire")) or 0,
+        "expire_at": _expire_at(source),
     }
 
 

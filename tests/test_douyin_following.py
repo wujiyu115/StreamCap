@@ -4,6 +4,8 @@
 """
 import asyncio
 import contextlib
+import copy
+import json
 import time
 
 import pytest
@@ -922,3 +924,99 @@ def test_cookie_expiry_handles_url_encoded_guard():
     # 裸 | 和 %7C 混着写也一样认
     mixed = f"sid_guard=abc%7C{ISSUED}|{TTL}|Sun, 20 Dec 2026 03:28:57 GMT"
     assert df.parse_cookie_expiry(mixed, now=ISSUED)["state"] == "ok"
+
+
+# ---------------------------------------------------------------- 列表里自带的直链
+
+
+def _feed_stream_url(*tiers):
+    """按 ``live_core_sdk_data.pull_data.stream_data`` 的真实形状拼一份 stream_url。
+
+    tiers 里每项是 (档位, VCodec, 分辨率, 码率, URL 后缀)；``ao`` 那种纯音频档由
+    测试自己传 ``only_audio=1`` 来构造。
+    """
+    data = {}
+    for key, codec, resolution, bitrate, suffix in tiers:
+        url = (
+            f"http://pull-flv-l1.douyincdn.com/stage/stream-123{suffix}.flv"
+            f"?expire=6aed544d&sign=abc&codec={codec}"
+        )
+        data[key] = {
+            "main": {
+                "flv": url,
+                "hls": url.replace(".flv", "/index.m3u8"),
+                "sdk_params": json.dumps(
+                    {"VCodec": codec, "resolution": resolution, "vbitrate": bitrate}, ensure_ascii=False
+                ),
+            }
+        }
+    return {"live_core_sdk_data": {"pull_data": {"stream_data": json.dumps({"data": data})}}}
+
+
+def test_extract_direct_play_picks_highest_bitrate_h264():
+    """h265 档位浏览器解不了，只能挑 h264；同编码取码率最高的那档。"""
+    stream_url = _feed_stream_url(
+        ("origin", "h265", "1088x1920", 2823168, "_or5"),
+        ("hd", "h264", "720x1270", 2000000, "_hd4"),
+        ("ld", "h264", "480x847", 1000000, "_ld4"),
+        ("ao", "h264", "", 64000, "_ao&only_audio=1"),
+    )
+    picked = df.extract_direct_play(stream_url)
+    assert picked["play_url"].startswith("https://pull-flv-l1.douyincdn.com/stage/stream-123_hd4.flv")
+    assert picked["playback"] == "flv"
+    assert picked["codec"] == "h264"
+    assert picked["quality"] == "超清"
+    # expire 是十六进制时间戳（0x6aed544d），按十进制解析会恒为 0
+    assert picked["expire_at"] == 1793938509
+
+
+def test_extract_direct_play_returns_empty_for_h265_only():
+    """推荐直播那批实测 20/20 主画质 h265、唯一 h264 只有 240p，不能拿来直播。"""
+    stream_url = _feed_stream_url(
+        ("origin", "h265", "1088x1920", 2823168, "_or5"),
+        ("hd", "h265", "720x1270", 2000000, "_hd5"),
+    )
+    picked = df.extract_direct_play(stream_url)
+    assert picked == {"play_url": "", "playback": "", "quality": "", "codec": "", "expire_at": 0}
+
+
+def test_extract_direct_play_skips_audio_only_tier():
+    """``ao`` 档是纯音频（only_audio=1），塞进 <video> 只会黑屏，不能当播放地址。"""
+    stream_url = _feed_stream_url(("ao", "h264", "", 64000, "_ao&only_audio=1"))
+    assert df.extract_direct_play(stream_url)["play_url"] == ""
+
+
+def test_extract_direct_play_tolerates_garbage():
+    for bad in (None, {}, {"live_core_sdk_data": None}, {"live_core_sdk_data": {"pull_data": {"stream_data": "{"}}}):
+        assert df.extract_direct_play(bad)["play_url"] == ""
+    # 结构对但档位里没 flv（只有 hls）也要安全返回
+    assert df.extract_direct_play({"live_core_sdk_data": {"pull_data": {"stream_data": '{"data": 3}'}}})[
+        "play_url"
+    ] == ""
+
+
+def test_normalize_live_rooms_carries_direct_play_url():
+    """在播关注那批实测直链就是 h264 全画质，归一化后要带上，前端才能省掉取流请求。"""
+    payload = copy.deepcopy(LIVE_PAYLOAD)
+    payload["data"]["data"][0]["room"]["stream_url"] = _feed_stream_url(
+        ("origin", "h264", "1088x1920", 2823168, "_or4"),
+    )
+    rooms = df.normalize_live_rooms(payload)
+    assert len(rooms) == 1
+    assert rooms[0]["play_url"].startswith("https://pull-flv-l1.douyincdn.com/stage/stream-123_or4.flv")
+    assert rooms[0]["quality"] == "原画"
+    assert rooms[0]["codec"] == "h264"
+
+
+def test_normalize_live_rooms_without_stream_url_has_empty_direct_play():
+    rooms = df.normalize_live_rooms(LIVE_PAYLOAD)
+    assert rooms[0]["play_url"] == ""
+    assert rooms[0]["playback"] == ""
+    assert rooms[0]["expire_at"] == 0
+
+
+def test_normalize_stream_info_reads_hex_expire():
+    """真实直链的 expire 是十六进制（``expire=6aed544d``），以前按十进制解析恒为 0。"""
+    url = FLV_URL.replace("expire=1793161325", "expire=6aed544d")
+    info = df.normalize_stream_info("1", _stream_data(flv_url=url))
+    assert info["expire_at"] == 1793938509

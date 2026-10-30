@@ -31,9 +31,14 @@ interface LivePlayerDialogProps {
 /**
  * 关注页里的「在网页里看直播」。
  *
- * 播放地址是抖音 CDN 的签名直链（后端 `/api/douyin/live/stream` 用 streamget 现取）：
+ * 地址有两个来源：
+ * 1. 列表接口 `/api/douyin/live/following-live` 返回的 `room.play_url`——关注在播那批实测是
+ *    h264 全画质签名直链（1088x1920，与 room enter 同档），直接播，省一次取流请求；
+ * 2. 走不到（或直链挂了）才调 `/api/douyin/live/stream` 现取（streamget room enter）。
+ *
  * flv 走 mpegts.js（MSE 解封装），H.265 房间退回 hls（只有 Safari 原生能直吃）。
- * 地址会失效（主播重开播就换 stream id），所以播放出错时自动重取一次，仍失败才报错。
+ * 地址会失效（主播重开播就换 stream id），所以播放出错时先回落取流接口、再自动重取一次，
+ * 仍失败才报错。
  */
 export function LivePlayerDialog({ room, onOpenChange }: LivePlayerDialogProps) {
     const { t } = useI18n()
@@ -50,9 +55,19 @@ export function LivePlayerDialog({ room, onOpenChange }: LivePlayerDialogProps) 
     const [playing, setPlaying] = useState(false)
     const [failed, setFailed] = useState(false)
     const [isFullscreen, setIsFullscreen] = useState(false)
+    // 列表接口给的直链播不起来时置 true：回落 `/live/stream`（那里能换到 h264 全画质/另一条线路）
+    const [directFailed, setDirectFailed] = useState(false)
 
     const webRid = room?.web_rid ?? ""
     const roomUrl = webRid ? `https://live.douyin.com/${webRid}` : "https://live.douyin.com/"
+
+    // 列表直链只有 h264 档位才会填；签名过期（expire_at 是秒级时间戳）就当作没有
+    const directUrl = room?.play_url ?? ""
+    const directExpired = Boolean(room?.expire_at && room.expire_at * 1000 <= Date.now())
+    const usingDirect = Boolean(directUrl) && !directExpired && !directFailed
+    // 回调里（onError / 看门狗）判断当前走的是哪条路，避免把旧闭包里的值当真
+    const usingDirectRef = useRef(usingDirect)
+    usingDirectRef.current = usingDirect
 
     const stream = useQuery({
         queryKey: ["douyin-live-stream", webRid],
@@ -61,15 +76,17 @@ export function LivePlayerDialog({ room, onOpenChange }: LivePlayerDialogProps) 
             forceRef.current = false
             return douyinApi.liveStream(webRid, undefined, force)
         },
-        enabled: Boolean(room && webRid),
+        // 已经有能直解的直链就别打接口了
+        enabled: Boolean(room && webRid) && !usingDirect,
         staleTime: 60_000,
         gcTime: 60_000,
         retry: 1,
         refetchOnWindowFocus: false,
     })
 
-    const playUrl = stream.data?.play_url ?? ""
-    const playback = stream.data?.playback ?? ""
+    const playUrl = usingDirect ? directUrl : (stream.data?.play_url ?? "")
+    const playback = usingDirect ? room?.playback || "flv" : (stream.data?.playback ?? "")
+    const quality = usingDirect ? (room?.quality ?? "") : (stream.data?.quality ?? "")
     // 每次成功取到地址都会变（哪怕地址字符串没变）——用它当「新一轮尝试」的信号
     const { dataUpdatedAt } = stream
 
@@ -89,6 +106,8 @@ export function LivePlayerDialog({ room, onOpenChange }: LivePlayerDialogProps) 
     const reload = useCallback(() => {
         autoRetryRef.current = 0
         setFailed(false)
+        // 手动重试是显式动作：列表直链既然坏过就别再试它，直接走取流接口
+        setDirectFailed(true)
         forceRef.current = true
         void stream.refetch()
     }, [stream])
@@ -98,6 +117,12 @@ export function LivePlayerDialog({ room, onOpenChange }: LivePlayerDialogProps) 
         setFailed(false)
         setPlaying(false)
     }, [webRid, dataUpdatedAt])
+
+    // 直链失败态只按房间复位：**不能跟着 dataUpdatedAt 复位**，否则「回落取流→重渲染→
+    // 又去试坏直链→又失败」会在这两条路之间来回弹
+    useEffect(() => {
+        setDirectFailed(false)
+    }, [webRid])
 
     // 自动重取预算只按房间复位，**不随地址变化复位**：否则「新地址→预算清零→又失败→又重取」
     // 会变成每 15s 无限重取。用户点「重试」是显式动作，另行复位。
@@ -129,9 +154,13 @@ export function LivePlayerDialog({ room, onOpenChange }: LivePlayerDialogProps) 
         const safePlay = () => video.play().catch(() => undefined)
         const onPlaying = () => setPlaying(true)
         const onPause = () => setPlaying(false)
-        // 地址过期/主播重开播 → 强制重取一次；再出错就把失败态交给界面
+        // 地址过期/主播重开播 → 先回落取流接口；回落来的地址再出错才动用重取预算
         const onError = () => {
             if (cancelled) return
+            if (usingDirectRef.current) {
+                setDirectFailed(true)
+                return
+            }
             if (autoRetryRef.current < 1) {
                 autoRetryRef.current += 1
                 forceRef.current = true
@@ -216,6 +245,10 @@ export function LivePlayerDialog({ room, onOpenChange }: LivePlayerDialogProps) 
             const video = videoRef.current
             // readyState >= 3 就算起来了（用户手动暂停时 readyState 仍是 4，别误判）
             if (video && video.readyState >= 3) return
+            if (usingDirectRef.current) {
+                setDirectFailed(true)
+                return
+            }
             if (autoRetryRef.current < MAX_AUTO_RETRY) {
                 autoRetryRef.current += 1
                 forceRef.current = true
@@ -280,21 +313,27 @@ export function LivePlayerDialog({ room, onOpenChange }: LivePlayerDialogProps) 
     if (!room) return null
 
     const unsupported = playback === "hls" && !nativeHls
-    const isLive = stream.data ? stream.data.is_live : true
+    // 直链来源时还没拉接口，默认就是「在播」（列表只给在播房间），标题/主播取卡片上的
+    const isLive = usingDirect ? true : stream.data ? stream.data.is_live : true
     const hasSource = Boolean(playUrl) && !unsupported && isLive
-    const title = stream.data?.title || room.title || room.anchor.nickname || room.web_rid
-    const anchor = stream.data?.anchor_name || room.anchor.nickname || room.web_rid
+    const title = (usingDirect ? "" : stream.data?.title) || room.title || room.anchor.nickname || room.web_rid
+    const anchor = (usingDirect ? "" : stream.data?.anchor_name) || room.anchor.nickname || room.web_rid
 
     // 覆盖层一次只显示一种状态：加载中 / 接口错 / 未开播 / 播不了
-    const overlay: "loading" | "error" | "notLive" | "failed" | null = stream.error
-        ? "error"
-        : !stream.data
-          ? "loading"
-          : !stream.data.is_live
-            ? "notLive"
-            : unsupported || failed || !playUrl
-              ? "failed"
-              : null
+    // 走直链时没有接口状态可看，只有「播不了」（失败态由播放器自己置）
+    const overlay: "loading" | "error" | "notLive" | "failed" | null = usingDirect
+        ? unsupported || failed || !playUrl
+            ? "failed"
+            : null
+        : stream.error
+          ? "error"
+          : !stream.data
+            ? "loading"
+            : !stream.data.is_live
+              ? "notLive"
+              : unsupported || failed || !playUrl
+                ? "failed"
+                : null
     const errorMessage =
         (stream.error instanceof Error ? translateError(stream.error.message) : "") ||
         t("following.playerFailed")
@@ -324,9 +363,9 @@ export function LivePlayerDialog({ room, onOpenChange }: LivePlayerDialogProps) 
                             <Badge className="shrink-0 bg-red-500 text-white hover:bg-red-500">
                                 {t("following.liveNow")}
                             </Badge>
-                            {stream.data?.quality && (
+                            {quality && (
                                 <Badge className="shrink-0 bg-white/15 text-white hover:bg-white/15">
-                                    {stream.data.quality}
+                                    {quality}
                                 </Badge>
                             )}
                         </div>

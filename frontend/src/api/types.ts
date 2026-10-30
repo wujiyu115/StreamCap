@@ -384,6 +384,18 @@ export interface DouyinLiveRoom {
     tag: string | null
     status: number | null
     anchor: DouyinLiveAnchor
+    /**
+     * 列表接口自带的签名直链（只有 h264 档位才会填，空串=得再走 `/douyin/live/stream`）。
+     * 「关注在播」那批实测就是 h264 全画质，可以直接播，省一次取流请求。
+     */
+    play_url?: string
+    /** "flv" / "hls" */
+    playback?: string
+    /** 清晰度叫法（原画/超清/…），与 DouyinLiveStream.quality 不同源 */
+    quality?: string
+    codec?: string
+    /** 直链签名到期时间（秒级时间戳，0 = 未知） */
+    expire_at?: number
 }
 
 export interface DouyinLiveResponse {
