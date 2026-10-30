@@ -32,6 +32,15 @@ class UploadLineUnavailable(RuntimeError):
     """
 
 
+class UploadResultUnknown(RuntimeError):
+    """投稿动作已经发出去，但拿不到回执，成败只能人工核实。
+
+    抖音点完「发布」后浏览器渲染进程会随机崩（2026-10-30 生产两次：18:38 那次的
+    作品其实发布成功了，只是没等到 toast）。这种绝不能按普通失败重试 —— 重试就是
+    往账号里再发一条一模一样的作品。所以 manager 把它一次判 ``failed`` 并提醒人工核。
+    """
+
+
 @dataclass(frozen=True)
 class UploadRequest:
     """与具体上传渠道无关的一次投稿请求。"""

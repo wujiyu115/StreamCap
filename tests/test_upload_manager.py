@@ -1153,3 +1153,33 @@ def test_douyin_auth_failure_blocks_only_its_own_channel(tmp_path):
 
     statuses = {item["provider"]: item["status"] for item in manager.list_channels()}
     assert statuses == {"bilibili": "active", "douyin": "blocked_auth"}
+
+
+def test_unknown_result_fails_without_retrying(tmp_path):
+    """点完发布崩了、又核不到作品：一次判 failed，绝不自动重试（否则重复投稿）。"""
+    from app.core.upload.models import UploadResultUnknown
+
+    (tmp_path / "a.mp4").write_bytes(b"video")
+    manager = _mgr(tmp_path, _two_channel_config())
+    manager.enqueue_files([str(tmp_path / "a.mp4")], ["douyin"])
+
+    class UnknownProvider:
+        calls = 0
+
+        def upload(self, request, provider_config):
+            UnknownProvider.calls += 1
+            raise UploadResultUnknown("已点「发布」但浏览器崩溃，且内容管理页没核到该作品")
+
+    manager._providers["douyin"] = UnknownProvider()
+    row = manager._next_job()
+    manager._process(row)
+
+    job = manager.list_jobs(provider="douyin")[0]
+    assert job["status"] == "failed"
+    assert job["next_attempt_at"] == 0  # 不再退避重试
+    assert "请到平台创作者中心确认作品是否已发布" in job["message"]
+    # 渠道本身没被冻：不阻塞别的稿件
+    assert {c["provider"]: c["status"] for c in manager.list_channels()}["douyin"] == "active"
+    # 再跑一轮调度也不会把它领走
+    assert manager._next_job() is None
+    assert UnknownProvider.calls == 1

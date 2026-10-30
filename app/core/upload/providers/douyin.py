@@ -27,6 +27,7 @@ from ..models import (
     UploadRateLimited,
     UploadRequest,
     UploadResult,
+    UploadResultUnknown,
 )
 
 UPLOAD_URL = "https://creator.douyin.com/creator-micro/content/upload"
@@ -218,6 +219,24 @@ def _is_page_crash(exc: BaseException) -> bool:
         marker in text
         for marker in ("Page crashed", "Target crashed", "Target closed", "browser has been closed")
     )
+
+
+def _title_in_manage_text(text: str, title: str) -> bool:
+    """内容管理页正文里能不能找到这条作品的标题。
+
+    管理页是懒加载 + 卡片文字换行，所以两边都压成单行再比；标题本身有 30 字上限，
+    上传时可能恰好被截断在空格处，所以预留「前 20 字命中」的退化比对。
+    """
+    probe = re.sub(r"\s+", "", title or "")
+    if not probe:
+        return False
+    # 卡片里标题会按字符换行，两边把空白全去掉再比；标题本身还有 30 字上限，
+    # 上传时可能恰好截断，所以再留一条「前 20 字命中」的退化比对。
+    haystack = re.sub(r"\s+", "", text or "")
+    if probe in haystack:
+        return True
+    head = probe[:20]
+    return len(head) >= 8 and head in haystack
 
 
 def looks_like_standard_mp4(path: str) -> bool:
@@ -417,8 +436,7 @@ class DouyinProvider:
         if bool(config.get("only_self", True)):
             self._select_self_only(page)
 
-        self._publish_started = True
-        self._publish_click(page, deadline)
+        self._publish_click_safe(page, deadline, title)
         remote_id = self._read_back(page, deadline, title)
         logger.success(f"抖音：发布完成 {remote_id or '(未取到作品 ID)'}")
         return remote_id
@@ -518,6 +536,68 @@ class DouyinProvider:
         if checked is False:
             raise RuntimeError("抖音「仅自己可见」没选中（页面结构改版？）")
         logger.info(f"抖音：可见性已设为「仅自己可见」（回读={checked}）")
+
+    def _publish_click_safe(self, page, deadline: float, title: str) -> None:
+        """点发布；点完浏览器崩了就回内容管理页按标题核验。
+
+        2026-10-30 生产实测两次：点完「发布」10s 内 renderer 必崩，但抖音侧作品
+        其实已经发出去了（18:38 那条在内容管理页能看到，私密、时长对得上）。
+        所以崩溃不等于失败：先核验，核到就算成功；核不到才抛 ``UploadResultUnknown``
+        —— 一次判 failed、不自动重试（重试 = 重复投稿）。
+        """
+        self._publish_started = True
+        try:
+            self._publish_click(page, deadline)
+        except Exception as exc:
+            crashed = _is_page_crash(exc)
+            # 「发布超时」虽然报错文本不是崩溃，但同样可能已经发出去了，一并核验。
+            if not crashed and "发布超时" not in str(exc):
+                raise
+            logger.warning(f"抖音：点发布后没拿到回执（{exc}），回内容管理页核验是否已发出")
+            if self._verify_published(title):
+                logger.success("抖音：内容管理页已出现该作品，按发布成功处理")
+                return
+            if not crashed:
+                raise
+            raise UploadResultUnknown(
+                "已点「发布」但浏览器崩溃，且内容管理页没核到该作品：请到抖音创作者中心确认后再决定是否重投"
+            ) from exc
+
+    def _verify_published(self, title: str) -> bool:
+        """新开一个浏览器打开内容管理页，看标题目录里有没有这条作品。"""
+        cookies = parse_cookie_string(str(self._cookie_getter() or ""))
+        if not cookies or not (title or "").strip():
+            return False
+        try:
+            from playwright.sync_api import sync_playwright
+        except Exception as exc:  # pragma: no cover - 依赖缺失时退化成「核不到」
+            logger.warning(f"抖音：崩溃后核验跳过（playwright 不可用）: {exc}")
+            return False
+        try:
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(headless=True, args=list(_BROWSER_ARGS))
+                try:
+                    context = browser.new_context(
+                        viewport={"width": 1600, "height": 1400},
+                        user_agent=_USER_AGENT,
+                        locale="zh-CN",
+                    )
+                    context.add_cookies(cookies)
+                    page = context.new_page()
+                    page.goto(MANAGE_URL, wait_until="domcontentloaded", timeout=120_000)
+                    page.wait_for_function(
+                        "() => /作品\\s*[（(]\\s*\\d+\\s*[)）]/.test(document.body.innerText)",
+                        timeout=180_000,
+                    )
+                    page.wait_for_timeout(5000)
+                    hit = _title_in_manage_text(self._body_text(page), title)
+                    logger.info(f"抖音：崩溃后核验内容管理页，标题命中={hit}")
+                    return hit
+                finally:
+                    browser.close()
+        except Exception as exc:
+            logger.warning(f"抖音：崩溃后核验失败（{type(exc).__name__}: {str(exc)[:160]}）")
+            return False
 
     def _publish_click(self, page, deadline: float) -> None:
         """点发布并等抖音的回执：成功是 toast「发布成功」或跳转内容管理。

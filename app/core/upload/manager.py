@@ -12,7 +12,13 @@ from pathlib import Path
 
 from ...messages.message_pusher import MessagePusher
 from ...utils.logger import logger
-from .models import UploadAuthError, UploadLineUnavailable, UploadRateLimited, UploadRequest
+from .models import (
+    UploadAuthError,
+    UploadLineUnavailable,
+    UploadRateLimited,
+    UploadRequest,
+    UploadResultUnknown,
+)
 from .providers import BilibiliProvider, DouyinProvider
 
 _RETRY_DELAYS = (60, 300, 900, 3600)
@@ -706,6 +712,30 @@ class UploadManager:
         )
         return remaining
 
+    def _fail_no_retry(self, row: dict, message: str, title: str) -> None:
+        """投稿动作已发出但没有回执：一次判 failed，绝不自动重试。
+
+        重试的后果是把同一条作品再发一遍（抖音 2026-10-30 生产就踩过：点完发布浏览器
+        崩了，作品实际上已发布成功，只是没等到 toast）。核验过的渠道会在 provider 里
+        先按标题核验，核到了直接算成功，走不到这里。
+        """
+        now = datetime.now().isoformat(timespec="seconds")
+        hint = "请到平台创作者中心确认作品是否已发布，确认没发出去再手动重投"
+        stored = f"{message}\n{hint}"[-4000:]
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE upload_jobs SET status='failed', message=?, next_attempt_at=0, updated_at=? "
+                "WHERE id=?",
+                (stored, now, row["id"]),
+            )
+        logger.error(f"上传结果未知，停止自动重试({row['provider']}): {message}")
+        self._notify(
+            "StreamCap 上传结果未知",
+            f"{title}\n渠道：{row['provider']}\n{message[-500:]}\n"
+            "（投稿动作已经发出，但没拿到回执也不能从作品的列表核到，请人工确认后再决定是否重投）",
+        )
+        self._prune_jobs()
+
     def _process(self, row: dict) -> None:
         provider_name = row["provider"]
         provider = self._providers.get(provider_name)
@@ -734,6 +764,9 @@ class UploadManager:
             return
         except UploadAuthError as exc:
             self._block_auth(row, str(exc))
+            return
+        except UploadResultUnknown as exc:
+            self._fail_no_retry(row, str(exc), request.title)
             return
         except Exception as exc:
             terminal = attempts >= max_attempts

@@ -378,3 +378,85 @@ def test_is_page_crash_markers():
     assert douyin._is_page_crash(Exception("Page.wait_for_timeout: Page crashed"))
     assert douyin._is_page_crash(Exception("Target crashed"))
     assert not douyin._is_page_crash(RuntimeError("抖音素材上传/转码超时（没等到「上传成功」）"))
+
+
+def test_publish_crash_verified_as_success(tmp_path):
+    """点完发布崩了，但内容管理页能核到这条作品 → 算发布成功，不重投。"""
+    provider = DouyinProvider(str(tmp_path), cookie_getter=lambda: "sessionid=abc")
+    seen = {}
+
+    def boom(page, deadline):
+        raise _Crash("Page.wait_for_timeout: Page crashed")
+
+    provider._publish_click = boom  # type: ignore[assignment]
+    provider._verify_published = lambda title: seen.setdefault("title", title) or True  # type: ignore[assignment]
+    provider._publish_click_safe(page=None, deadline=0, title="阿蛮想变强_2026-10-30_13-39-08_000 ")
+    assert provider._publish_started is True
+    assert seen["title"] == "阿蛮想变强_2026-10-30_13-39-08_000 "
+
+
+def test_publish_crash_without_verification_raises_result_unknown(tmp_path):
+    """崩了又核不到作品 → 结果未知（manager 会一次判 failed，不再自动重试）。"""
+    from app.core.upload.models import UploadResultUnknown
+
+    provider = DouyinProvider(str(tmp_path), cookie_getter=lambda: "sessionid=abc")
+
+    def boom(page, deadline):
+        raise _Crash("Target crashed")
+
+    provider._publish_click = boom  # type: ignore[assignment]
+    provider._verify_published = lambda title: False  # type: ignore[assignment]
+    with pytest.raises(UploadResultUnknown) as excinfo:
+        provider._publish_click_safe(page=None, deadline=0, title="标题")
+    assert "没核到该作品" in str(excinfo.value)
+
+
+def test_publish_non_crash_error_is_not_swallowed(tmp_path):
+    """不是崩溃的错误（风控/登录失效）不能被「核验」吞掉。"""
+    from app.core.upload.models import UploadAuthError
+
+    provider = DouyinProvider(str(tmp_path), cookie_getter=lambda: "sessionid=abc")
+    provider._verify_published = lambda title: True  # type: ignore[assignment]
+
+    def auth_fail(page, deadline):
+        raise UploadAuthError("抖音发布时要求重新登录")
+
+    provider._publish_click = auth_fail  # type: ignore[assignment]
+    with pytest.raises(UploadAuthError):
+        provider._publish_click_safe(page=None, deadline=0, title="标题")
+
+
+def test_title_in_manage_text_matching():
+    page_text = "作品 (1)\n03:51\n 私密\n阿蛮想变强_2026-10-30_13-39-08_000\n删除作品\n没有更多作品"
+    # 上传时标题被 30 字上限截断在空格处，要能容忍尾部空格
+    assert douyin._title_in_manage_text(page_text, "阿蛮想变强_2026-10-30_13-39-08_000 ")
+    # 卡片文字换行也要能匹配
+    assert douyin._title_in_manage_text("阿蛮想变强\n_2026-10-30_13-39-08_000", "阿蛮想变强_2026-10-30_13-39-08_000")
+    assert not douyin._title_in_manage_text("作品 (1)\n没有更多作品", "别的标题_2026-10-30")
+    assert not douyin._title_in_manage_text(page_text, "   ")
+
+
+def test_publish_timeout_but_verified_counts_as_success(tmp_path):
+    """「发布超时」也可能是已经发出去了：核到就按成功处理，不重投。"""
+    provider = DouyinProvider(str(tmp_path), cookie_getter=lambda: "sessionid=abc")
+    provider._verify_published = lambda title: True  # type: ignore[assignment]
+
+    def timeout(page, deadline):
+        raise RuntimeError("抖音发布超时（没等到「发布成功」或跳转内容管理）")
+
+    provider._publish_click = timeout  # type: ignore[assignment]
+    provider._publish_click_safe(page=None, deadline=0, title="标题")
+
+
+def test_publish_timeout_without_verification_keeps_original_error(tmp_path):
+    """核不到时超时仍是原来的可重试错误（不是「结果未知」）。"""
+    provider = DouyinProvider(str(tmp_path), cookie_getter=lambda: "sessionid=abc")
+    provider._verify_published = lambda title: False  # type: ignore[assignment]
+
+    def timeout(page, deadline):
+        raise RuntimeError("抖音发布超时（没等到「发布成功」或跳转内容管理）")
+
+    provider._publish_click = timeout  # type: ignore[assignment]
+    with pytest.raises(RuntimeError) as excinfo:
+        provider._publish_click_safe(page=None, deadline=0, title="标题")
+    assert "发布超时" in str(excinfo.value)
