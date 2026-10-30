@@ -12,6 +12,7 @@ from app.core.upload.providers.douyin import (
     detect_auth,
     detect_failure,
     detect_rate_limit,
+    detect_transient,
     extract_aweme_id,
     has_login_cookie,
     parse_cookie_string,
@@ -83,6 +84,12 @@ def test_detect_helpers():
     assert detect_rate_limit("作品发布成功") is None
     assert detect_failure("视频上传失败，请重试") == "视频上传失败"
     assert detect_failure("作品发布成功") is None
+    # 编辑页音乐区块常年挂着「重新上传」链接，误当失败会让每一单都判「上传失败」
+    assert detect_failure("添加音乐重新上传") is None
+    assert detect_failure("上传失败，请重新上传") == "上传失败"
+    # 抖音的服务端/网络抖动自带「请稍后再试」，不能被当成限流把渠道冻 6 小时
+    assert detect_transient("服务器/网络开小差了，请稍后再试～") == "服务器/网络开小差了"
+    assert detect_transient("操作过于频繁，请稍后再试") is None
     assert extract_aweme_id("https://www.douyin.com/video/7412345678901234567") == "7412345678901234567"
     assert extract_aweme_id("aweme_id=7412345678901234567") == "7412345678901234567"
     assert extract_aweme_id("https://creator.douyin.com/creator-micro/content/manage") is None
@@ -167,3 +174,53 @@ def test_manager_splits_douyin_jobs_one_video_each(tmp_path):
     douyin = [job for job in manager.list_jobs() if job["provider"] == "douyin"]
     assert len(douyin) == 3
     assert all(len(job["files"]) == 1 for job in douyin)
+
+class _StubPage:
+    """够 ``_wait_upload_done`` 用的假页面：分别喂 整页文案 / toast / 预览时长。"""
+
+    def __init__(self, body="", toast="", duration=0.0):
+        self.body = body
+        self.toast = toast
+        self.duration = duration
+        self.waits = 0
+
+    def evaluate(self, script, arg=None):
+        if arg is not None:  # _toast_text 传了选择器列表
+            return self.toast
+        if "cloneNode" in script:  # _body_text
+            return self.body
+        return self.duration  # _preview_ready 的 video.duration
+
+    def wait_for_timeout(self, _ms):
+        self.waits += 1
+
+
+def test_wait_upload_done_ignores_static_uploading_hint():
+    """编辑页常驻「如作品还在上传中…」提示语，不能因此一直等下去。"""
+    page = _StubPage(
+        body="基础信息 作品描述 谁可以看 仅自己可见 点击发布后，如作品还在上传中，请勿关闭页面，等待上传发布完成。",
+        toast="",
+        duration=20.1,
+    )
+    DouyinProvider("/tmp")._wait_upload_done(page, __import__("time").time() + 5)
+    assert page.waits <= 2
+
+
+def test_wait_upload_done_returns_on_success_toast():
+    page = _StubPage(body="点击发布后，如作品还在上传中，请勿关闭页面", toast="上传成功", duration=0)
+    DouyinProvider("/tmp")._wait_upload_done(page, __import__("time").time() + 5)
+    assert page.waits == 0
+
+
+def test_wait_upload_done_raises_on_failure_toast():
+    page = _StubPage(body="", toast="视频上传失败，请重新上传", duration=20.0)
+    with pytest.raises(RuntimeError) as excinfo:
+        DouyinProvider("/tmp")._wait_upload_done(page, __import__("time").time() + 5)
+    assert "视频上传失败" in str(excinfo.value)
+
+
+def test_wait_upload_done_keeps_waiting_while_detecting():
+    page = _StubPage(body="发文助手 快速检测 检测中 21%", toast="", duration=20.0)
+    with pytest.raises(RuntimeError) as excinfo:
+        DouyinProvider("/tmp")._wait_upload_done(page, __import__("time").time() + 0.8)
+    assert "上传/转码超时" in str(excinfo.value)

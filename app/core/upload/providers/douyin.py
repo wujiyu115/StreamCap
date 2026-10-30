@@ -94,13 +94,38 @@ _VERIFY_MARKERS = (
     "验证码",
 )
 # 抖音后台的失败提示常在 toast/弹窗里，抓这几类就算「这次没成」。长词在前：
-# 「视频上传失败」要比「上传失败」先命中，报出去的提示才具体
+# 「视频上传失败」要比「上传失败」先命中，报出去的提示才具体。
+# 注意别放「重新上传」：编辑页的音乐区块常年挂着一个「重新上传」链接，会天天误报。
 _FAILURE_MARKERS = (
     "视频上传失败",
     "发布未成功",
     "发布失败",
-    "重新上传",
     "上传失败",
+)
+
+#: toast/浮层容器（抖音的 class 名带哈希，只能按前缀模糊匹配）。真机实测：
+#: 上传完成 → 「上传成功」，点发布 → 「正在发布」→ 约 3s 后「发布成功」并跳到内容管理。
+_TOAST_SELECTORS = (
+    "[class*=toast]",
+    "[class*=Toast]",
+    "[role=alert]",
+    "[class*=message]",
+    "[class*=notice]",
+)
+_UPLOAD_DONE_MARKERS = ("上传成功",)
+_PUBLISH_OK_MARKERS = ("发布成功",)
+_PUBLISH_PENDING_MARKERS = ("正在发布", "发布中")
+# 点早了抖音会提示「请等待上传完成」之类：等一会儿再点一次，不算失败
+_PUBLISH_RETRY_MARKERS = ("请等待", "还未上传完成", "不允许发布", "视频上传中")
+# 抖音自己的服务端/网络抖动（不是限流）：出现这些要「过会儿重试」，不能把渠道冻 6 小时。
+# 这个提示里自带「请稍后再试」，所以必须先于 _RATE_LIMIT_MARKERS 判。
+_TRANSIENT_MARKERS = (
+    "服务器/网络开小差了",
+    "网络开小差",
+    "开小差了",
+    "服务器繁忙",
+    "网络异常",
+    "请检查网络",
 )
 _AWEME_RE = re.compile(r"(?:douyin\.com/video/|/video/|aweme_id=)(\d{8,})")
 
@@ -148,6 +173,14 @@ def detect_rate_limit(text: str) -> tuple[bool, bool] | None:
 
 def detect_failure(text: str) -> str | None:
     for marker in _FAILURE_MARKERS:
+        if marker in text:
+            return marker
+    return None
+
+
+def detect_transient(text: str) -> str | None:
+    """抖音侧的服务端/网络抖动 —— 可重试，不是风控。"""
+    for marker in _TRANSIENT_MARKERS:
         if marker in text:
             return marker
     return None
@@ -325,6 +358,9 @@ class DouyinProvider:
             text = self._body_text(page)
             if detect_auth(text):
                 raise UploadAuthError("抖音 Cookie 已失效（选完文件后被要求登录）")
+            transient = detect_transient(text)
+            if transient is not None:
+                raise RuntimeError(f"抖音暂时失败（{transient}），稍后重试")
             rate = detect_rate_limit(text)
             if rate is not None:
                 raise UploadRateLimited(f"抖音风控：{text[-300:]}", needs_verify=rate[1])
@@ -332,23 +368,48 @@ class DouyinProvider:
         raise RuntimeError("抖音编辑页没打开（上传超时或页面改版）")
 
     def _wait_upload_done(self, page, deadline: float) -> None:
-        """等素材传到抖音侧再点发布：否则点下去只会提示「请等待上传完成」。"""
+        """等素材真的传到抖音侧再点发布，否则点下去只会提示「请等待上传完成」。
+
+        判据只认两个硬信号：
+        1. toast 出现「上传成功」（真机 8.6MB 片约 10s 出现，是抖音自己给的完成回执）；
+        2. 兜底：本地预览 ``<video>`` 拿到 duration 且「快速检测」不再显示「检测中」。
+        不能拿整页文案当判据：编辑页常驻「点击发布后，如作品还在上传中…」的提示语，
+        任何「上传中」字样都会永远命中。
+        """
         while time.time() < deadline:
+            toast = self._toast_text(page)
+            if any(marker in toast for marker in _UPLOAD_DONE_MARKERS):
+                return
+            failure = detect_failure(toast)
+            if failure:
+                raise RuntimeError(f"抖音上传失败：{failure}")
             text = self._body_text(page)
             if detect_auth(text):
                 raise UploadAuthError("抖音 Cookie 已失效（上传中被要求登录）")
+            transient = detect_transient(text)
+            if transient is not None:
+                raise RuntimeError(f"抖音暂时失败（{transient}），稍后重试")
             rate = detect_rate_limit(text)
             if rate is not None:
                 raise UploadRateLimited(f"抖音风控：{text[-300:]}", needs_verify=rate[1])
-            failure = detect_failure(text)
-            if failure:
-                raise RuntimeError(f"抖音上传失败：{failure}")
-            if not any(marker in text for marker in ("上传中", "正在上传", "转码中")):
-                button = self._publish_button(page)
-                if button is not None and button.is_enabled():
-                    return
-            page.wait_for_timeout(1000)
-        raise RuntimeError("抖音素材上传/转码超时")
+            if self._preview_ready(page, text):
+                return
+            page.wait_for_timeout(500)
+        raise RuntimeError("抖音素材上传/转码超时（没等到「上传成功」）")
+
+    @staticmethod
+    def _preview_ready(page, text: str) -> bool:
+        """兜底判据：预览视频已能读出时长，且「快速检测」已结束。"""
+        if "检测中" in text:
+            return False
+        try:
+            duration = page.evaluate(
+                "() => { const v = document.querySelector('video');"
+                " return v && isFinite(v.duration) ? v.duration : 0; }"
+            )
+        except Exception:
+            return False
+        return bool(duration and duration > 0)
 
     def _select_self_only(self, page) -> None:
         """默认「公开」，所以必须点一次「仅自己可见」，并尽量回读校验。"""
@@ -368,25 +429,46 @@ class DouyinProvider:
         logger.info(f"抖音：可见性已设为「仅自己可见」（回读={checked}）")
 
     def _publish_click(self, page, deadline: float) -> None:
+        """点发布并等抖音的回执：成功是 toast「发布成功」或跳转内容管理。
+
+        失败/成功判定都只看 toast：整页文案里「视频发布成功后…」这类条款文案会把
+        「发布成功」变成永远为真的假信号（旧实现就这么误判过）。
+        """
         button = self._publish_button(page)
         if button is None:
             raise RuntimeError("找不到抖音发布按钮")
         self._click(page, button)
+        clicked_at = time.time()
         while time.time() < deadline:
             if "/content/manage" in page.url:
                 return
-            text = self._body_text(page)
-            if "发布成功" in text:
+            toast = self._toast_text(page)
+            if any(marker in toast for marker in _PUBLISH_OK_MARKERS):
+                logger.success("抖音：toast 回执「发布成功」")
                 return
+            failure = detect_failure(toast)
+            if failure:
+                raise RuntimeError(f"抖音发布失败：{failure}")
+            text = self._body_text(page)
             # 先判登录失效：「验证码登录」这类字样也会命中风控的关键词
             if detect_auth(text):
                 raise UploadAuthError("抖音发布时要求重新登录")
+            transient = detect_transient(text)
+            if transient is not None:
+                raise RuntimeError(f"抖音暂时失败（{transient}），稍后重试")
             rate = detect_rate_limit(text)
             if rate is not None:
                 raise UploadRateLimited(f"抖音发布被风控：{text[-300:]}", needs_verify=rate[1])
-            failure = detect_failure(text)
-            if failure:
-                raise RuntimeError(f"抖音发布失败：{failure}")
+            pending = any(marker in toast for marker in _PUBLISH_PENDING_MARKERS)
+            retry = any(marker in toast for marker in _PUBLISH_RETRY_MARKERS)
+            if (retry or not pending) and time.time() - clicked_at > 8:
+                # 点早了（素材还没传完）或 toast 已消失但没跳转：再点一次
+                logger.warning(f"抖音：发布没回执（toast={toast[:80]!r}），重试点击")
+                button = self._publish_button(page)
+                if button is None:
+                    raise RuntimeError("抖音发布按钮消失（页面可能已跳转失败）")
+                self._click(page, button)
+                clicked_at = time.time()
             page.wait_for_timeout(1000)
         raise RuntimeError("抖音发布超时（没等到「发布成功」或跳转内容管理）")
 
@@ -423,8 +505,41 @@ class DouyinProvider:
 
     @staticmethod
     def _body_text(page) -> str:
+        """页面可见文案，先剥掉 script/style。
+
+        抖音把整包 JS/CSS 以 ``<script>``/``<style>`` 塞在 body 里，实测 ``body.innerText``
+        有 1.5MB（全是源码），而真实文案只有 ~900 字 —— 不剥掉的话源码里的弹窗字样、
+        登录字样会随机命中，把登录失效/风控/失败判定全带偏。
+        """
         try:
-            return page.locator("body").inner_text(timeout=10_000) or ""
+            return page.evaluate(
+                """() => {
+                    const clone = document.body.cloneNode(true);
+                    clone.querySelectorAll('script,style,noscript,template').forEach(n => n.remove());
+                    return clone.innerText || '';
+                }"""
+            ) or ""
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _toast_text(page) -> str:
+        """把当前可见的 toast/浮层文案拼起来（失败/成功判定只看这块）。"""
+        try:
+            return page.evaluate(
+                """(sels) => {
+                    const out = [];
+                    for (const sel of sels) {
+                        for (const el of document.querySelectorAll(sel)) {
+                            if (!el.getClientRects().length) continue;
+                            const t = (el.textContent || '').trim();
+                            if (t) out.push(t.slice(0, 120));
+                        }
+                    }
+                    return out.join(' | ');
+                }""",
+                list(_TOAST_SELECTORS),
+            ) or ""
         except Exception:
             return ""
 
