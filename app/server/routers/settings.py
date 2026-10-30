@@ -117,9 +117,28 @@ async def update_cookies(
     user: str = Depends(get_current_user),
     services=Depends(get_services),
 ):
+    old = dict(services.settings_config.cookies_config or {})
     services.settings_config.adopt_cookies_config(body.cookies)
     await services.config_manager.save_cookies_config(body.cookies)
+    _resume_channels_with_new_cookies(services, old, body.cookies)
     return {"ok": True}
+
+
+def _resume_channels_with_new_cookies(services, old: dict, new: dict) -> None:
+    """Cookie 真的变了且新值非空 → 自动解除对应渠道的「登录失效」。
+
+    自动上传的渠道名恰好等于 cookie 平台的 key（bilibili / douyin），所以直接按 key 对应；
+    没变或改成空的都不动（清空 cookie 不该把渠道“恢复”）。
+    """
+    manager = getattr(services, "upload_manager", None)
+    if manager is None:
+        return
+    for provider, value in (new or {}).items():
+        if not str(value or "").strip():
+            continue
+        if str(value) == str((old or {}).get(provider) or ""):
+            continue
+        manager.on_credentials_updated(provider)
 
 
 @router.get("/accounts")

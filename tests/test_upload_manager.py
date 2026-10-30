@@ -1183,3 +1183,57 @@ def test_unknown_result_fails_without_retrying(tmp_path):
     # 再跑一轮调度也不会把它领走
     assert manager._next_job() is None
     assert UnknownProvider.calls == 1
+
+
+def test_credentials_update_clears_blocked_auth(tmp_path):
+    """重新扫码/保存 Cookie 后，渠道的「登录失效」要自动消失，且被 park 的任务回到队列。"""
+    (tmp_path / "a.mp4").write_bytes(b"video")
+    manager = _mgr(tmp_path, _two_channel_config())
+    manager.enqueue_files([str(tmp_path / "a.mp4")], ["douyin"])
+
+    class NoCookieProvider:
+        def upload(self, request, provider_config):
+            raise UploadAuthError("抖音 Cookie 已失效")
+
+    manager._providers["douyin"] = NoCookieProvider()
+    manager._process(manager._next_job())
+    statuses = {c["provider"]: c["status"] for c in manager.list_channels()}
+    assert statuses["douyin"] == "blocked_auth"
+    assert manager.list_jobs(provider="douyin")[0]["status"] == "blocked_auth"
+
+    assert manager.on_credentials_updated("douyin") is True
+    statuses = {c["provider"]: c["status"] for c in manager.list_channels()}
+    assert statuses["douyin"] == "active"
+    assert manager.list_jobs(provider="douyin")[0]["status"] == "retrying"
+
+
+def test_credentials_update_leaves_other_states_alone(tmp_path):
+    """手动暂停的渠道、或者本来正常的渠道，保存 Cookie 不该把它们弄成 active。"""
+    (tmp_path / "a.mp4").write_bytes(b"video")
+    manager = _mgr(tmp_path, _two_channel_config())
+    manager.enqueue_files([str(tmp_path / "a.mp4")], ["douyin"])
+    manager.pause_channel("douyin")
+
+    assert manager.on_credentials_updated("douyin") is False
+    assert {c["provider"]: c["status"] for c in manager.list_channels()}["douyin"] == "paused"
+    assert manager.on_credentials_updated("nope") is False
+
+
+def test_cookie_save_only_resumes_changed_and_non_empty(monkeypatch):
+    """PUT /api/cookies 的联动：只对「值变了且非空」的渠道解除登录失效。"""
+    from types import SimpleNamespace
+
+    from app.server.routers.settings import _resume_channels_with_new_cookies
+
+    calls = []
+    services = SimpleNamespace(upload_manager=SimpleNamespace(on_credentials_updated=calls.append))
+
+    _resume_channels_with_new_cookies(
+        services, {"douyin": "old", "bilibili": "same"}, {"douyin": "new", "bilibili": "same"}
+    )
+    assert calls == ["douyin"]
+
+    calls.clear()
+    _resume_channels_with_new_cookies(services, {"douyin": "old"}, {"douyin": ""})   # 清空 Cookie 不恢复
+    _resume_channels_with_new_cookies(services, {"douyin": "old"}, {"douyin": "old"})  # 没变不恢复
+    assert calls == []

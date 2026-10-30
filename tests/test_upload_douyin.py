@@ -460,3 +460,129 @@ def test_publish_timeout_without_verification_keeps_original_error(tmp_path):
     with pytest.raises(RuntimeError) as excinfo:
         provider._publish_click_safe(page=None, deadline=0, title="标题")
     assert "发布超时" in str(excinfo.value)
+
+
+class _FakePage:
+    """假装是 playwright 的 Page，只实现核验用到的几个方法。"""
+
+    def __init__(self, text="作品 (1)\n私密\n标题A\n没有更多作品", url="https://creator.douyin.com/x", raise_on_wait=None):
+        self.url = url
+        self.text = text
+        self.raise_on_wait = raise_on_wait
+        self.waits = []
+        self.goto_urls = []
+
+    def set_default_timeout(self, *_a, **_k):
+        return None
+
+    def goto(self, url, **_k):
+        self.goto_urls.append(url)
+
+    def wait_for_function(self, script, timeout=None):
+        self.waits.append(timeout)
+        if self.raise_on_wait:
+            raise self.raise_on_wait
+
+    def wait_for_timeout(self, _ms):
+        return None
+
+    def eval_on_selector(self, _sel, _js):
+        return self.text
+
+    def inner_text(self, *_a, **_k):
+        return self.text
+
+    def evaluate(self, *_a, **_k):
+        return self.text
+
+
+class _FakeContext:
+    def __init__(self, page):
+        self.page = page
+        self.init_scripts = []
+        self.cookies = []
+
+    def add_init_script(self, script):
+        self.init_scripts.append(script)
+
+    def add_cookies(self, cookies):
+        self.cookies.extend(cookies)
+
+    def new_page(self):
+        return self.page
+
+
+class _FakeBrowser:
+    def __init__(self, context):
+        self.context = context
+        self.closed = False
+
+    def new_context(self, **_k):
+        return self.context
+
+    def close(self):
+        self.closed = True
+
+
+def _patch_playwright(monkeypatch, page):
+    """把 sync_playwright 换成桩，返回 (context, browser) 便于断言。"""
+    context = _FakeContext(page)
+    browser = _FakeBrowser(context)
+
+    class _PW:
+        class chromium:
+            @staticmethod
+            def launch(**_k):
+                return browser
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_a):
+            return False
+
+    import sys
+    from types import SimpleNamespace
+
+    monkeypatch.setitem(sys.modules, "playwright", SimpleNamespace(sync_playwright=lambda: _PW()))
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", SimpleNamespace(sync_playwright=lambda: _PW()))
+    return context, browser
+
+
+def test_verify_published_uses_same_fingerprint_as_upload(monkeypatch):
+    """核验必须跟投递路径一样注入 _INIT_SCRIPT，否则会被判自动化、每次等满超时。"""
+    page = _FakePage(text="作品 (1)\n私密\n标题A\n没有更多作品")
+    context, browser = _patch_playwright(monkeypatch, page)
+    provider = DouyinProvider("/tmp", cookie_getter=lambda: "sessionid=abc; ttwid=def")
+
+    assert provider._verify_published("标题A") is True
+    assert context.init_scripts == [douyin._INIT_SCRIPT]
+    assert page.goto_urls == [douyin.MANAGE_URL]
+    assert browser.closed is True
+    assert page.waits == [90_000]
+
+
+def test_verify_published_reports_no_match(monkeypatch):
+    page = _FakePage(text="作品 (1)\n私密\n别的标题\n没有更多作品")
+    _patch_playwright(monkeypatch, page)
+    provider = DouyinProvider("/tmp", cookie_getter=lambda: "sessionid=abc; ttwid=def")
+
+    assert provider._verify_published("标题A") is False
+
+
+def test_verify_published_detects_login_wall(monkeypatch):
+    """被踢回登录页时必须立刻返回 False（不能当成「作品不存在」等到超时）。"""
+    page = _FakePage(text="扫码登录\n登录后查看", url="https://creator.douyin.com/login")
+    _patch_playwright(monkeypatch, page)
+    provider = DouyinProvider("/tmp", cookie_getter=lambda: "sessionid=abc; ttwid=def")
+
+    assert provider._verify_published("标题A") is False
+    assert page.waits == []  # 一眼看出是登录页，压根不进入等列表
+
+
+def test_verify_published_timeout_path_is_false(monkeypatch):
+    page = _FakePage(text="作品 (1)\n私密\n标题A\n没有更多作品", raise_on_wait=TimeoutError("90s"))
+    _patch_playwright(monkeypatch, page)
+    provider = DouyinProvider("/tmp", cookie_getter=lambda: "sessionid=abc; ttwid=def")
+
+    assert provider._verify_published("标题A") is False

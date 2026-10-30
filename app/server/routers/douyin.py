@@ -234,6 +234,10 @@ async def _apply_login_cookie(services, cookie: str) -> None:
     cookies[_PLATFORM_KEY] = cookie
     services.settings_config.adopt_cookies_config(cookies)
     await services.config_manager.save_cookies_config(cookies)
+    # 扫码登录成功 = 登录失效已经解决：直接解除渠道 park，别让用户再去点一次「继续队列」
+    manager = getattr(services, "upload_manager", None)
+    if manager is not None:
+        manager.on_credentials_updated(_PLATFORM_KEY)
     # 换了 Cookie，关注列表的游标链/缓存的账号资料都作废（缓存本身按 Cookie 指纹隔离）
     following.get_store().reset()
     logger.info(f"Douyin login: 新 Cookie 已写入配置（{len(cookie)} 字符）")

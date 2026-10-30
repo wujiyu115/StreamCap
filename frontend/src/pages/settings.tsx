@@ -1,4 +1,4 @@
-import { keepPreviousData, useQuery } from "@tanstack/react-query"
+import { useQuery } from "@tanstack/react-query"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { CheckCircle2, ChevronDown, ExternalLink, Loader2, Pause, Play, QrCode, RefreshCw, RotateCcw, Trash2, XCircle } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
@@ -479,8 +479,9 @@ function UploadSettings() {
         queryKey: uploadsQueryKey,
         // 列表按渠道过滤：各 tab 只看自己那一路的队列
         queryFn: () => uploadsApi.list(page, UPLOAD_PAGE_SIZE, channel),
-        // 翻页时保留上一页数据：否则 total 会瞬间变 0、页码被下面的越界保护退回第 1 页
-        placeholderData: keepPreviousData,
+        // 翻页时保留上一页数据（否则 total 会瞬间变 0、页码被越界保护退回第 1 页）；
+        // 但切渠道时绝不能保留：那会把 B 站的任务短暂显示在抖音面板里，看着像归属弄错了。
+        placeholderData: (previous) => (previous && previous.provider === channel ? previous : undefined),
         refetchInterval: (query) =>
             query.state.data?.jobs.some((job) => ["pending", "uploading", "retrying"].includes(job.status))
                 ? 3000
@@ -580,10 +581,10 @@ function UploadSettings() {
     )
     const cookieLine = cookieExpiryLine(cookieStatus.data, lang, t, tf)
 
-    const channelBadge = (provider: string) => {
+    const channelStatusOf = (provider: string): [string, string] => {
         const info = channels.find((item) => item.provider === provider)
         const config = (providers[provider] ?? {}) as Rec
-        const [text, className] = !config.enabled
+        return !config.enabled
             ? [t("settings.uploadChannelDisabled"), "border bg-muted text-muted-foreground"]
             : info?.status === "paused"
                 ? [t("settings.uploadChannelPaused"), "border bg-muted text-muted-foreground"]
@@ -592,6 +593,10 @@ function UploadSettings() {
                     : info?.status === "blocked_auth"
                         ? [t("settings.uploadChannelBlocked"), "border border-destructive/40 bg-destructive/10 text-destructive"]
                         : [t("settings.uploadChannelActive"), "border border-green-600/40 bg-green-600/10 text-green-700 dark:text-green-500"]
+    }
+
+    const channelBadge = (provider: string) => {
+        const [text, className] = channelStatusOf(provider)
         return (
             <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] leading-none ${className}`} data-testid={`upload-channel-status-${provider}`}>
                 {text}
@@ -628,11 +633,25 @@ function UploadSettings() {
                             </div>
                             <p className="mt-1 text-xs text-muted-foreground">{t(`settings.${provider}Hint`)}</p>
                         </div>
-                        <Switch
-                            data-testid={`upload-channel-enabled-${provider}`}
-                            checked={Boolean(config.enabled)}
-                            onCheckedChange={(v) => setProvider(provider, "enabled", v)}
-                        />
+                        <div className="flex items-center gap-2">
+                            {/* 扫码登录属于「账号凭据」，跟节奏无关：放在渠道卡片头部，
+                                否则用户会以为它是调节奏的（并且在节奏区看着像另一个渠道的东西） */}
+                            {provider === "bilibili" && (
+                                <Button size="sm" variant="outline" onClick={() => setBilibiliLoginOpen(true)} data-testid="bilibili-scan-login-upload">
+                                    <QrCode className="mr-1 h-4 w-4" />{t("following.scanLogin")}
+                                </Button>
+                            )}
+                            {provider === "douyin" && (
+                                <Button size="sm" variant="outline" onClick={() => setDouyinLoginOpen(true)} data-testid="douyin-scan-login-upload">
+                                    <QrCode className="mr-1 h-4 w-4" />{t("following.scanLogin")}
+                                </Button>
+                            )}
+                            <Switch
+                                data-testid={`upload-channel-enabled-${provider}`}
+                                checked={Boolean(config.enabled)}
+                                onCheckedChange={(v) => setProvider(provider, "enabled", v)}
+                            />
+                        </div>
                     </div>
                     <p className="mt-3 text-xs text-muted-foreground">{t("settings.uploadChannelEnabledHint")}</p>
                 </div>
@@ -640,16 +659,6 @@ function UploadSettings() {
                 <div className="rounded-lg border bg-card p-4">
                     <div className="mb-3 flex items-center justify-between gap-2">
                         <h3 className="font-semibold">{tf("settings.uploadChannelPace", { channel: label })}</h3>
-                        {provider === "bilibili" && (
-                            <Button size="sm" variant="outline" onClick={() => setBilibiliLoginOpen(true)} data-testid="bilibili-scan-login-upload">
-                                <QrCode className="mr-1 h-4 w-4" />{t("following.scanLogin")}
-                            </Button>
-                        )}
-                        {provider === "douyin" && (
-                            <Button size="sm" variant="outline" onClick={() => setDouyinLoginOpen(true)} data-testid="douyin-scan-login-upload">
-                                <QrCode className="mr-1 h-4 w-4" />{t("following.scanLogin")}
-                            </Button>
-                        )}
                     </div>
                     <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                         <div className="space-y-1.5">
@@ -784,7 +793,7 @@ function UploadSettings() {
                         </div>
                     )}
                     {info?.status === "blocked_auth" && (
-                        <div className="mb-3 rounded border border-destructive/40 bg-destructive/5 p-3">
+                        <div className="mb-3 rounded border border-destructive/40 bg-destructive/5 p-3" data-testid={`upload-channel-blocked-${provider}`}>
                             <div className="flex flex-wrap items-center justify-between gap-2">
                                 <div>
                                     <p className="font-medium text-destructive">{tf("settings.uploadChannelLoginExpired", { channel: label })}</p>
@@ -891,12 +900,48 @@ function UploadSettings() {
                 </div>
             </div>
             <Tabs value={channel} onValueChange={setChannel}>
-                <TabsList className="w-full overflow-x-auto whitespace-nowrap sm:w-auto">
-                    {UPLOAD_CHANNELS.map(({ provider, label }) => (
-                        <TabsTrigger key={provider} value={provider} data-testid={`upload-channel-tab-${provider}`}>
-                            {label}
-                        </TabsTrigger>
-                    ))}
+                <div className="mb-1 text-xs text-muted-foreground" data-testid="upload-channel-switch-hint">
+                    {t("settings.uploadChannelSwitchHint")}
+                </div>
+                {/* 渠道选择器：默认的 TabsList 只是一排小文字，看不出下面的面板归哪个渠道，
+                    所以做成带状态徽标 + 队列数的分段卡片，激活态整块高亮并标「当前」。 */}
+                <TabsList className="grid h-auto w-full grid-cols-1 gap-3 bg-transparent p-0 sm:grid-cols-2 data-[state=active]:bg-transparent">
+                    {UPLOAD_CHANNELS.map(({ provider, label }) => {
+                        const info = channels.find((item) => item.provider === provider)
+                        const enabled = Boolean(((providers[provider] ?? {}) as Rec).enabled)
+                        const active = channel === provider
+                        const [statusText, statusClass] = channelStatusOf(provider)
+                        const queued = info?.active_jobs ?? 0
+                        const summary = !enabled
+                            ? t("settings.uploadChannelTabOff")
+                            : queued > 0
+                                ? tf("settings.uploadChannelTabQueue", { count: queued })
+                                : t("settings.uploadChannelTabIdle")
+                        return (
+                            <TabsTrigger
+                                key={provider}
+                                value={provider}
+                                data-testid={`upload-channel-tab-${provider}`}
+                                aria-current={active ? "true" : undefined}
+                                className={`group flex h-auto w-full flex-col items-stretch gap-1.5 rounded-xl border-2 px-4 py-3 text-left font-normal transition ${active ? "border-primary bg-primary/5 shadow-sm ring-1 ring-primary/30" : "border-border bg-card hover:border-primary/40 hover:bg-accent/40"}`}
+                            >
+                                <span className="flex w-full items-center gap-2">
+                                    <span className={`text-sm font-semibold ${active ? "text-foreground" : "text-muted-foreground group-hover:text-foreground"}`}>{label}</span>
+                                    <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] leading-none ${statusClass}`}>
+                                        {statusText}
+                                    </span>
+                                    {active && (
+                                        <span className="ml-auto inline-flex items-center rounded bg-primary px-1.5 py-0.5 text-[10px] font-medium leading-none text-primary-foreground">
+                                            {t("settings.uploadChannelTabCurrent")}
+                                        </span>
+                                    )}
+                                </span>
+                                <span className={`text-[11px] ${active ? "text-foreground/70" : "text-muted-foreground"}`}>
+                                    {summary}
+                                </span>
+                            </TabsTrigger>
+                        )
+                    })}
                 </TabsList>
                 {UPLOAD_CHANNELS.map(({ provider, label }) => (
                     // 非激活面板靠 hidden 属性隐藏，内容区带了布局类就必须再补 data-[state=inactive]:hidden

@@ -393,6 +393,25 @@ class UploadManager:
             result.append(item)
         return result
 
+    def on_credentials_updated(self, provider: str) -> bool:
+        """Cookie 被重新保存/重新扫码后调用：自动解除该渠道的「登录失效」。
+
+        登录失效挂在 ``upload_channels.status='blocked_auth'`` 上，以前只有用户手点
+        「继续队列」才会清（2026-10-30 生产：21:03 重新扫码登录成功，cookie 已生效，
+        但徽章一直挂「登录失效」且队列一单不领）。保存凭据这条路径本来就能判断，
+        就不该再让用户多点一次。
+
+        只在渠道确实处于 ``blocked_auth`` 时动作，其他状态（包括手动 ``paused``）不碰。
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT status FROM upload_channels WHERE provider=?", (provider,)
+            ).fetchone()
+        if row is None or row["status"] != "blocked_auth":
+            return False
+        logger.info(f"上传渠道凭据已更新，自动解除登录失效: {provider}")
+        return self.resume_channel(provider)
+
     def pause_channel(self, provider: str) -> bool:
         """手动暂停整条渠道：不再领取新任务，正在跑的那单跑完为止。
 

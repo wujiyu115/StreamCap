@@ -47,6 +47,16 @@ _BROWSER_ARGS = (
 # 展开/收起文案里的隐写字段：5x 版本常见，先把 webdriver 抹掉再谈别的
 _INIT_SCRIPT = "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
 
+# 内容管理页「列表真的渲染出来了」的判据：作品 (N) 标签 + 至少一条列表文案。
+# 只等「作品」两个字不行（导航栏里就有），会立刻通过然后读到空列表。
+_MANAGE_READY_JS = r"""() => {
+    const text = document.body ? document.body.innerText : '';
+    return /作品\s*[（(]\s*\d+\s*[)）]/.test(text)
+        && (text.includes('没有更多作品') || text.includes('私密') || text.includes('公开') || text.includes('暂'));
+}"""
+# 被踢回登录页的样子：核验前必须分清「作品不存在」和「压根没登上」
+_LOGIN_WALL_MARKERS = ("扫码登录", "登录后查看", "手机号登录", "验证码登录")
+
 # 编辑页各控件（抖音改版频繁，每处都给 2–3 个候选，按顺序试）
 _FILE_INPUT = "input[type=file]"
 _TITLE_SELECTORS = (
@@ -219,6 +229,18 @@ def _is_page_crash(exc: BaseException) -> bool:
         marker in text
         for marker in ("Page crashed", "Target crashed", "Target closed", "browser has been closed")
     )
+
+
+def _is_login_wall(page) -> bool:
+    """页面是不是被踢回了登录页（能用凭据判断，就不用猜「作品不存在」）。"""
+    try:
+        url = (page.url or "").lower()
+        if "login" in url or "passport" in url:
+            return True
+        text = page.eval_on_selector("body", "el => el ? el.innerText : ''") or ""
+    except Exception:
+        return False
+    return any(marker in text for marker in _LOGIN_WALL_MARKERS)
 
 
 def _title_in_manage_text(text: str, title: str) -> bool:
@@ -578,17 +600,28 @@ class DouyinProvider:
                 browser = playwright.chromium.launch(headless=True, args=list(_BROWSER_ARGS))
                 try:
                     context = browser.new_context(
-                        viewport={"width": 1600, "height": 1400},
+                        viewport={"width": 1440, "height": 900},
                         user_agent=_USER_AGENT,
                         locale="zh-CN",
                     )
+                    # 跟正常投递路径完全一致的指纹处理：少了这句会被抖音判成自动化、踢回登录页，
+                    # 于是每次核验都等满超时（2026-10-30 生产三条全 false 就是这个原因）
+                    context.add_init_script(_INIT_SCRIPT)
                     context.add_cookies(cookies)
                     page = context.new_page()
+                    page.set_default_timeout(30_000)
                     page.goto(MANAGE_URL, wait_until="domcontentloaded", timeout=120_000)
-                    page.wait_for_function(
-                        "() => /作品\\s*[（(]\\s*\\d+\\s*[)）]/.test(document.body.innerText)",
-                        timeout=180_000,
-                    )
+                    if _is_login_wall(page):
+                        logger.warning("抖音：崩溃后核验被踢回登录页（当前 Cookie 登不上创作者中心），核不到作品")
+                        return False
+                    try:
+                        page.wait_for_function(_MANAGE_READY_JS, timeout=90_000)
+                    except Exception:
+                        if _is_login_wall(page):
+                            logger.warning("抖音：崩溃后核验时被踢回登录页，核不到作品")
+                        else:
+                            logger.warning("抖音：崩溃后核验等待作品列表超时（90s），按核不到处理")
+                        return False
                     page.wait_for_timeout(5000)
                     hit = _title_in_manage_text(self._body_text(page), title)
                     logger.info(f"抖音：崩溃后核验内容管理页，标题命中={hit}")
