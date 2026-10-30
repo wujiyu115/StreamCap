@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
 import time
 from datetime import datetime
 from pathlib import Path
@@ -60,6 +61,10 @@ _DESC_SELECTORS = (
 _SELF_ONLY_TEXT = "仅自己可见"
 
 _TITLE_LIMIT = 30
+#: 重封装输出后缀（与源文件同目录，投递成功后删除）
+_REMUX_SUFFIX = ".faststart.mp4"
+#: 重封装超时：几分钟的 4K 录制也就几秒，这里只是防 ffmpeg 挂死
+_REMUX_TIMEOUT = 1800
 _AUTH_MARKERS = (
     "扫码登录",
     "验证码登录",
@@ -206,6 +211,82 @@ def build_caption(request: UploadRequest, config: dict) -> tuple[str, str]:
     return title, description
 
 
+def looks_like_standard_mp4(path: str) -> bool:
+    """前 1MB 里要有完整 moov，且不能出现 moof 分片。
+
+    直录的 mp4 用 ``+frag_keyframe+empty_moov`` 写的是**空壳 moov**，真正的轨道
+    信息在 moof/mdat 分片里：光看「有没有 moov 字样」会把分段文件误判成标准 mp4，
+    传上去抖音转码才报 moov 缺失。所以按顶层 atom 走一遍，见到 moof 就直接拒。
+    """
+    try:
+        with open(path, "rb") as handle:
+            head = handle.read(1024 * 1024)
+    except OSError:
+        return False
+    if head[4:8] not in (b"ftyp", b"moov", b"free", b"skip", b"mdat"):
+        return False
+    has_moov = False
+    offset = 0
+    while offset + 8 <= len(head):
+        size = int.from_bytes(head[offset : offset + 4], "big")
+        kind = head[offset + 4 : offset + 8]
+        if kind == b"moof":
+            return False  # 分段式（fragmented）容器，抖音解不了
+        if kind == b"moov":
+            has_moov = True
+        if size == 1:  # 64 位 largesize
+            if offset + 16 > len(head):
+                break
+            size = int.from_bytes(head[offset + 8 : offset + 16], "big")
+        if size < 8:
+            break
+        offset += size
+    return has_moov
+
+
+def remux_to_standard_mp4(path: str, timeout: int = _REMUX_TIMEOUT) -> str:
+    """把直录的分片式 mp4 无损重封装成标准 mp4，返回新文件路径。
+
+    ``-c copy`` 只重写容器、不重编码：41MB/102s 的录制实测 0.7s，体积/时长/编码全不变。
+    输出放在源文件同目录（同一个卷，几百 MB 也不怕，别塞 /tmp 把容器写爆），投递完就删。
+    上一轮重封装完没来得及删（投递失败/进程被杀）时直接复用，不重复拷几 GB。
+    """
+    source = Path(path)
+    target = source.with_name(f"{source.stem}{_REMUX_SUFFIX}")
+    if (
+        target.exists()
+        and target.stat().st_mtime >= source.stat().st_mtime
+        and looks_like_standard_mp4(str(target))
+    ):
+        return str(target)
+    started = time.time()
+    logger.info(f"抖音：{source.name} 不是标准 mp4（moov 不在头部），先无损重封装")
+    try:
+        proc = subprocess.run(
+            [
+                "ffmpeg", "-y", "-v", "error", "-i", str(source),
+                "-c", "copy", "-movflags", "+faststart", str(target),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        target.unlink(missing_ok=True)
+        raise RuntimeError(f"重封装失败（ffmpeg 无法执行或超时）：{exc}") from exc
+    if proc.returncode != 0 or not target.exists():
+        target.unlink(missing_ok=True)
+        detail = (proc.stderr or "").strip().splitlines()[-1:] or [""]
+        raise RuntimeError(f"重封装失败（ffmpeg {proc.returncode}）：{detail[0][:200]}")
+    if not looks_like_standard_mp4(str(target)):
+        target.unlink(missing_ok=True)
+        raise RuntimeError(f"重封装后仍不是标准 mp4（{source.name}）：moov 头缺失")
+    logger.info(
+        f"抖音：重封装完成 {target.name}（{time.time() - started:.1f}s，{target.stat().st_size / 1e6:.1f}MB）"
+    )
+    return str(target)
+
+
 class DouyinProvider:
     """抖音创作者中心投稿：一视频一作品，只接受标准 mp4（分段录制的 moov 缺失投不了）。"""
 
@@ -231,11 +312,6 @@ class DouyinProvider:
         path = request.files[0]
         if not os.path.isfile(path):
             raise RuntimeError(f"Upload file not found: {path}")
-        if not self._looks_like_standard_mp4(path):
-            raise RuntimeError(
-                f"文件不是标准 mp4（{Path(path).name}）：抖音要求 moov 头完整，"
-                "直录的分段式 mp4 需先转封装（ffmpeg -c copy -movflags +faststart）"
-            )
 
         cookies = parse_cookie_string(str(self._cookie_getter() or ""))
         if not cookies:
@@ -243,9 +319,22 @@ class DouyinProvider:
         if not has_login_cookie(cookies):
             raise UploadAuthError("抖音 Cookie 缺少登录态（sessionid），无法打开创作者中心")
 
+        # 直录的分段式 mp4（moof 分片）抖音解不了：先 ``-c copy`` 无损重封装，投完删掉临时文件。
+        temp_path = ""
+        if not self._looks_like_standard_mp4(path):
+            path = remux_to_standard_mp4(path)
+            temp_path = path
+
         title, description = self.build_caption(request, config)
         runner = self._page_runner or self._run_browser
-        remote_id = runner(cookies, path, title, description, config)
+        try:
+            remote_id = runner(cookies, path, title, description, config)
+        finally:
+            if temp_path:
+                try:
+                    os.unlink(temp_path)
+                except OSError as exc:  # pragma: no cover - 删不掉不影响投稿结果
+                    logger.warning(f"抖音：重封装临时文件清理失败 {temp_path}: {exc}")
         return UploadResult(
             provider=self.name,
             remote_id=remote_id,
@@ -254,36 +343,8 @@ class DouyinProvider:
 
     @staticmethod
     def _looks_like_standard_mp4(path: str) -> bool:
-        """前 1MB 里要有完整 moov，且不能出现 moof 分片。
-
-        直录的 mp4 用 ``+frag_keyframe+empty_moov`` 写的是**空壳 moov**，真正的轨道
-        信息在 moof/mdat 分片里：光看「有没有 moov 字样」会把分段文件误判成标准 mp4，
-        传上去抖音转码才报 moov 缺失。所以按顶层 atom 走一遍，见到 moof 就直接拒。
-        """
-        try:
-            with open(path, "rb") as handle:
-                head = handle.read(1024 * 1024)
-        except OSError:
-            return False
-        if head[4:8] not in (b"ftyp", b"moov", b"free", b"skip", b"mdat"):
-            return False
-        has_moov = False
-        offset = 0
-        while offset + 8 <= len(head):
-            size = int.from_bytes(head[offset : offset + 4], "big")
-            kind = head[offset + 4 : offset + 8]
-            if kind == b"moof":
-                return False  # 分段式（fragmented）容器，抖音解不了
-            if kind == b"moov":
-                has_moov = True
-            if size == 1:  # 64 位 largesize
-                if offset + 16 > len(head):
-                    break
-                size = int.from_bytes(head[offset + 8 : offset + 16], "big")
-            if size < 8:
-                break
-            offset += size
-        return has_moov
+        """保留旧调用点；判据在模块级（重封装也要用同一套）。"""
+        return looks_like_standard_mp4(path)
 
     # ------------------------------------------------------------------ 浏览器流程
 

@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from app.core.upload.manager import UploadManager
 from app.core.upload.models import UploadAuthError, UploadRequest
+from app.core.upload.providers import douyin
 from app.core.upload.providers.douyin import (
     DouyinProvider,
     build_caption,
@@ -146,6 +149,99 @@ def test_upload_delegates_to_page_runner_and_returns_aweme_id(tmp_path):
     assert result.remote_id == "7412345678901234567"
     assert seen["path"] == path and seen["cookies"] == 2
     assert seen["title"] == "某主播 录播" and seen["description"] == "#录播"
+
+
+def test_upload_remuxes_fragmented_mp4_then_deletes_temp(tmp_path, monkeypatch):
+    """直录的分片式 mp4 不该直接拒投：先无损重封装，投完把临时文件删掉。"""
+    source = _write(tmp_path, "frag.mp4", _FRAGMENTED_MP4)
+    remuxed = tmp_path / "frag.faststart.mp4"
+    calls = []
+
+    def fake_remux(path, timeout=0):
+        calls.append(path)
+        remuxed.write_bytes(_STANDARD_MP4)
+        return str(remuxed)
+
+    monkeypatch.setattr(douyin, "remux_to_standard_mp4", fake_remux)
+    seen = {}
+
+    def runner(cookies, file_path, title, description, config):
+        seen["path"] = file_path
+        return None
+
+    provider = DouyinProvider(
+        str(tmp_path), cookie_getter=lambda: "sessionid=abc", page_runner=runner
+    )
+    result = provider.upload(UploadRequest("job", [source], "标题"), _config())
+
+    assert calls == [source]
+    assert seen["path"] == str(remuxed)  # 投的是重封装后的文件
+    assert not remuxed.exists()  # 投完删掉，不在下载盘里堆重复文件
+    assert "抖音投稿完成" in result.message
+    # 源文件原样保留
+    assert (tmp_path / "frag.mp4").read_bytes() == _FRAGMENTED_MP4
+
+
+def test_upload_skips_remux_for_standard_mp4(tmp_path, monkeypatch):
+    """标准 mp4 不该多跑一次 ffmpeg（快速招几 GB 的拷贝不必要）。"""
+    monkeypatch.setattr(
+        douyin, "remux_to_standard_mp4", lambda *a, **k: pytest.fail("标准 mp4 不该重封装")
+    )
+    source = _write(tmp_path, "ok.mp4", _STANDARD_MP4)
+    seen = {}
+    provider = DouyinProvider(
+        str(tmp_path),
+        cookie_getter=lambda: "sessionid=abc",
+        page_runner=lambda c, p, t, d, cfg: seen.update(path=p),
+    )
+    provider.upload(UploadRequest("job", [source], "标题"), _config())
+    assert seen["path"] == source
+
+
+def test_remux_reuses_previous_output_and_verifies(tmp_path, monkeypatch):
+    """上一轮重封装完没来得及删（投递失败/进程被杀）时要直接复用，不重复拷几 GB。"""
+    source = tmp_path / "frag.mp4"
+    source.write_bytes(_FRAGMENTED_MP4)
+    target = tmp_path / "frag.faststart.mp4"
+    target.write_bytes(_STANDARD_MP4)
+    os.utime(target, (source.stat().st_atime + 10, source.stat().st_mtime + 10))
+
+    monkeypatch.setattr(
+        douyin.subprocess, "run", lambda *a, **k: pytest.fail("已有可用产物不该重跑 ffmpeg")
+    )
+    assert douyin.remux_to_standard_mp4(str(source)) == str(target)
+
+
+def test_remux_raises_and_cleans_up_on_ffmpeg_failure(tmp_path, monkeypatch):
+    source = tmp_path / "frag.mp4"
+    source.write_bytes(_FRAGMENTED_MP4)
+
+    class _Proc:
+        returncode = 1
+        stderr = "ffmpeg: moov atom not found"
+
+    monkeypatch.setattr(douyin.subprocess, "run", lambda *a, **k: _Proc())
+    with pytest.raises(RuntimeError, match="重封装失败"):
+        douyin.remux_to_standard_mp4(str(source))
+    assert not (tmp_path / "frag.faststart.mp4").exists()
+
+
+def test_remux_rejects_output_still_fragmented(tmp_path, monkeypatch):
+    source = tmp_path / "frag.mp4"
+    source.write_bytes(_FRAGMENTED_MP4)
+
+    class _Proc:
+        returncode = 0
+        stderr = ""
+
+    def fake_run(*args, **kwargs):
+        (tmp_path / "frag.faststart.mp4").write_bytes(_FRAGMENTED_MP4)  # 拷了但没修好
+        return _Proc()
+
+    monkeypatch.setattr(douyin.subprocess, "run", fake_run)
+    with pytest.raises(RuntimeError, match="仍不是标准 mp4"):
+        douyin.remux_to_standard_mp4(str(source))
+    assert not (tmp_path / "frag.faststart.mp4").exists()
 
 
 def test_manager_splits_douyin_jobs_one_video_each(tmp_path):
