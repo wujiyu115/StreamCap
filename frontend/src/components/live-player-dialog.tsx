@@ -64,7 +64,11 @@ export function LivePlayerDialog({ room, onOpenChange }: LivePlayerDialogProps) 
     // 列表直链只有 h264 档位才会填；签名过期（expire_at 是秒级时间戳）就当作没有
     const directUrl = room?.play_url ?? ""
     const directExpired = Boolean(room?.expire_at && room.expire_at * 1000 <= Date.now())
-    const usingDirect = Boolean(directUrl) && !directExpired && !directFailed
+    // 列表直链（关注在播 feed 自带的 h264 地址）在部分客户端播不起来：2026-10-30 生产日志里
+    // 用户点开后直链与回落地址都在 3s 内报错，同一网络下干净 Chromium 却正常。先关掉，
+    // 回到「每次打开都请求 /live/stream」的旧路径；想再启用把它改成 true（后端字段与回落逻辑都还在）。
+    const USE_LIST_DIRECT_URL: boolean = false
+    const usingDirect = USE_LIST_DIRECT_URL && Boolean(directUrl) && !directExpired && !directFailed
     // 回调里（onError / 看门狗）判断当前走的是哪条路，避免把旧闭包里的值当真
     const usingDirectRef = useRef(usingDirect)
     usingDirectRef.current = usingDirect
