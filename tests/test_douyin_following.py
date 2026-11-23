@@ -1020,3 +1020,127 @@ def test_normalize_stream_info_reads_hex_expire():
     url = FLV_URL.replace("expire=1793161325", "expire=6aed544d")
     info = df.normalize_stream_info("1", _stream_data(flv_url=url))
     assert info["expire_at"] == 1793938509
+
+
+# ---------------------------------------------------------------- 取流不排关注列表的队
+
+def _users(n, base=0):
+    return [
+        {"sec_uid": f"u{base + i}", "uid": str(base + i), "nickname": f"n{base + i}", "web_rid": str(base + i)}
+        for i in range(n)
+    ]
+
+
+def test_stream_does_not_wait_for_following_list_lock(monkeypatch):
+    """点播放不能排关注列表翻页的队。
+
+    回归依据：``following_page`` 会持着 store 主锁顺游标链翻最多 30 个接口页，每个都要
+    过节奏门；取流原来也拿同一把锁，2026-11 实测「翻第 5 页时点播放等了 15.2s」，
+    而上游取流本身只要 0.3s。
+    """
+    page_latency = 0.2
+    stream_latency = 0.05
+
+    async def fake_page(cookie, proxy, **kwargs):
+        await asyncio.sleep(page_latency)  # 一个接口页（含节奏门等待）
+        offset = kwargs["max_time"]
+        return {
+            "users": _users(20, offset),
+            "min_time": offset + 20,
+            "max_time": offset,
+            "has_more": True,
+            "total": 400,
+        }
+
+    async def fake_stream(cookie, proxy, web_rid, quality=None):
+        await asyncio.sleep(stream_latency)
+        return {"web_rid": web_rid, "is_live": True, "play_url": "https://x/1.flv"}
+
+    monkeypatch.setattr(df, "fetch_following_page", fake_page)
+    monkeypatch.setattr(df, "fetch_live_stream_url", fake_stream)
+    store = df.FollowingStore()
+
+    async def scenario():
+        # 打开关注页第 5 页（page_size=100）= 25 个接口页在翻
+        listing = asyncio.create_task(store.following_page("cookie", None, slot, page=5, page_size=100))
+        await asyncio.sleep(0.01)
+        t0 = time.monotonic()
+        await store.stream("cookie", None, slot, web_rid="123")
+        waited = time.monotonic() - t0
+        await listing
+        return waited
+
+    waited = run(scenario())
+    assert waited < 0.5, f"取流不该排在关注列表翻页后面，实际等了 {waited:.2f}s"
+
+
+def test_stream_single_flight_shares_one_upstream_call(monkeypatch):
+    """连点/失败自动重取并发时共用一次上游调用（不重复打接口，也不重复占节奏门）。"""
+    calls = []
+
+    async def fake_stream(cookie, proxy, web_rid, quality=None):
+        calls.append(web_rid)
+        await asyncio.sleep(0.1)
+        return {"web_rid": web_rid, "is_live": True, "play_url": "https://x/1.flv"}
+
+    monkeypatch.setattr(df, "fetch_live_stream_url", fake_stream)
+    store = df.FollowingStore()
+
+    async def scenario():
+        return await asyncio.gather(
+            store.stream("cookie", None, slot, web_rid="123"),
+            store.stream("cookie", None, slot, web_rid="123"),
+            store.stream("cookie", None, slot, web_rid="123", refresh=True),
+        )
+
+    results = run(scenario())
+    assert calls == ["123"], f"同一房间并发取流只应打一次上游，实际 {calls}"
+    assert results[0] == results[1] == results[2]
+
+
+def test_stream_caller_cancel_does_not_kill_inflight_fetch(monkeypatch):
+    """调方取消（关掉播放器/连接断开）不能连带取消别人的取流，也不能吞掉缓存写入。"""
+    started = asyncio.Event()
+
+    async def fake_stream(cookie, proxy, web_rid, quality=None):
+        started.set()
+        await asyncio.sleep(0.1)
+        return {"web_rid": web_rid, "is_live": True, "play_url": "https://x/1.flv"}
+
+    monkeypatch.setattr(df, "fetch_live_stream_url", fake_stream)
+    store = df.FollowingStore()
+
+    async def scenario():
+        first = asyncio.create_task(store.stream("cookie", None, slot, web_rid="123"))
+        await started.wait()
+        second = asyncio.create_task(store.stream("cookie", None, slot, web_rid="123"))
+        first.cancel()
+        await asyncio.gather(first, return_exceptions=True)
+        data = await second
+        return data, dict(store.streams)
+
+    data, cached = run(scenario())
+    assert data["web_rid"] == "123"
+    assert ("123", "") in cached, "被取消的调方不该阻止结果写进缓存"
+
+
+def test_stream_result_not_cached_after_cookie_switch(monkeypatch):
+    """取流途中用户换了 Cookie：旧账号的结果不能写进新缓存。"""
+    release = asyncio.Event()
+
+    async def fake_stream(cookie, proxy, web_rid, quality=None):
+        await release.wait()
+        return {"web_rid": web_rid, "is_live": True, "play_url": f"https://x/{cookie}.flv"}
+
+    monkeypatch.setattr(df, "fetch_live_stream_url", fake_stream)
+    store = df.FollowingStore()
+
+    async def scenario():
+        task = asyncio.create_task(store.stream("cookie-a", None, slot, web_rid="123"))
+        await asyncio.sleep(0.01)
+        store._bind("cookie-b")  # 途中换了账号（设置页保存新 Cookie）
+        release.set()
+        await task
+        return dict(store.streams)
+
+    assert run(scenario()) == {}, "旧 Cookie 的取流结果不该落进新账号的缓存"

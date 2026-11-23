@@ -8,6 +8,7 @@ import asyncio
 import threading
 from collections import defaultdict, deque
 
+from app.core.recording.priority_semaphore import PrioritySemaphore
 from app.core.recording.record_manager import GlobalRecordingState, RecordingManager
 from app.models.recording.recording_model import Recording
 
@@ -122,7 +123,10 @@ def make_manager(user_config=None):
     mgr._ = dict(I18N_KEYS)
     mgr.loop_time_seconds = 180
     mgr.analytics = FakeAnalytics()
-    mgr.platform_semaphores = defaultdict(lambda: asyncio.Semaphore(3))
+    mgr.max_concurrent = 3
+    mgr.preset_concurrent = 3
+    mgr.platform_semaphores = defaultdict(lambda: PrioritySemaphore(3))
+    mgr.interactive_semaphores = defaultdict(lambda: PrioritySemaphore(2))
     mgr._request_spacing_locks = defaultdict(asyncio.Lock)
     mgr._next_slot_at = {}
     mgr._slot_waiters = defaultdict(lambda: {"priority": deque(), "normal": deque()})

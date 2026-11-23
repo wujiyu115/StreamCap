@@ -15,7 +15,11 @@ from ..analytics.analytics_store import AnalyticsStore
 from ..platforms import room_validity
 from ..platforms.platform_handlers import get_platform_info
 from ..runtime.process_manager import BackgroundService
+from .priority_semaphore import PrioritySemaphore
 from .stream_manager import LiveStreamRecorder
+
+# 交互请求（从 WebUI 点出来的一次请求）自己的并发名额
+INTERACTIVE_CONCURRENT = 2
 
 
 class GlobalRecordingState:
@@ -41,7 +45,10 @@ class RecordingManager:
         self.initialize_dynamic_state()
         self.max_concurrent = int(self.settings.user_config.get("platform_max_concurrent_requests", 3))
         self.preset_concurrent = self.max_concurrent
-        self.platform_semaphores = defaultdict(lambda: asyncio.Semaphore(self.max_concurrent))
+        self.platform_semaphores = defaultdict(lambda: PrioritySemaphore(self.max_concurrent))
+        # 交互请求（新任务、手动开启监控、WebUI 取播放直链）自己的并发名额：与监控隔离，
+        # 再多监控任务也抢不到；上限小是因为它们本来就稀（用户点一下一个）。
+        self.interactive_semaphores = defaultdict(lambda: PrioritySemaphore(INTERACTIVE_CONCURRENT))
         self.active_recorders = {}
 
         # 监控自保护状态：近期取流成败滑窗（动态并发用）与轮内失败计数（全局延迟用）
@@ -133,10 +140,15 @@ class RecordingManager:
 
         等待者分两档队列：priority（新添加任务、手动开启监控、录制结束
         快检）优先放行——全局节奏不变，只是不排在长队尾，交互操作秒级
-        出结果。
+        出结果。**并发名额也分两档**，两个原因：① ``asyncio.Semaphore``
+        是 FIFO 的，一轮 ~170 个监控任务把 3 个名额排满后交互请求要排在
+        整个队尾（实测 170s）；② 名额是在**排队等节奏门期间**就持着的，
+        交互即使插队也得等一个在跑的监控请求结束（真实场景 2~4s）。所以
+        交互档用独立的一小名额（``INTERACTIVE_CONCURRENT``），互不占位。
         """
         interval = self._monitor_config()["platform_min_interval"]
-        async with self.platform_semaphores[platform_key]:
+        semaphores = self.interactive_semaphores if priority else self.platform_semaphores
+        async with semaphores[platform_key].hold(priority):
             if interval > 0:
                 self._slot_intervals[platform_key] = interval
                 fut = asyncio.get_running_loop().create_future()
@@ -160,20 +172,26 @@ class RecordingManager:
             )
 
     async def _slot_dispenser(self, platform_key: str) -> None:
-        """按节奏依次放行等待者，优先队列非空时优先；无等待者即退出。"""
+        """按节奏依次放行等待者，优先队列非空时优先；无等待者即退出。
+
+        **先等够间隔，再取排队者**：原来的顺序是「先取出下一个等待者再睡」，于是睡
+        的那 1s 里插进来的 priority 请求只能等下一格（实测晚到 0.1s 就要多等一整个
+        间隔，而它本该抢的正是这一格）。
+        """
         while True:
             queues = self._slot_waiters[platform_key]
-            fut = None
-            if queues["priority"]:
-                fut = queues["priority"].popleft()
-            elif queues["normal"]:
-                fut = queues["normal"].popleft()
-            else:
+            if not queues["priority"] and not queues["normal"]:
                 self._dispenser_tasks.pop(platform_key, None)
                 return
             wait = self._next_slot_at.get(platform_key, 0.0) - time.monotonic()
             if wait > 0:
                 await asyncio.sleep(wait)
+            if queues["priority"]:
+                fut = queues["priority"].popleft()
+            elif queues["normal"]:
+                fut = queues["normal"].popleft()
+            else:
+                continue  # 睡的这一格全被取消了，不占节奏
             self._next_slot_at[platform_key] = time.monotonic() + self._slot_intervals.get(
                 platform_key, 2.0
             )

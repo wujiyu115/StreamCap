@@ -636,14 +636,18 @@ class FollowingStore:
         self.live_at = 0.0
         # 键是 (web_rid, quality)：换档位不能拿上一档的地址
         self.streams: dict[tuple[str, str], tuple[float, dict]] = {}
+        # 同一个 (房间, 档位) 正在取的取流任务，连点/自动重取共用一次上游调用
+        self._inflight: dict[tuple[str, str], asyncio.Task] = {}
 
     # -- 内部
 
-    def _bind(self, cookie: str) -> None:
+    def _bind(self, cookie: str) -> str:
+        """把 store 绑到当前 Cookie 上，返回指纹（换 Cookie 时清缓存）。"""
         fingerprint = hashlib.sha1(cookie.encode("utf-8")).hexdigest()
         if fingerprint != self._fingerprint:
             self._fingerprint = fingerprint
             self.reset()
+        return fingerprint
 
     def reset(self) -> None:
         self.page_size = 0
@@ -752,24 +756,58 @@ class FollowingStore:
         quality: str | None = None,
         refresh: bool = False,
     ) -> dict:
-        """某个直播间的播放直链（短时缓存；``refresh=True`` 强制重取）。"""
+        """某个直播间的播放直链（短时缓存；``refresh=True`` 强制重取）。
+
+        **不拿 store 的主锁**：点播放是低频但等不起的交互，而主锁被 ``following_page``
+        的游标链长期占着（一个逻辑页最多翻 30 个接口页，每个都要过节奏门），排进去就要
+        等十几秒（2026-11 实测：翻第 5 页期间取流等了 15.2s，上游本身只 0.3s）。
+        缓存读写都在 await 之间原子完成，不需要锁；只对同一个 (房间, 档位) 做
+        single-flight，连点/失败自动重取不会把上游打两遍。
+        """
         web_rid = str(web_rid).strip()
         key = (web_rid, quality or "")
-        async with self._lock:
-            self._bind(cookie)
+        fingerprint = self._bind(cookie)
+        if not refresh:
             cached = self.streams.get(key)
-            if not refresh and cached and time.time() - cached[0] < STREAM_URL_TTL:
+            if cached and time.time() - cached[0] < STREAM_URL_TTL:
                 return dict(cached[1])
+        task = self._inflight.get(key)
+        if task is None or task.done():
+            task = asyncio.ensure_future(
+                self._resolve_stream(key, fingerprint, cookie, proxy, slot, web_rid, quality)
+            )
+            self._inflight[key] = task
+            task.add_done_callback(lambda done, k=key: self._forget_inflight(k, done))
+        # shield：某个调用方取消（关掉播放器/连接断开）不能连带取消别人的取流
+        return dict(await asyncio.shield(task))
+
+    def _forget_inflight(self, key: tuple[str, str], task: asyncio.Task) -> None:
+        if self._inflight.get(key) is task:
+            self._inflight.pop(key, None)
+        if not task.cancelled():
+            task.exception()  # 消费掉，否则没人 await 的错误会打 "never retrieved" 警告
+
+    async def _resolve_stream(
+        self,
+        key: tuple[str, str],
+        fingerprint: str,
+        cookie: str,
+        proxy: str | None,
+        slot: SlotFactory,
+        web_rid: str,
+        quality: str | None,
+    ) -> dict:
+        async with slot():
+            data = await fetch_live_stream_url(cookie, proxy, web_rid, quality)
+        if fingerprint == self._fingerprint:  # 取流途中换了 Cookie：别把旧账号的结果写进新缓存
             if len(self.streams) >= STREAM_CACHE_MAX:
                 self.streams.clear()
-            async with slot():
-                data = await fetch_live_stream_url(cookie, proxy, web_rid, quality)
             self.streams[key] = (time.time(), data)
-            logger.debug(
-                f"Douyin live stream resolved: {web_rid} live={data.get('is_live')} "
-                f"playback={data.get('playback') or '-'} codec={data.get('codec') or '-'}"
-            )
-            return dict(data)
+        logger.debug(
+            f"Douyin live stream resolved: {web_rid} live={data.get('is_live')} "
+            f"playback={data.get('playback') or '-'} codec={data.get('codec') or '-'}"
+        )
+        return data
 
     async def live(
         self, cookie: str, proxy: str | None, slot: SlotFactory, refresh: bool = False
