@@ -17,7 +17,10 @@ ARG BILIUP_VERSION=1.3.3
 WORKDIR /app
 
 # B站上传复用 biliup 的官方预编译 CLI；固定版本与双架构 SHA256，避免构建时漂移。
-RUN apt-get update && apt-get install -y --no-install-recommends curl xz-utils ca-certificates \
+# libatomic1：playwright pip 包里自带的 driver/node 需要它，python:3.12-slim-trixie 基础层
+# 没有（之前一直被 registry 的层缓存挡着，requirements 重新解析后才暴露：`playwright
+# install` 直接 exit 127 "libatomic.so.1: cannot open shared object file"）。
+RUN apt-get update && apt-get install -y --no-install-recommends curl xz-utils ca-certificates libatomic1 \
     && rm -rf /var/lib/apt/lists/*
 RUN set -eux; \
     case "$TARGETARCH" in \
