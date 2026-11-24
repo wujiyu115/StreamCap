@@ -1,5 +1,6 @@
 {
     "common": {
+        "backToTop": "返回顶部",
         "confirm": "确认",
         "cancel": "取消",
         "delete": "删除",

@@ -1,5 +1,6 @@
 {
     "common": {
+        "backToTop": "Back to top",
         "confirm": "Confirm",
         "cancel": "Cancel",
         "delete": "Delete",

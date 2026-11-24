@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { I18nContext, format, getDict, resolveDictValue, setCurrentLang, type LangCode } from "@/i18n"
 import { ConfirmProvider } from "@/components/confirm-dialog"
+import { BackToTop } from "@/components/back-to-top"
 
 const LANG_KEY = "streamcap.lang"
 const THEME_KEY = "streamcap.theme"
@@ -207,6 +208,9 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                         </NavLink>
                     ))}
                 </nav>
+
+                {/* 列表页「返回顶部」：全站挂一个，谁的滚动区翻深了就出现在谁上面 */}
+                <BackToTop />
             </div>
             </ConfirmProvider>
         </I18nContext.Provider>
