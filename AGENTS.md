@@ -30,6 +30,7 @@
 - 涉及网络检测的断言给足超时，如 `expect(...).to_be_visible(timeout=120000)`
 - 后端接口拿不到真实数据时（如需要有效 cookie 的功能），可以先用 `page.route("**/api/**", handler)` 拦后端、`route.fulfill()` 喂合成数据，验证前端渲染/翻页/表单预填这类逻辑——这只能算前端验证，报告时要说明没验证到真实数据
 - **要真 HTTP 验证「写配置」类改动、又不想碰仓库 `config/` 时，起一个隔离配置的服务**：`create_app(run_path)` 接受配置目录（CLI 不暴露，写个 5 行 launcher 调 `uvicorn.run(create_app("/tmp/xxx"))` 即可），SPA 仍从 `PROJECT_ROOT/frontend/dist` 伺服，所以 UI 也能直接打这个端口。真机验证「Cookie 覆盖前备份」「设置页到期提醒」就是这么做的（`/tmp/cookie_api_probe.py` + `/tmp/ui_cookie_expiry.py` 打临时端口，用完删目录）
+- **隔离目录里必须软链一份 `locales/`**：`ln -s $PROJECT_ROOT/locales /tmp/xxx/locales`。后端 i18n 按 `<run_path>/locales/<lang>.json` 读（`LanguageManager.load`），读不到就是空字典，`record_manager` 里 `self._['monitor_stopped']` 直接 `KeyError`——于是「停监控」在隔离环境里静默失败（`batch-monitor` 走 `services.run_coro`，异常没人取结果，接口照样返回 `ok`），`/{id}/monitor` 则 500。生产不受影响（镜像里 `/app/locales` 是全的）
 
 ### 项目特有陷阱
 
@@ -58,7 +59,7 @@
 - **抖音投稿重封装（实测 2026-10-30）**：直录的 `_merged.mp4` 不是标准 mp4（典型 atom 序列 `ftyp/free/mdat/moov`，moov 在 80MB 的 mdat **后面**；更坏的分片式还会带 `moof`），抖音解不了。`DouyinProvider.upload()` 现在在结构校验前先 `remux_to_standard_mp4()`：`ffmpeg -y -v error -i in.mp4 -c copy -movflags +faststart out.mp4`，实测 41.1MB/101.66s **0.7s**、84.0MB **3.6s**，体积/时长/编码（h264 1088x1920 + aac）全不变，atom 变成 `ftyp/moov/free/mdat`。产物写在**源文件同目录**（`<stem>.faststart.mp4`，同一个卷，不在 /tmp 堆几百 MB），投递完 `finally` 里删掉；投递失败会留着，下一轮按 mtime+结构命中就**直接复用不重拷**。不能靠这个文件名判断是不是重封装过——校验一律走 `looks_like_standard_mp4()`。走完整 `DouyinProvider.upload()` 端到端实测 **82.8s**（提交文件 t+0 → 编辑页 30s → 可见性回读 t+45s → 发布完成 t+63s），重封装后的文件能真发出去。这套临时文件不会被人体识别扫描当成新视频入队（`enqueue_pose_outputs` 只认 pose 的 `summary.output_files`）
 - **抖音扫码登录慢在哪（2026-10-27 拆解，74s → 29s）**：`PlaywrightDriver` 用真浏览器打开抖音、点「登录」再读二维码 `data:` URL。生产容器（4C / loadavg 2.5 / 广州电信出口）实测三段：`goto` 6s、**等「登录」入口渲染出来 ~25s**、**点开登录框到出码再 ~44s**。后两段都是抖音前端自己的开销：登录框要从 `yhgfb-cn-static.com`、`douyin-pc-web.douyinstatic.com` 现拉 secure-consumer-sdk / uc-secure-dtrait-core / rc-verifycenter/@latest 等一堆风控 JS，再打 `/passport/web/challenge/` 才给 `get_qrcode`。两个改法（都已落地）：① `launch_persistent_context` 用 `config/douyin_login_profile` 复用 HTTP 缓存（省 ~17s，只读挂载失败会自动退回无缓存模式）；② 入口页从首页换成 `https://www.douyin.com/user/self`（播放器 chunk 少，登录按钮早 6s 出现，打不开回落首页）。另外去掉了 goto 后的固定 3s sleep（改成立刻轮询点登录）。**profile 目录存着登录态 Cookie，和 cookies.json 一个等级**：`/config/douyin_login_profile/` 已进 `.gitignore`，且每次 `open()` 先 `clear_cookies()`——不清的话上次的会话会让页面不显示「登录」入口，扫码流程直接判「找不到登录入口」
 - **`GET /api/douyin/cookie` 不走 `require_cookie`**：它必须在**没有登录态**（也就是最该提醒续期的时刻）也能返回 `state`，所以只解析本地 cookie 串、不打抖音接口；解析不出来一律 `unknown`（用户可能只填 ttwid / 手改过），只有真的空值才是 `missing`。前端日期用 `formatDate(ts, lang)`（`frontend/src/i18n/index.ts`）：默认的 `toLocaleDateString()` 跟浏览器语言走，中文界面会被渲染成 `12/20/2026`
-- **MP4 直录是 fragmented 容器**：ffmpeg 录制用 `-movflags +frag_keyframe+empty_moov+faststart+delay_moov`（防崩溃设计，见 `app/core/media/ffmpeg_builders/video/mp4.py`），产物是 ftyp+moov(头部)+moof/mdat 分片结构。实测（lavfi 复现，同 muxer 参数）：手动停（SIGINT 优雅停）与 SIGKILL 强杀都保留头部 moov（empty_moov 即时写入），差别只在最后一个 fragment 是否收尾——手动停的文件结构完整、ffprobe/VLC 可读可播、人体识别可直接处理；强杀的最后一个 fragment 可能截断。**但时长元数据不可靠**（5s 内容 ffprobe 报 480s，2s 分段报 16.7s），专用播放器进度条/Seek 会怪。转标准 mp4：`ffmpeg -i in.mp4 -c copy -movflags +faststart out.mp4` 无损重封装（秒级）；识别原始分片式：顶层 atom 出现 moof。mp4 直录目前没有录制后 remux，remux 仅存在于 ts→mp4 转码路径
+- **MP4 直录不是「强杀也安全」**：ffmpeg 录制用 `-f segment -segment_format mp4` + `-movflags +frag_keyframe+empty_moov+faststart+delay_moov`（见 `app/core/media/ffmpeg_builders/video/mp4.py`）。**只有优雅收尾（SIGINT / 分段正常关闭）才会写 moov**——2026-11-24 用生产同款参数 lavfi 复现：SIGINT 停的产物是 `ftyp/free/mdat/moov`（ffprobe 可读、时长正常）；`kill -9` 的产物只有 `ftyp/free/mdat`，ffprobe 报 `moov atom not found`，而且**既没有 moof 也没有文件尾 moov，无法修复**（`delay_moov` 把 moov 推迟到收尾，`empty_moov` 在这条路子上不起作用）。生产取证一致：2026-11-23 重建容器强杀的两条录制（200MB / 420MB）全是 `ftyp/free/mdat...`，不可播。所以「容器 stop 会损坏在录文件」不是理论风险，是必然（旧记录里「SIGKILL 也保留头部 moov」已被推翻）。另外时长元数据不可靠（5s 内容 ffprobe 报 480s，2s 分段报 16.7s），专用播放器进度条/Seek 会怪。转标准 mp4：`ffmpeg -i in.mp4 -c copy -movflags +faststart out.mp4` 无损重封装（秒级，但也救不了没 moov 的文件）；mp4 直录目前没有录制后 remux，remux 仅存在于 ts→mp4 转码路径
 - **Playwright Chromium 无 H.264/AAC 解码器**：无系统 Chrome 时，headless Chromium 对**任何** h264 mp4（含正常封装）都报 MediaError code 4 / readyState=0——浏览器端"能否播放"验证完全失效，不可据此断定容器损坏。可播性结论必须真机（iOS Safari）或带专有解码器的 Chrome（channel="chrome"）。2026-09 之前"浏览器直接播放会卡死"的记录即受此污染，待真机复核
   - **但 MSE 路径例外（2026-09 实测）**：抖音直播 flv 经 mpegts.js 灌进 MSE 后，headless Chromium 里 `readyState=4`、`currentTime` 正常推进、`videoWidth/Height=1088x1920`、截图有画面——**flv/MSE 的"能不能播"可以在 headless 里真验**（`/tmp/ui_live_player.py` Phase A 就是靠这个断言"真出画面"）。raw mp4 直连 `<video src>` 仍然验不了
 - **内嵌直播播放器**（`frontend/src/components/live-player-dialog.tsx`，关注页卡片上的「播放」）踩过的坑：
@@ -111,9 +112,35 @@ StreamCap 的生产部署目标是 Unraid 7.x 服务器 **tank**（`192.168.31.1
    - 启动：`docker start streamcap`，等 30–60s 健康检查
    - 自检：`docker ps --filter name=streamcap` 看 `Up ... (healthy)`；`curl http://localhost:6006/api/recordings` 看任务数（生产 ~170+）与 `is_recording` 字段正常；`docker logs --tail 30 streamcap` 看监控轮询在跑
 
+### 部署前先冻结监控（不是「先停录制」）
+
+`docker stop` 是 SIGKILL，而 mp4 直录**只有优雅收尾才写 moov**（见上面「MP4 直录」那条）——被强杀的分段是裸 `ftyp/free/mdat`，moov 永久丢失，不可播也不可修。所以重建前必须先把录制停下来，且停的方式要对。
+
+**只调 `POST /api/recordings/{id}/stop` 不够**：手动停之后任务仍在监控中，`monitor_post_record_recheck_seconds`（默认 30s）会重新检测，房间还在播就又把录制拉起来。2026-11-23 生产踩过：18:39 停掉「今天我也健康富贵」→ 18:41 又在录 → 紧接着 rebuild，这 2 分钟的文件不可播。
+
+关监控会**连带停掉正在录的**（`stop_monitor_recording` 内部就调 `stop_recording`），所以一条请求就够了：
+
+```bash
+IDS=$(curl -s localhost:6006/api/recordings | jq -c '[.recordings[].rec_id]')
+# 1) 关监控 = 停监控 + 停录制，monitor_status 会持久化进 recordings.json
+curl -s -X POST localhost:6006/api/recordings/batch-monitor \
+     -H 'Content-Type: application/json' -d "{\"ids\":$IDS,\"enabled\":false}"
+# 2) 确认停干净（应为 0），再等几秒让 ffmpeg 收尾
+curl -s localhost:6006/api/recordings | jq '[.recordings[] | select(.is_recording or .monitor_status)] | length'
+# 3) 走上面 5 步 rebuild_container + docker start
+# 4) 部署完把监控开回来 —— 漏了这步 = 全站静默不监控（徽章看着正常，但永不再检测）
+curl -s -X POST localhost:6006/api/recordings/batch-monitor \
+     -H 'Content-Type: application/json' -d "{\"ids\":$IDS,\"enabled\":true}"
+```
+
+- 隔离环境实测（2026-11-24，3 条任务）：关监控后 `status_info=STOPPED_MONITORING`、`monitor_status=false` 且落盘；之后 75s（跨过 30s 快检窗口）**新增检测 0 次**、`is_recording` 恒 false；`enabled:true` 后立刻恢复检测。机制上监控循环第一行就是 `if not recording.monitor_status or recording.is_recording: continue`
+- 最小动作版：只把 `is_recording=true` 的那几条 id 传给 `batch-monitor` 关监控（其余任务没在录，重建不影响它们的文件）——但重建那一瞬间若有房间刚开播被拉起录制，照样丢，170 条任务时每轮都在检测，概率不为零
+- 恢复监控时每条任务会立刻 `check_if_live(priority=True)`，170 条要按 `monitor_platform_min_interval_seconds` 匀速放行，前几分钟请求排队属正常，**别去关节奏门**
+- 别用 `POST /api/recordings/{id}/monitor` 逐条关：170 个请求不说，`batch-monitor` 里 `rec_id` 对不上时是**静默跳过**（`count` 取的是入参长度，不代表成功条数），所以关完一定要按上面第 2 步核一遍
+
 ### 关键禁忌
 
-- **不要在有任务 `is_recording=True` 时重建**：rebuild 会 `docker stop`（SIGTERM → 升级成 SIGKILL），正在录的 ffmpeg 产物最后一个 fragment 可能截断。先通过 API `GET /api/recordings` 确认所有 `is_recording=false`
+- **不要在有任务 `is_recording=True` 时重建**：rebuild 会 `docker stop`（SIGTERM → 升级成 SIGKILL），被强杀的分段**没有 moov、不可播也不可修**。停录制要按上面「部署前先冻结监控」的顺序（单停录制 30s 后会被监控重新拉起）
 - **不要绕过 template 用裸 `docker run`**：Unraid 的 Web UI 把用户配置持久化在 XML 里，裸 docker run 出来的容器在 UI 上显示"orphan"，下一次点 Update 会丢配置
 - **不要凭"已拉新镜像"就宣布完成**：对比 `docker inspect streamcap --format '{{.Image}}'` 与 `docker images wujiyu115/streamcap:latest --format '{{.ID}}'` 的 image ID 是否一致，确认新镜像已经跑起来
 - **重建后 `docker ps` 看不到 streamcap 别慌**：先看 `docker ps -a`，如果 `Exited (137)` 就是 autostart 行为，`docker start` 即可；只有 `Created`（从未跑过）才需要排查 template 或镜像问题
