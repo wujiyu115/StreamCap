@@ -201,6 +201,14 @@ export default function RecordingsPage() {
     const batchMonitor = useMutation({
         mutationFn: ({ ids, enabled }: { ids: string[]; enabled: boolean }) =>
             recordingsApi.batchMonitor(ids, enabled),
+        // 后端只会把真正生效的条数算进 count；有 rec_id 过期/单条失败时别再假装成功
+        onSuccess: (res) => {
+            if (!res.ok) {
+                toast.warning(
+                    tf("recordings.batchMonitorPartial", { count: res.count, requested: res.requested }),
+                )
+            }
+        },
         onSettled: () => {
             setSelected(new Set())
             invalidate()

@@ -12,6 +12,7 @@ from ...models.media.video_quality_model import VideoQuality
 from ...models.recording.recording_status_model import RecordingStatus
 from ...utils import utils
 from ...utils.logger import logger
+from ..i18n_text import lang_text
 from ..media import ffmpeg_builders
 from ..media.direct_downloader import DirectStreamDownloader
 from ..platforms import platform_handlers
@@ -55,6 +56,19 @@ class LiveStreamRecorder:
         self._ = {}
         self.load()
 
+    # 语言包取不到时的兜底文案：只防「读不到就崩」，正常部署都从 locales/ 读
+    _TEXT_FALLBACK = {
+        "live_room": "Live Room",
+        "record_stream_error": "Live streaming source recording error",
+        "no_ffmpeg_tip": "FFmpeg is not installed, please install FFmpeg first ⚠️",
+        "push_content_end": "Live room status update: [room_name] live ended, time: [time]",
+        "status_notify": "Live room status update notification",
+    }
+
+    def _t(self, key: str) -> str:
+        """语言包文案；语言包读不到时退化到 _TEXT_FALLBACK，绝不 KeyError。"""
+        return lang_text(self._, key, self._TEXT_FALLBACK)
+
     def load(self):
         language = self.services.language_manager.language
         for key in ("recording_manager", "stream_manager"):
@@ -80,14 +94,14 @@ class LiveStreamRecorder:
             live_title = stream_info.title
 
         # 空名（只填房间号创建）或占位名时用接口返回的主播名，避免空目录/空文件名
-        if self.recording.streamer_name.strip() and self.recording.streamer_name != self._["live_room"]:
+        if self.recording.streamer_name.strip() and self.recording.streamer_name != self._t("live_room"):
             # 兜底 default 必须带：纯 emoji/纯标点名清洗后为空会返回 None，下游 os.path.join 直接抛 TypeError
             stream_info.anchor_name = utils.clean_name(
-                self.recording.streamer_name, self._["live_room"], remove_emoji=strip_emoji
+                self.recording.streamer_name, self._t("live_room"), remove_emoji=strip_emoji
             )
         else:
             stream_info.anchor_name = utils.clean_name(
-                stream_info.anchor_name, self._["live_room"], remove_emoji=strip_emoji
+                stream_info.anchor_name, self._t("live_room"), remove_emoji=strip_emoji
             )
 
         now = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
@@ -488,7 +502,7 @@ class LiveStreamRecorder:
                 if error_output:
                     logger.error(f"FFmpeg Stderr Output: {error_output.splitlines()[-1]}")
                 if not self.recording.is_recording:
-                    self._handle_recording_error(record_name, self._["record_stream_error"])
+                    self._handle_recording_error(record_name, self._t("record_stream_error"))
 
             if return_code in safe_return_codes:
                 if not self.recording.is_recording:
@@ -550,7 +564,7 @@ class LiveStreamRecorder:
 
         except Exception as e:
             logger.error(f"An error occurred during the subprocess execution: {e}")
-            self._handle_recording_error(record_name, self._["no_ffmpeg_tip"], duration=4000)
+            self._handle_recording_error(record_name, self._t("no_ffmpeg_tip"), duration=4000)
             return False
         finally:
             if process is not None and process.returncode is None:
@@ -870,7 +884,7 @@ class LiveStreamRecorder:
 
         except Exception as e:
             logger.error(f"Error occurred during direct download: {e}")
-            self._handle_recording_error(record_name, self._["record_stream_error"])
+            self._handle_recording_error(record_name, self._t("record_stream_error"))
             return False
         finally:
             self.recording.record_url = None
@@ -890,7 +904,7 @@ class LiveStreamRecorder:
             and not self.recording.notified_live_end
         ):
             self.recording.notified_live_end = True
-            push_content = self._["push_content_end"]
+            push_content = self._t("push_content_end")
             end_push_message_text = user_config.get("custom_stream_end_content")
             if end_push_message_text:
                 push_content = end_push_message_text
@@ -902,7 +916,7 @@ class LiveStreamRecorder:
                 .replace("[title]", self.recording.live_title or "None")
             )
             msg_title = user_config.get("custom_notification_title").strip()
-            msg_title = msg_title or self._["status_notify"]
+            msg_title = msg_title or self._t("status_notify")
 
             self.services.run_coro(msg_manager.push_messages(msg_title, push_content))
 

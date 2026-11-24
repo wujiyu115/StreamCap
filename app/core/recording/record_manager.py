@@ -12,6 +12,7 @@ from ...models.recording.recording_status_model import RecordingStatus
 from ...utils import utils
 from ...utils.logger import logger
 from ..analytics.analytics_store import AnalyticsStore
+from ..i18n_text import lang_text
 from ..platforms import room_validity
 from ..platforms.platform_handlers import get_platform_info
 from ..runtime.process_manager import BackgroundService
@@ -246,6 +247,21 @@ class RecordingManager:
     def recordings(self, value):
         raise AttributeError("Please use add_recording/update_recording methods to modify data")
 
+    # 语言包取不到时的兜底文案：只防「读不到就崩」，正常部署都从 locales/ 读
+    _TEXT_FALLBACK = {
+        "monitor_stopped": "Stopped monitoring",
+        "is_live": "Live streaming in progress",
+        "live_room": "Live Room",
+        "recorded": "Recorded",
+        "push_content": "Live room status update: [room_name] is live, time: [time]",
+        "status_notify": "Live room status update notification",
+        "not_disk_space_tip": "Insufficient disk storage space, stop recording ⚠️",
+    }
+
+    def _t(self, key: str) -> str:
+        """语言包文案；语言包读不到时退化到 _TEXT_FALLBACK，绝不 KeyError。"""
+        return lang_text(self._, key, self._TEXT_FALLBACK)
+
     def load(self):
         language = self.services.language_manager.language
         for key in ("recording_manager", "video_quality"):
@@ -344,7 +360,7 @@ class RecordingManager:
             await self._update_recording(
                 recording=recording,
                 monitor_status=False,
-                display_title=f"[{self._['monitor_stopped']}] {recording.title}",
+                display_title=f"[{self._t("monitor_stopped")}] {recording.title}",
                 status_info=RecordingStatus.STOPPED_MONITORING,
                 selected=False,
             )
@@ -719,7 +735,7 @@ class RecordingManager:
             if now - recording.last_live_time > days * 86400:
                 recording.monitor_status = False
                 recording.status_info = RecordingStatus.STOPPED_MONITORING
-                recording.display_title = f"[{self._['monitor_stopped']}] {recording.title}"
+                recording.display_title = f"[{self._t("monitor_stopped")}] {recording.title}"
                 recording.is_checking = False
                 recording.auto_stopped_at = now
                 recording.auto_stop_reason = "idle_days"
@@ -738,7 +754,7 @@ class RecordingManager:
             return False
         recording.monitor_status = False
         recording.status_info = RecordingStatus.STOPPED_MONITORING
-        recording.display_title = f"[{self._['monitor_stopped']}] {recording.title}"
+        recording.display_title = f"[{self._t("monitor_stopped")}] {recording.title}"
         recording.is_checking = False
         recording.auto_stopped_at = time.time()
         recording.auto_stop_reason = "invalid"
@@ -812,7 +828,7 @@ class RecordingManager:
             return
 
         if not recording.monitor_status:
-            recording.display_title = f"[{self._['monitor_stopped']}] {recording.title}"
+            recording.display_title = f"[{self._t("monitor_stopped")}] {recording.title}"
             recording.status_info = RecordingStatus.STOPPED_MONITORING
             recording.is_checking = False
             self.services.broadcast_card_update(recording)
@@ -911,7 +927,7 @@ class RecordingManager:
         self._on_check_succeeded(recording)
         if self.settings.user_config.get("remove_emojis"):
             # 开关开的语义：任务名也清洗（剥 emoji）；关的时候由 _get_filename 按同开关决定文件名是否保留 emoji
-            stream_info.anchor_name = utils.clean_name(stream_info.anchor_name, self._["live_room"])
+            stream_info.anchor_name = utils.clean_name(stream_info.anchor_name, self._t("live_room"))
 
         if stream_info.is_live:
             now_ts = time.time()
@@ -920,11 +936,11 @@ class RecordingManager:
             recording.last_live_time = now_ts
             recording.live_title = stream_info.title
             # 空名（只填房间号新建的任务）或默认占位名都回填真实主播名
-            if not recording.streamer_name.strip() or recording.streamer_name.strip() == self._["live_room"]:
+            if not recording.streamer_name.strip() or recording.streamer_name.strip() == self._t("live_room"):
                 recording.streamer_name = stream_info.anchor_name
                 self.services.run_coro(self.persist_recordings())
-            recording.title = f"{recording.streamer_name} - {self._[recording.quality]}"
-            recording.display_title = f"[{self._['is_live']}] {recording.title}"
+            recording.title = f"{recording.streamer_name} - {self._t(recording.quality)}"
+            recording.display_title = f"[{self._t("is_live")}] {recording.title}"
 
             if not recording.is_live:
                 recording.is_live = stream_info.is_live
@@ -937,7 +953,7 @@ class RecordingManager:
                 msg_manager.should_push_message(self.settings, recording, message_type="start")
                 and not recording.notified_live_start
             ):
-                push_content = self._["push_content"]
+                push_content = self._t("push_content")
                 begin_push_message_text = user_config.get("custom_stream_start_content")
                 if begin_push_message_text:
                     push_content = begin_push_message_text
@@ -949,7 +965,7 @@ class RecordingManager:
                     .replace("[title]", recording.live_title or "None")
                 )
                 msg_title = user_config.get("custom_notification_title").strip()
-                msg_title = msg_title or self._["status_notify"]
+                msg_title = msg_title or self._t("status_notify")
 
                 BackgroundService.get_instance().add_task(msg_manager.push_messages_sync, msg_title, push_content)
                 recording.notified_live_start = True
@@ -980,11 +996,11 @@ class RecordingManager:
                 asyncio.create_task(recorder.end_message_push())
 
             recording.status_info = RecordingStatus.MONITORING
-            title = f"{stream_info.anchor_name or recording.streamer_name} - {self._[recording.quality]}"
+            title = f"{stream_info.anchor_name or recording.streamer_name} - {self._t(recording.quality)}"
             if (
                 not recording.streamer_name.strip()
-                or recording.streamer_name == self._["live_room"]
-                or f"[{self._['is_live']}]" in recording.display_title
+                or recording.streamer_name == self._t("live_room")
+                or f"[{self._t("is_live")}]" in recording.display_title
             ):
                 recording.update(
                     {
@@ -1054,7 +1070,7 @@ class RecordingManager:
             elapsed = datetime.now() - recording.start_time
             # If recording, add the current session time.
             total_duration = recording.cumulative_duration + elapsed
-            return self._["recorded"] + " " + str(total_duration).split(".")[0]
+            return self._t("recorded") + " " + str(total_duration).split(".")[0]
         else:
             # If stopped, show the last recorded total duration.
             total_duration = recording.last_duration
@@ -1072,7 +1088,7 @@ class RecordingManager:
             self.services.recording_enabled = False
             logger.error(f"Disk space remaining is below {disk_space_limit} GB. Recording function disabled")
             self.services.broadcast_snack(
-                self._["not_disk_space_tip"],
+                self._t("not_disk_space_tip"),
                 duration=86400,
                 show_close_icon=True,
             )

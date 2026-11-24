@@ -18,7 +18,14 @@ export const recordingsApi = {
     setMonitor: (recId: string, enabled: boolean) =>
         api.post<Recording>(`/recordings/${recId}/monitor`, { enabled }),
     batchMonitor: (ids: string[], enabled: boolean) =>
-        api.post<{ ok: boolean; count: number }>("/recordings/batch-monitor", { ids, enabled }),
+        api.post<{
+            ok: boolean
+            /** 真正生效的条数（find 不到 / 执行失败的都不算） */
+            count: number
+            requested: number
+            missing: string[]
+            failed: { id: string; error: string }[]
+        }>("/recordings/batch-monitor", { ids, enabled }),
     stop: (recId: string) => api.post<Recording>(`/recordings/${recId}/stop`),
     validitySnapshot: () => api.get<ValidityCheckResponse>("/recordings/validity"),
     checkValidity: (

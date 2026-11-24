@@ -30,7 +30,7 @@
 - 涉及网络检测的断言给足超时，如 `expect(...).to_be_visible(timeout=120000)`
 - 后端接口拿不到真实数据时（如需要有效 cookie 的功能），可以先用 `page.route("**/api/**", handler)` 拦后端、`route.fulfill()` 喂合成数据，验证前端渲染/翻页/表单预填这类逻辑——这只能算前端验证，报告时要说明没验证到真实数据
 - **要真 HTTP 验证「写配置」类改动、又不想碰仓库 `config/` 时，起一个隔离配置的服务**：`create_app(run_path)` 接受配置目录（CLI 不暴露，写个 5 行 launcher 调 `uvicorn.run(create_app("/tmp/xxx"))` 即可），SPA 仍从 `PROJECT_ROOT/frontend/dist` 伺服，所以 UI 也能直接打这个端口。真机验证「Cookie 覆盖前备份」「设置页到期提醒」就是这么做的（`/tmp/cookie_api_probe.py` + `/tmp/ui_cookie_expiry.py` 打临时端口，用完删目录）
-- **隔离目录里必须软链一份 `locales/`**：`ln -s $PROJECT_ROOT/locales /tmp/xxx/locales`。后端 i18n 按 `<run_path>/locales/<lang>.json` 读（`LanguageManager.load`），读不到就是空字典，`record_manager` 里 `self._['monitor_stopped']` 直接 `KeyError`——于是「停监控」在隔离环境里静默失败（`batch-monitor` 走 `services.run_coro`，异常没人取结果，接口照样返回 `ok`），`/{id}/monitor` 则 500。生产不受影响（镜像里 `/app/locales` 是全的）
+- **隔离目录里想看到中文文案就得软链一份 `locales/`**：`ln -s $PROJECT_ROOT/locales /tmp/xxx/locales`。后端文案按 `<run_path>/locales/<lang>.json` 读（`LanguageManager.load`），读不到就全走 `app/core/i18n_text.py` 的兜底英文（取不到不再崩，2026-11-24 之前是 `self._["xxx"]` 下标取值：缺语言包直接 KeyError，「停监控」静默失败、直播检测写标题崩溃表现为「检测到开播但永不开始录」）。验逻辑不用软链，验中文文案要
 
 ### 项目特有陷阱
 
@@ -136,7 +136,7 @@ curl -s -X POST localhost:6006/api/recordings/batch-monitor \
 - 隔离环境实测（2026-11-24，3 条任务）：关监控后 `status_info=STOPPED_MONITORING`、`monitor_status=false` 且落盘；之后 75s（跨过 30s 快检窗口）**新增检测 0 次**、`is_recording` 恒 false；`enabled:true` 后立刻恢复检测。机制上监控循环第一行就是 `if not recording.monitor_status or recording.is_recording: continue`
 - 最小动作版：只把 `is_recording=true` 的那几条 id 传给 `batch-monitor` 关监控（其余任务没在录，重建不影响它们的文件）——但重建那一瞬间若有房间刚开播被拉起录制，照样丢，170 条任务时每轮都在检测，概率不为零
 - 恢复监控时每条任务会立刻 `check_if_live(priority=True)`，170 条要按 `monitor_platform_min_interval_seconds` 匀速放行，前几分钟请求排队属正常，**别去关节奏门**
-- 别用 `POST /api/recordings/{id}/monitor` 逐条关：170 个请求不说，`batch-monitor` 里 `rec_id` 对不上时是**静默跳过**（`count` 取的是入参长度，不代表成功条数），所以关完一定要按上面第 2 步核一遍
+- 别用 `POST /api/recordings/{id}/monitor` 逐条关（170 条就是 170 个请求）。`batch-monitor` 现在逐条 `await` 真有结果才返回：`count` 只算真正改成功的，对不上的 id 进 `missing`、单条抛错进 `failed`（`ok` 为 false 时前端会弹「批量操作部分未生效」），关完仍建议按上面第 2 步核一眼
 
 ### 关键禁忌
 

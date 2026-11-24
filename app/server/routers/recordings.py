@@ -358,18 +358,63 @@ async def toggle_monitor_batch(
     user: str = Depends(get_current_user),
     services=Depends(get_services),
 ):
+    """批量开/关监控。
+
+    老实现把协程丢给 run_coro 就不管了，`count` 取的是**入参长度**：rec_id 对不上就
+    静默跳过，协程里抛的异常又没人取 future，于是永远回 `{"ok": true, "count": N}`
+    ——170 条任务里哪怕一条没生效，从返回值也看不出来（2026-11-24 排查「关监控没
+    反应」时踩到，实际是 locale 缺失导致协程崩）。这里逐条 await 真跑完，没找到的、
+    失败的都单独列出来。
+    """
     rm = services.recording_manager
+    pending = []
+    missing: list[str] = []
+    failed: list[dict] = []
     for rec_id in body.ids:
         recording = rm.find_recording_by_id(rec_id)
         if recording is None:
+            missing.append(rec_id)
             continue
-        services.run_coro(
+        coro = (
             rm.start_monitor_recording(recording, auto_save=False)
             if body.enabled
             else rm.stop_monitor_recording(recording, auto_save=False)
         )
-    services.run_coro(rm.persist_recordings())
-    return {"ok": True, "count": len(body.ids)}
+        fut = services.run_coro(coro)
+        if fut is None:
+            failed.append({"id": rec_id, "error": "backend loop unavailable"})
+            continue
+        pending.append((rec_id, fut))
+
+    applied = 0
+    for rec_id, fut in pending:
+        try:
+            await asyncio.wrap_future(fut)
+            applied += 1
+        except Exception as exc:  # 单条失败不影响其他条
+            failed.append({"id": rec_id, "error": f"{type(exc).__name__}: {exc}"})
+
+    persist = services.run_coro(rm.persist_recordings())
+    if persist is not None:
+        try:
+            await asyncio.wrap_future(persist)
+        except Exception as exc:
+            logger.warning(f"批量开关监控落盘失败: {exc}")
+
+    ok = applied == len(body.ids)
+    if not ok:
+        action = "开启" if body.enabled else "关闭"
+        logger.warning(
+            f"批量{action}监控未全部生效：{applied}/{len(body.ids)}"
+            f"（未找到 {len(missing)}，失败 {len(failed)}）"
+        )
+    return {
+        "ok": ok,
+        "count": applied,
+        "requested": len(body.ids),
+        "missing": missing,
+        "failed": failed,
+    }
 
 
 @router.post("/{rec_id}/stop")

@@ -65,6 +65,7 @@
         "batchAdd": "批量录入",
         "batchStart": "批量开始监控",
         "batchStop": "批量停止监控",
+        "batchMonitorPartial": "批量操作部分未生效：{count}/{requested}",
         "batchDelete": "批量删除",
         "deleteConfirm": "确定要删除选中的 {count} 个任务吗？",
         "deleteOneConfirm": "确定要删除任务「{name}」吗？",

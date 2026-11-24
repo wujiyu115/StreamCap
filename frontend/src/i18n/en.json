@@ -65,6 +65,7 @@
         "batchAdd": "Batch add",
         "batchStart": "Start monitoring",
         "batchStop": "Stop monitoring",
+        "batchMonitorPartial": "Partially applied: {count}/{requested}",
         "batchDelete": "Delete",
         "deleteConfirm": "Delete {count} selected task(s)?",
         "deleteOneConfirm": "Delete task \"{name}\"?",
