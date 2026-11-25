@@ -47,6 +47,9 @@ const MAX_SCHEDULE_WINDOWS = 8
 
 const EMPTY_WINDOW: ScheduleWindow = { start: "", end: "" }
 
+/** 没配过时间段时的默认窗口（07:00~21:00，14 小时） */
+const DEFAULT_WINDOW: ScheduleWindow = { start: "07:00:00", end: "21:00:00" }
+
 const URL_PLATFORMS = [
     { key: "douyin", label: "抖音直播", base: "https://live.douyin.com/" },
     { key: "huya", label: "虎牙直播", base: "https://www.huya.com/" },
@@ -79,7 +82,7 @@ interface FormState {
 
 /**
  * 「开始,…」+「时长,…」→ 界面用的窗口数组。
- * 新建（没有历史配置）默认给**一段空行**；老数据有几段还原几段，不做截断。
+ * 新建（没有历史配置）默认给**一段 07:00~21:00**；老数据有几段还原几段，不做截断。
  */
 function toWindows(starts: string[], hours: string[]): ScheduleWindow[] {
     const windows = starts
@@ -88,7 +91,7 @@ function toWindows(starts: string[], hours: string[]): ScheduleWindow[] {
             end: start ? endFromHours(start, hours[i] || "5") : "",
         }))
         .filter((w) => w.start || w.end)
-    return windows.length ? windows : [{ ...EMPTY_WINDOW }]
+    return windows.length ? windows : [{ ...DEFAULT_WINDOW }]
 }
 
 function initialState(rec: Recording | null, defaults: Record<string, unknown>): FormState {
@@ -240,25 +243,28 @@ export function RecordingDialog({
 
         // 界面填「开始 ~ 结束」，存回后端仍是 monitor_hours（时长）。
         // 结束早于开始按次日算（23:00 → 02:00 = 3h）；两者相等等于不监控，直接拦。
+        // 定时没开就整段跳过校验、也不存窗口，别留一份「看不见的配置」。
         const starts: string[] = []
         const hoursList: string[] = []
-        for (const { start, end } of form.schedule_windows) {
-            if (!start && !end) continue // 空行（用户点了「添加时间段」没填）直接忽略
-            if (!start || !end) {
-                toast.error(t("recordingDialog.scheduledEndRequired"))
-                return
+        if (form.scheduled_recording) {
+            for (const { start, end } of form.schedule_windows) {
+                if (!start && !end) continue // 空行（用户点了「添加时间段」没填）直接忽略
+                if (!start || !end) {
+                    toast.error(t("recordingDialog.scheduledEndRequired"))
+                    return
+                }
+                if (parseClock(start) == null || parseClock(end) == null) {
+                    toast.error(t("recordingDialog.scheduledInvalid"))
+                    return
+                }
+                const hours = hoursFromRange(start, end)
+                if (hours == null) {
+                    toast.error(t("recordingDialog.scheduledEqual"))
+                    return
+                }
+                starts.push(start)
+                hoursList.push(String(hours))
             }
-            if (parseClock(start) == null || parseClock(end) == null) {
-                toast.error(t("recordingDialog.scheduledInvalid"))
-                return
-            }
-            const hours = hoursFromRange(start, end)
-            if (hours == null) {
-                toast.error(t("recordingDialog.scheduledEqual"))
-                return
-            }
-            starts.push(start)
-            hoursList.push(String(hours))
         }
         const scheduled = starts.join(",")
         const hours = hoursList.join(",")

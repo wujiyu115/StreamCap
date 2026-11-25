@@ -819,6 +819,30 @@ class RecordingManager:
 
     async def _check_if_live_impl(self, recording: Recording, priority: bool = False):
         recording.manually_stopped = False
+
+        # 定时窗口必须先于 `is_recording` 的那两个早退判断：窗口到期时任务正录着，
+        # 早退在前就永远走不到窗口判断，录制会一直录到主播下播（2026-11-25 生产踩到：
+        # 用户 23:38 给「兔子」配了 07:00~20:00，它在 23:07 就开录，到点照样录）。
+        if recording.scheduled_recording:
+            scheduled_time_range_list = await self.get_scheduled_time_range(
+                recording.scheduled_start_time, recording.monitor_hours
+            )
+            recording.scheduled_time_range = scheduled_time_range_list
+            if not self.is_in_scheduled_window(scheduled_time_range_list):
+                recording.is_live = False
+                recording.is_checking = False
+                if recording.is_recording or recording.rec_id in self.active_recorders:
+                    logger.info(f"Out of scheduled check range, stopping recording: {recording.url}")
+                    self.stop_recording(recording, manually_stopped=True)
+                else:
+                    logger.info(
+                        f"Skip Detection: {recording.url} not in scheduled check range {scheduled_time_range_list}"
+                    )
+                # stop_recording 会把 status_info 写成 NOT_RECORDING，最后再压回「不在时间段」
+                recording.status_info = RecordingStatus.NOT_IN_SCHEDULED_CHECK
+                self.services.broadcast_card_update(recording)
+                return
+
         if recording.is_recording or recording.stopping_in_progress:
             logger.debug(f"Skip check_if_live because recording is busy: {recording.url}")
             return
@@ -841,21 +865,6 @@ class RecordingManager:
             recording.status_info = RecordingStatus.STATUS_CHECKING
             recording.showed_checking_status = True
             self.services.broadcast_card_update(recording)
-
-        if recording.scheduled_recording:
-            scheduled_time_range_list = await self.get_scheduled_time_range(
-                recording.scheduled_start_time, recording.monitor_hours
-            )
-            recording.scheduled_time_range = scheduled_time_range_list
-            in_scheduled = self.is_in_scheduled_window(scheduled_time_range_list)
-
-            if not in_scheduled:
-                recording.status_info = RecordingStatus.NOT_IN_SCHEDULED_CHECK
-                recording.is_live = False
-                recording.is_checking = False
-                logger.info(f"Skip Detection: {recording.url} not in scheduled check range {scheduled_time_range_list}")
-                self.services.broadcast_card_update(recording)
-                return
 
         recording.status_info = RecordingStatus.STATUS_CHECKING
         platform, platform_key = get_platform_info(recording.url)
