@@ -23,11 +23,36 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { useI18n , translateError } from "@/i18n"
+import {
+    crossesMidnight,
+    endFromHours,
+    formatHours,
+    hoursFromRange,
+    parseClock,
+} from "@/lib/schedule"
 import { toast } from "sonner"
 
 const VIDEO_FORMATS = ["TS", "MP4", "FLV", "MKV", "MOV", "NUT"]
 const AUDIO_FORMATS = ["WAV", "MP3", "WMA", "M4A", "AAC"]
 const QUALITIES = ["OD", "UHD", "HD", "SD", "LD"]
+
+/** 两段「每日定时监听」的字段名（写成常量给 TS 看，模板字符串下标不被接受） */
+const SCHEDULED_SEGMENTS = [
+    {
+        startKey: "scheduled_start_time_1",
+        endKey: "scheduled_end_time_1",
+        labelKey: "recordingDialog.scheduledTime1",
+    },
+    {
+        startKey: "scheduled_start_time_2",
+        endKey: "scheduled_end_time_2",
+        labelKey: "recordingDialog.scheduledTime2",
+    },
+] as const satisfies readonly {
+    startKey: keyof FormState
+    endKey: keyof FormState
+    labelKey: string
+}[]
 
 const URL_PLATFORMS = [
     { key: "douyin", label: "抖音直播", base: "https://live.douyin.com/" },
@@ -52,8 +77,9 @@ interface FormState {
     scheduled_recording: boolean
     scheduled_start_time_1: string
     scheduled_start_time_2: string
-    monitor_hours_1: string
-    monitor_hours_2: string
+    // 界面填「开始 ~ 结束」，保存时换算成后端的 monitor_hours（时长）
+    scheduled_end_time_1: string
+    scheduled_end_time_2: string
     enabled_message_push: boolean
     only_notify_no_record: boolean
     special_attention: boolean
@@ -64,6 +90,8 @@ interface FormState {
 function initialState(rec: Recording | null, defaults: Record<string, unknown>): FormState {
     const scheduled = rec?.scheduled_start_time?.split(",") ?? []
     const hours = rec?.monitor_hours?.split(",") ?? []
+    const start1 = scheduled[0]?.trim() ?? ""
+    const start2 = scheduled[1]?.trim() ?? ""
     const mediaType =
         rec && !VIDEO_FORMATS.includes(rec.record_format) ? "audio" : "video"
     return {
@@ -82,10 +110,11 @@ function initialState(rec: Recording | null, defaults: Record<string, unknown>):
             : Boolean(defaults.segmented_recording_enabled ?? false),
         segment_time: String(rec?.segment_time ?? defaults.video_segment_time ?? "1800"),
         scheduled_recording: rec?.scheduled_recording ?? false,
-        scheduled_start_time_1: scheduled[0]?.trim() ?? "",
-        scheduled_start_time_2: scheduled[1]?.trim() ?? "",
-        monitor_hours_1: hours[0]?.trim() ?? "5",
-        monitor_hours_2: hours[1]?.trim() ?? "",
+        scheduled_start_time_1: start1,
+        scheduled_start_time_2: start2,
+        // 新建默认「开始 18:00 / 5 小时」的老习惯保留，只是换个显示方式
+        scheduled_end_time_1: start1 ? endFromHours(start1, hours[0]?.trim() || "5") : "",
+        scheduled_end_time_2: start2 ? endFromHours(start2, hours[1]?.trim() || "5") : "",
         enabled_message_push: rec?.enabled_message_push ?? false,
         only_notify_no_record: rec?.only_notify_no_record ?? false,
         special_attention: rec?.special_attention ?? false,
@@ -210,10 +239,33 @@ export function RecordingDialog({
             videoBitrate = v
         }
 
-        const scheduled = [form.scheduled_start_time_1, form.scheduled_start_time_2]
-            .filter(Boolean)
-            .join(",")
-        const hours = [form.monitor_hours_1, form.monitor_hours_2].filter(Boolean).join(",")
+        // 界面填「开始 ~ 结束」，存回后端仍是 monitor_hours（时长）。
+        // 结束早于开始按次日算（23:00 → 02:00 = 3h）；两者相等等于不监控，直接拦。
+        const starts: string[] = []
+        const hoursList: string[] = []
+        for (const [start, end] of [
+            [form.scheduled_start_time_1, form.scheduled_end_time_1],
+            [form.scheduled_start_time_2, form.scheduled_end_time_2],
+        ]) {
+            if (!start && !end) continue
+            if (!start || !end) {
+                toast.error(t("recordingDialog.scheduledEndRequired"))
+                return
+            }
+            if (parseClock(start) == null || parseClock(end) == null) {
+                toast.error(t("recordingDialog.scheduledInvalid"))
+                return
+            }
+            const hours = hoursFromRange(start, end)
+            if (hours == null) {
+                toast.error(t("recordingDialog.scheduledEqual"))
+                return
+            }
+            starts.push(start)
+            hoursList.push(String(hours))
+        }
+        const scheduled = starts.join(",")
+        const hours = hoursList.join(",")
 
         const body: Record<string, unknown> = {
             url,
@@ -332,7 +384,7 @@ function SingleForm({
     onSubmit: () => void
     pending: boolean
 }) {
-    const { t } = useI18n()
+    const { t, tf } = useI18n()
     return (
         <form
             className="space-y-4"
@@ -507,43 +559,73 @@ function SingleForm({
 
             <div className="space-y-2 rounded-md border p-3">
                 <div className="flex items-center justify-between">
-                    <Label>{t("recordingDialog.scheduled")}</Label>
+                    <Label htmlFor="scheduled-recording" className="cursor-pointer text-sm font-medium">
+                        {t("recordingDialog.scheduled")}
+                    </Label>
                     <Checkbox
+                        id="scheduled-recording"
                         checked={form.scheduled_recording}
                         onCheckedChange={(v) => onChange("scheduled_recording", Boolean(v))}
                     />
                 </div>
                 {form.scheduled_recording && (
-                    <div className="grid grid-cols-2 gap-3">
-                        {[1, 2].map((i) => (
-                            <div key={i} className="space-y-1.5">
-                                <Label className="text-xs text-muted-foreground">
-                                    {i === 1
-                                        ? t("recordingDialog.scheduledTime1")
-                                        : t("recordingDialog.scheduledTime2")}
-                                </Label>
-                                <Input
-                                    type="time"
-                                    step="1"
-                                    value={form[`scheduled_start_time_${i}` as keyof FormState] as string}
-                                    onChange={(e) =>
-                                        onChange(
-                                            `scheduled_start_time_${i}` as keyof FormState,
-                                            e.target.value,
-                                        )
-                                    }
-                                />
-                                <Input
-                                    type="number"
-                                    placeholder={t("recordingDialog.monitorHours")}
-                                    value={form[`monitor_hours_${i}` as keyof FormState] as string}
-                                    onChange={(e) =>
-                                        onChange(`monitor_hours_${i}` as keyof FormState, e.target.value)
-                                    }
-                                />
-                            </div>
-                        ))}
-                    </div>
+                    <>
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                            {SCHEDULED_SEGMENTS.map((seg, idx) => {
+                                const { startKey, endKey, labelKey } = seg
+                                const start = form[startKey]
+                                const end = form[endKey]
+                                const hours = hoursFromRange(start, end)
+                                return (
+                                    <div key={startKey} className="space-y-1.5">
+                                        <Label className="text-xs text-muted-foreground">
+                                            {t(labelKey)}
+                                        </Label>
+                                        <div className="flex items-center gap-1.5">
+                                            <Input
+                                                type="time"
+                                                step="1"
+                                                aria-label={t("recordingDialog.scheduledStart")}
+                                                value={start}
+                                                onChange={(e) => {
+                                                    const value = e.target.value
+                                                    onChange(startKey, value)
+                                                    // 先填开始：结束空着就按默认 5 小时预填，省一次输入
+                                                    if (value && !form[endKey]) {
+                                                        onChange(endKey, endFromHours(value, "5"))
+                                                    }
+                                                }}
+                                            />
+                                            <span className="shrink-0 text-muted-foreground">~</span>
+                                            <Input
+                                                type="time"
+                                                step="1"
+                                                aria-label={t("recordingDialog.scheduledEnd")}
+                                                value={end}
+                                                onChange={(e) => onChange(endKey, e.target.value)}
+                                            />
+                                        </div>
+                                        <p
+                                            className="text-xs text-muted-foreground"
+                                            data-testid={`scheduled-duration-${idx + 1}`}
+                                        >
+                                            {hours == null
+                                                ? ""
+                                                : tf("recordingDialog.scheduledDuration", {
+                                                      hours: formatHours(hours),
+                                                  }) +
+                                                  (crossesMidnight(start, end)
+                                                      ? ` · ${t("recordingDialog.scheduledNextDay")}`
+                                                      : "")}
+                                        </p>
+                                    </div>
+                                )
+                            })}
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                            {t("recordingDialog.scheduledHint")}
+                        </p>
+                    </>
                 )}
             </div>
 

@@ -267,6 +267,11 @@ async def update_recording(
     if updates.get("monitor_status"):
         # 编辑里开启监控等同手动开启：立即走优先检查
         services.run_coro(rm.check_if_live(recording, priority=True))
+    if {"scheduled_recording", "scheduled_start_time", "monitor_hours"} & updates.keys():
+        # 窗口是 start+时长现算的，改完不重算就会用回上一次的值（监控没开时压根没人算）
+        recording.scheduled_time_range = await rm.get_scheduled_time_range(
+            recording.scheduled_start_time, recording.monitor_hours
+        )
     services.run_coro(rm.persist_recordings())
     return serialize_recording(recording, media_root=services.settings_config.get_video_save_path())
 

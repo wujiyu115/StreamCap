@@ -179,7 +179,15 @@
         "batchPlaceholder": "One task per line: quality,URL,streamer\nQuality: 0=OD 1=UHD 2=HD 3=SD 4=LD\nExample: 0,https://live.douyin.com/xxx,StreamerA",
         "urlRequired": "Please enter a live room URL",
         "invalidUrl": "Invalid URL",
-        "invalidBitrate": "Enter a positive integer bitrate"
+        "invalidBitrate": "Enter a positive integer bitrate",
+        "scheduledStart": "Start",
+        "scheduledEnd": "End",
+        "scheduledDuration": "{hours} h",
+        "scheduledNextDay": "next day",
+        "scheduledHint": "Pick start and end directly; for windows past midnight choose an earlier end time (e.g. 23:00 ~ 02:00). No window means monitoring all day.",
+        "scheduledEndRequired": "Both start and end are required for a window",
+        "scheduledInvalid": "Invalid time format",
+        "scheduledEqual": "End time cannot equal start time"
     },
     "quality": {
         "OD": "OD",

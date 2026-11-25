@@ -179,7 +179,15 @@
         "batchPlaceholder": "每行一个任务，格式：画质,URL,主播名\n画质：0=原画 1=超清 2=高清 3=标清 4=流畅\n示例：0,https://live.douyin.com/xxx,主播A",
         "urlRequired": "请输入直播间地址",
         "invalidUrl": "无效的直播地址",
-        "invalidBitrate": "请输入大于 0 的整数码率"
+        "invalidBitrate": "请输入大于 0 的整数码率",
+        "scheduledStart": "开始",
+        "scheduledEnd": "结束",
+        "scheduledDuration": "共 {hours} 小时",
+        "scheduledNextDay": "次日",
+        "scheduledHint": "直接选开始到结束；跨零点选更早的结束时间即可（如 23:00 ~ 02:00）。未填时间段时按全天监控。",
+        "scheduledEndRequired": "时间段需要同时填开始和结束时间",
+        "scheduledInvalid": "时间格式不正确",
+        "scheduledEqual": "结束时间不能等于开始时间"
     },
     "quality": {
         "OD": "原画",
