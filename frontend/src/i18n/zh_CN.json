@@ -165,8 +165,6 @@
         "segment": "分段录制",
         "segmentTime": "分段时间（秒）",
         "scheduled": "每日定时监听",
-        "scheduledTime1": "第一时间段",
-        "scheduledTime2": "第二时间段",
         "monitorHours": "监控时长（小时）",
         "messagePush": "开播下播推送",
         "onlyNotify": "仅通知不录制",
@@ -187,7 +185,10 @@
         "scheduledHint": "直接选开始到结束；跨零点选更早的结束时间即可（如 23:00 ~ 02:00）。未填时间段时按全天监控。",
         "scheduledEndRequired": "时间段需要同时填开始和结束时间",
         "scheduledInvalid": "时间格式不正确",
-        "scheduledEqual": "结束时间不能等于开始时间"
+        "scheduledEqual": "结束时间不能等于开始时间",
+        "scheduledTimeN": "第 {n} 个时间段",
+        "scheduledRemove": "删除该时间段",
+        "scheduledAdd": "添加时间段（最多 {max} 段）"
     },
     "quality": {
         "OD": "原画",

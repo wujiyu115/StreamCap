@@ -165,8 +165,6 @@
         "segment": "Segmented recording",
         "segmentTime": "Segment time (seconds)",
         "scheduled": "Daily scheduled monitoring",
-        "scheduledTime1": "Time range 1",
-        "scheduledTime2": "Time range 2",
         "monitorHours": "Monitor hours",
         "messagePush": "Stream start/end push",
         "onlyNotify": "Notify only, no recording",
@@ -187,7 +185,10 @@
         "scheduledHint": "Pick start and end directly; for windows past midnight choose an earlier end time (e.g. 23:00 ~ 02:00). No window means monitoring all day.",
         "scheduledEndRequired": "Both start and end are required for a window",
         "scheduledInvalid": "Invalid time format",
-        "scheduledEqual": "End time cannot equal start time"
+        "scheduledEqual": "End time cannot equal start time",
+        "scheduledTimeN": "Window {n}",
+        "scheduledRemove": "Remove this window",
+        "scheduledAdd": "Add a window (max {max})"
     },
     "quality": {
         "OD": "OD",

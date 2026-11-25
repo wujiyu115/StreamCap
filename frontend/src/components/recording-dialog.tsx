@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query"
-import { Loader2 } from "lucide-react"
+import { Loader2, Plus, X } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { recordingsApi, settingsApi } from "@/api"
 import type { Recording } from "@/api/types"
@@ -36,23 +36,16 @@ const VIDEO_FORMATS = ["TS", "MP4", "FLV", "MKV", "MOV", "NUT"]
 const AUDIO_FORMATS = ["WAV", "MP3", "WMA", "M4A", "AAC"]
 const QUALITIES = ["OD", "UHD", "HD", "SD", "LD"]
 
-/** 两段「每日定时监听」的字段名（写成常量给 TS 看，模板字符串下标不被接受） */
-const SCHEDULED_SEGMENTS = [
-    {
-        startKey: "scheduled_start_time_1",
-        endKey: "scheduled_end_time_1",
-        labelKey: "recordingDialog.scheduledTime1",
-    },
-    {
-        startKey: "scheduled_start_time_2",
-        endKey: "scheduled_end_time_2",
-        labelKey: "recordingDialog.scheduledTime2",
-    },
-] as const satisfies readonly {
-    startKey: keyof FormState
-    endKey: keyof FormState
-    labelKey: string
-}[]
+/** 「每日定时监听」一个时间段：界面填开始/结束，保存时换算成时长 */
+interface ScheduleWindow {
+    start: string
+    end: string
+}
+
+/** 时间段上限：再多就是把一天切碎，等于全天监控，还会让展示和排障都变乱 */
+const MAX_SCHEDULE_WINDOWS = 8
+
+const EMPTY_WINDOW: ScheduleWindow = { start: "", end: "" }
 
 const URL_PLATFORMS = [
     { key: "douyin", label: "抖音直播", base: "https://live.douyin.com/" },
@@ -75,11 +68,8 @@ interface FormState {
     segment_record: boolean
     segment_time: string
     scheduled_recording: boolean
-    scheduled_start_time_1: string
-    scheduled_start_time_2: string
-    // 界面填「开始 ~ 结束」，保存时换算成后端的 monitor_hours（时长）
-    scheduled_end_time_1: string
-    scheduled_end_time_2: string
+    // 可变长度：界面填「开始 ~ 结束」，保存时换算成后端的 monitor_hours（时长）
+    schedule_windows: ScheduleWindow[]
     enabled_message_push: boolean
     only_notify_no_record: boolean
     special_attention: boolean
@@ -87,11 +77,24 @@ interface FormState {
     monitor_status: boolean
 }
 
+/**
+ * 「开始,…」+「时长,…」→ 界面用的窗口数组。
+ * 新建（没有历史配置）默认给**一段空行**；老数据有几段还原几段，不做截断。
+ */
+function toWindows(starts: string[], hours: string[]): ScheduleWindow[] {
+    const windows = starts
+        .map((start, i) => ({
+            start,
+            end: start ? endFromHours(start, hours[i] || "5") : "",
+        }))
+        .filter((w) => w.start || w.end)
+    return windows.length ? windows : [{ ...EMPTY_WINDOW }]
+}
+
 function initialState(rec: Recording | null, defaults: Record<string, unknown>): FormState {
-    const scheduled = rec?.scheduled_start_time?.split(",") ?? []
-    const hours = rec?.monitor_hours?.split(",") ?? []
-    const start1 = scheduled[0]?.trim() ?? ""
-    const start2 = scheduled[1]?.trim() ?? ""
+    // 老数据是「开始,开始,…」+「时长,时长,…」按索引配对，全量还原（不截断段数）
+    const starts = (rec?.scheduled_start_time ?? "").split(",").map((x) => x.trim())
+    const hours = (rec?.monitor_hours ?? "").split(",").map((x) => x.trim())
     const mediaType =
         rec && !VIDEO_FORMATS.includes(rec.record_format) ? "audio" : "video"
     return {
@@ -110,11 +113,7 @@ function initialState(rec: Recording | null, defaults: Record<string, unknown>):
             : Boolean(defaults.segmented_recording_enabled ?? false),
         segment_time: String(rec?.segment_time ?? defaults.video_segment_time ?? "1800"),
         scheduled_recording: rec?.scheduled_recording ?? false,
-        scheduled_start_time_1: start1,
-        scheduled_start_time_2: start2,
-        // 新建默认「开始 18:00 / 5 小时」的老习惯保留，只是换个显示方式
-        scheduled_end_time_1: start1 ? endFromHours(start1, hours[0]?.trim() || "5") : "",
-        scheduled_end_time_2: start2 ? endFromHours(start2, hours[1]?.trim() || "5") : "",
+        schedule_windows: toWindows(starts, hours),
         enabled_message_push: rec?.enabled_message_push ?? false,
         only_notify_no_record: rec?.only_notify_no_record ?? false,
         special_attention: rec?.special_attention ?? false,
@@ -243,11 +242,8 @@ export function RecordingDialog({
         // 结束早于开始按次日算（23:00 → 02:00 = 3h）；两者相等等于不监控，直接拦。
         const starts: string[] = []
         const hoursList: string[] = []
-        for (const [start, end] of [
-            [form.scheduled_start_time_1, form.scheduled_end_time_1],
-            [form.scheduled_start_time_2, form.scheduled_end_time_2],
-        ]) {
-            if (!start && !end) continue
+        for (const { start, end } of form.schedule_windows) {
+            if (!start && !end) continue // 空行（用户点了「添加时间段」没填）直接忽略
             if (!start || !end) {
                 toast.error(t("recordingDialog.scheduledEndRequired"))
                 return
@@ -385,6 +381,10 @@ function SingleForm({
     pending: boolean
 }) {
     const { t, tf } = useI18n()
+    const onWindowsChange = (windows: ScheduleWindow[]) => {
+        // 至少留一行空行，否则整块 UI 会消失、用户不知道去哪加回来
+        onChange("schedule_windows", windows.length ? windows : [{ ...EMPTY_WINDOW }])
+    }
     return (
         <form
             className="space-y-4"
@@ -570,17 +570,36 @@ function SingleForm({
                 </div>
                 {form.scheduled_recording && (
                     <>
-                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                            {SCHEDULED_SEGMENTS.map((seg, idx) => {
-                                const { startKey, endKey, labelKey } = seg
-                                const start = form[startKey]
-                                const end = form[endKey]
+                        <div className="space-y-2" data-testid="scheduled-windows">
+                            {form.schedule_windows.map((win, idx) => {
+                                const start = win.start
+                                const end = win.end
                                 const hours = hoursFromRange(start, end)
                                 return (
-                                    <div key={startKey} className="space-y-1.5">
-                                        <Label className="text-xs text-muted-foreground">
-                                            {t(labelKey)}
-                                        </Label>
+                                    <div
+                                        key={idx}
+                                        className="rounded-md border border-dashed p-2"
+                                        data-testid={`scheduled-window-${idx + 1}`}
+                                    >
+                                        <div className="mb-1 flex items-center justify-between">
+                                            <Label className="text-xs text-muted-foreground">
+                                                {tf("recordingDialog.scheduledTimeN", { n: idx + 1 })}
+                                            </Label>
+                                            <Button
+                                                type="button"
+                                                variant="ghost"
+                                                size="icon"
+                                                className="h-5 w-5 text-muted-foreground"
+                                                title={t("recordingDialog.scheduledRemove")}
+                                                aria-label={t("recordingDialog.scheduledRemove")}
+                                                data-testid={`scheduled-remove-${idx + 1}`}
+                                                onClick={() => onWindowsChange(
+                                                    form.schedule_windows.filter((_, i) => i !== idx),
+                                                )}
+                                            >
+                                                <X className="h-3.5 w-3.5" />
+                                            </Button>
+                                        </div>
                                         <div className="flex items-center gap-1.5">
                                             <Input
                                                 type="time"
@@ -589,11 +608,21 @@ function SingleForm({
                                                 value={start}
                                                 onChange={(e) => {
                                                     const value = e.target.value
-                                                    onChange(startKey, value)
                                                     // 先填开始：结束空着就按默认 5 小时预填，省一次输入
-                                                    if (value && !form[endKey]) {
-                                                        onChange(endKey, endFromHours(value, "5"))
-                                                    }
+                                                    onWindowsChange(
+                                                        form.schedule_windows.map((w, i) =>
+                                                            i === idx
+                                                                ? {
+                                                                      start: value,
+                                                                      end:
+                                                                          w.end ||
+                                                                          (value
+                                                                              ? endFromHours(value, "5")
+                                                                              : ""),
+                                                                  }
+                                                                : w,
+                                                        ),
+                                                    )
                                                 }}
                                             />
                                             <span className="shrink-0 text-muted-foreground">~</span>
@@ -602,7 +631,13 @@ function SingleForm({
                                                 step="1"
                                                 aria-label={t("recordingDialog.scheduledEnd")}
                                                 value={end}
-                                                onChange={(e) => onChange(endKey, e.target.value)}
+                                                onChange={(e) =>
+                                                    onWindowsChange(
+                                                        form.schedule_windows.map((w, i) =>
+                                                            i === idx ? { ...w, end: e.target.value } : w,
+                                                        ),
+                                                    )
+                                                }
                                             />
                                         </div>
                                         <p
@@ -622,6 +657,20 @@ function SingleForm({
                                 )
                             })}
                         </div>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="w-full"
+                            data-testid="scheduled-add"
+                            disabled={form.schedule_windows.length >= MAX_SCHEDULE_WINDOWS}
+                            onClick={() =>
+                                onWindowsChange([...form.schedule_windows, { ...EMPTY_WINDOW }])
+                            }
+                        >
+                            <Plus className="mr-1 h-3.5 w-3.5" />
+                            {tf("recordingDialog.scheduledAdd", { max: MAX_SCHEDULE_WINDOWS })}
+                        </Button>
                         <p className="text-xs text-muted-foreground">
                             {t("recordingDialog.scheduledHint")}
                         </p>
