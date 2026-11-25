@@ -575,7 +575,11 @@
         "uploadChannelNotFound": "Upload channel not found",
         "uploadNoFiles": "No file selected",
         "uploadNoVideo": "No video file in the selection",
-        "uploadNoChannel": "No upload channel selected"
+        "uploadNoChannel": "No upload channel selected",
+        "douyinUnfollowTargetMissing": "This account is not in your following list (already unfollowed, or the list is stale). Refresh and try again",
+        "douyinUnfollowFailed": "Unfollow failed — Douyin rejected the request. Try again later",
+        "douyinUnfollowUnverified": "Request sent but Douyin still shows Following — it likely did not take effect. Retry or unfollow manually on Douyin",
+        "douyinWriteRateLimited": "Rate limited by Douyin — wait a few minutes and retry"
     },
     "following": {
         "title": "Live",
@@ -623,8 +627,11 @@
         "playerUnmute": "Unmute",
         "playerFullscreen": "Fullscreen",
         "scanLogin": "Scan QR to sign in",
-        "unfollow": "Unfollow in Douyin",
-        "unfollowHint": "Douyin no longer allows third-party unfollow. \"{name}\" will open in a new tab — click \"Following → Unfollow\" there."
+        "unfollow": "Unfollow",
+        "unfollowHint": "Really unfollow \"{name}\"? This takes effect immediately; you would have to follow again from Douyin.",
+        "unfollowConfirm": "Unfollow",
+        "unfollowDone": "Unfollowed \"{name}\"",
+        "unfollowUnverified": "Unfollow request sent, but the latest follow state of \"{name}\" could not be read — please confirm on Douyin"
     },
     "analytics": {
         "title": "Analytics",

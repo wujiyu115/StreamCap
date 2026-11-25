@@ -115,6 +115,13 @@ export const douyinApi = {
             `/douyin/live/stream?web_rid=${encodeURIComponent(webRid)}` +
                 `${quality ? `&quality=${encodeURIComponent(quality)}` : ""}${refresh ? "&refresh=true" : ""}`,
         ),
+    // 真取关：走创作者后台（后端用持久 profile 的浏览器发请求 + 回读校验）
+    unfollow: (user: { sec_uid: string; nickname?: string; avatar?: string }) =>
+        api.post<import("./types").DouyinUnfollowResult>("/douyin/following/unfollow", {
+            sec_uid: user.sec_uid,
+            nickname: user.nickname ?? "",
+            avatar: user.avatar ?? "",
+        }),
     // Cookie 寿命（本地解析 sid_guard）：设置页/关注页用来提前提醒续期
     cookieStatus: () => api.get<import("./types").DouyinCookieStatus>("/douyin/cookie"),
     // 扫码登录：start 幂等（已在跑就返回当前状态），status 轮询到 confirmed 时后端顺手把 Cookie 写进设置

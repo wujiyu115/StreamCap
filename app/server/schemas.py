@@ -122,6 +122,15 @@ class PoseTaskSubmitRequest(BaseModel):
     overrides: dict | None = None
 
 
+class DouyinUnfollowRequest(BaseModel):
+    """取消关注：``sec_uid`` 必填；``nickname``/``avatar`` 用来在创作者后台的关注列表里
+    定位目标（头像 ID 优先，昵称兜底）。"""
+
+    sec_uid: str = Field(..., min_length=1, max_length=256)
+    nickname: str = Field("", max_length=128)
+    avatar: str = Field("", max_length=512)
+
+
 class UploadEnqueueRequest(BaseModel):
     """手动批量上传：paths 是媒体根目录下的相对路径（文件或文件夹，文件夹递归展开）。"""
 

@@ -429,6 +429,13 @@ export interface DouyinLiveStream {
 }
 
 /** 抖音 Cookie 登录态寿命（解析本地 sid_guard，不发出网请求） */
+/** 取消关注结果：verified 为 true 才代表回读确认已取关（status_code 0 不算数） */
+export interface DouyinUnfollowResult {
+    ok: boolean
+    nickname: string
+    verified: boolean
+}
+
 export interface DouyinCookieStatus {
     has_cookie: boolean
     /** missing 没配 / unknown 读不到寿命 / expired 已过期 / expiring 快到期 / ok 还早 */

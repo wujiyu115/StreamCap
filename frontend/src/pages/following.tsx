@@ -96,11 +96,13 @@ function UserRow({
     room,
     onMonitor,
     onUnfollow,
+    unfollowing,
 }: {
     user: DouyinFollowingUser
     room?: DouyinLiveRoom
     onMonitor: (room: DouyinLiveRoom) => void
     onUnfollow: (user: DouyinFollowingUser) => void
+    unfollowing: boolean
 }) {
     const { t, tf } = useI18n()
     const isLive = Boolean(room)
@@ -154,22 +156,18 @@ function UserRow({
                     {t("following.monitor")}
                 </Button>
             )}
-            <a
-                href={`https://www.douyin.com/user/${user.sec_uid}`}
-                target="_blank"
-                rel="noreferrer"
+            <Button
+                size="icon"
+                variant="ghost"
+                className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
                 title={t("following.unfollow")}
+                aria-label={t("following.unfollow")}
                 data-testid={`unfollow-${user.sec_uid}`}
-                className="shrink-0 text-muted-foreground hover:text-destructive"
-                onClick={(e) => {
-                    // 中键/⌘ 点击照旧走原生行为，左键走带说明的确认框
-                    if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return
-                    e.preventDefault()
-                    onUnfollow(user)
-                }}
+                disabled={unfollowing}
+                onClick={() => onUnfollow(user)}
             >
-                <UserMinus className="h-4 w-4" />
-            </a>
+                {unfollowing ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserMinus className="h-4 w-4" />}
+            </Button>
         </div>
     )
 }
@@ -287,6 +285,8 @@ export default function FollowingPage() {
     const [playerRoom, setPlayerRoom] = useState<DouyinLiveRoom | null>(null)
     const [loginOpen, setLoginOpen] = useState(false)
     const [refreshing, setRefreshing] = useState(false)
+    // 正在取关的 sec_uid 集合：逐行转圈 + 防重复点击
+    const [unfollowing, setUnfollowing] = useState<Set<string>>(() => new Set())
     const confirmBox = useConfirm()
 
     // Cookie 是否已配置（没配就不用打接口了，直接给提示）
@@ -375,17 +375,37 @@ export default function FollowingPage() {
         setDialogOpen(true)
     }
 
-    // 取消关注：抖音从 2026-08 起给行为接口（关注/取关、点赞…）加了站点侧签名
-    // （x-secsdk-web-signature / ArgusSecurityPlugin），服务端复现不出来——实测同一份有效
-    // Cookie 打读接口 200、打 commit/follow 一律 403，注入 Cookie 的 headless 浏览器也被
-    // 判成「未登录」。所以这里不假装能取关：确认后把人送到抖音主页，由用户在那里点。
+    // 取消关注：后端走创作者后台（常驻浏览器 + 回读校验），真的取关，不再是跳转。
+    // 2026-11-24 实测：写接口必须真浏览器发、必须带页面自己那套 query，且 status_code
+    // 为 0 也可能没生效——所以后端会回读对方主页按钮，前端只认 verified。
     const askUnfollow = async (target: DouyinFollowingUser) => {
         const name = target.nickname || target.unique_id || target.sec_uid
         const ok = await confirmBox({
             description: tf("following.unfollowHint", { name }),
-            confirmText: t("following.openProfile"),
+            confirmText: t("following.unfollowConfirm"),
         })
-        if (ok) window.open(`https://www.douyin.com/user/${target.sec_uid}`, "_blank", "noopener,noreferrer")
+        if (!ok) return
+        setUnfollowing((prev) => new Set(prev).add(target.sec_uid))
+        try {
+            const res = await douyinApi.unfollow(target)
+            if (res.verified) {
+                toast.success(tf("following.unfollowDone", { name }))
+            } else {
+                // 接口回 0 但不一定真生效，后端读不到主页状态时也走这里：提醒用户去核实
+                toast.warning(tf("following.unfollowUnverified", { name }))
+            }
+            // 关注关系变了：内存里的分页缓存与游标链都不准了，整页重取
+            queryClient.removeQueries({ queryKey: ["douyin-following"] })
+            queryClient.removeQueries({ queryKey: queryKeys.live })
+        } catch (e) {
+            toast.error(errorText(e) ?? t("common.failed"))
+        } finally {
+            setUnfollowing((prev) => {
+                const next = new Set(prev)
+                next.delete(target.sec_uid)
+                return next
+            })
+        }
     }
 
     // Cookie 失效时的「扫码登录」入口：不用再手动去浏览器里导 Cookie
@@ -440,6 +460,7 @@ export default function FollowingPage() {
             room={liveBySecUid.get(user.sec_uid) ?? (user.short_id ? liveByShortId.get(user.short_id) : undefined)}
             onMonitor={openMonitor}
             onUnfollow={askUnfollow}
+            unfollowing={unfollowing.has(user.sec_uid)}
         />
     )
 

@@ -30,6 +30,10 @@ DOUYIN_FOLLOWING_UNAVAILABLE = "err.douyinFollowingUnavailable"
 DOUYIN_LOGIN_UNAVAILABLE = "err.douyinLoginUnavailable"
 DOUYIN_LOGIN_PAGE_BLOCKED = "err.douyinLoginPageBlocked"
 DOUYIN_LOGIN_FAILED = "err.douyinLoginFailed"
+DOUYIN_UNFOLLOW_TARGET_MISSING = "err.douyinUnfollowTargetMissing"
+DOUYIN_UNFOLLOW_FAILED = "err.douyinUnfollowFailed"
+DOUYIN_UNFOLLOW_UNVERIFIED = "err.douyinUnfollowUnverified"
+DOUYIN_WRITE_RATE_LIMITED = "err.douyinWriteRateLimited"
 
 # 人体识别
 POSE_MANAGER_UNAVAILABLE = "err.poseUnavailable"

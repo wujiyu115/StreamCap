@@ -19,10 +19,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from ...core.platforms import douyin_following as following
 from ...core.platforms import douyin_live_feed as live_feed
 from ...core.platforms import douyin_login as login
+from ...core.platforms import douyin_write as write_api
 from ...core.platforms.room_validity import resolve_platform_proxy
 from ...utils.logger import logger
 from .. import error_codes as errors
 from ..deps import get_current_user, get_services
+from ..schemas import DouyinUnfollowRequest
 
 router = APIRouter(prefix="/api/douyin", tags=["douyin"])
 
@@ -34,6 +36,17 @@ _ERROR_CODES = {
     "login_required": (400, errors.DOUYIN_LOGIN_REQUIRED),
     "bad_response": (502, errors.DOUYIN_UPSTREAM_ERROR),
     "upstream_error": (502, errors.DOUYIN_UPSTREAM_ERROR),
+}
+
+# 写操作（取关）的错误码映射：创作者后台那套，比读接口多几种「有账号含义」的失败
+_WRITE_ERROR_CODES = {
+    "login_required": (400, errors.DOUYIN_LOGIN_REQUIRED),
+    "target_not_found": (404, errors.DOUYIN_UNFOLLOW_TARGET_MISSING),
+    "rate_limited": (429, errors.DOUYIN_WRITE_RATE_LIMITED),
+    "verify_failed": (502, errors.DOUYIN_UNFOLLOW_UNVERIFIED),
+    "upstream_error": (502, errors.DOUYIN_UNFOLLOW_FAILED),
+    "browser_unavailable": (501, errors.DOUYIN_LOGIN_UNAVAILABLE),
+    "failed": (502, errors.DOUYIN_UNFOLLOW_FAILED),
 }
 
 # 扫码登录：同一时刻只允许一个会话（内存里握着它在跑的浏览器线程）
@@ -121,6 +134,34 @@ async def list_following_live(
     cookie, proxy = _douyin_context(services)
     store = following.get_store()
     return await _dispatch(services, store.live(cookie, proxy, _slot(services), refresh=refresh))
+
+
+@router.post("/following/unfollow")
+async def unfollow_user(
+    body: DouyinUnfollowRequest,
+    user: str = Depends(get_current_user),
+    services=Depends(get_services),
+):
+    """真取关（走创作者后台 + 常驻浏览器，不是跳转）。
+
+    2026-11-24 实测：创作者后台的写接口必须真浏览器发（httpx 直连 403），且必须带
+    页面自己那套 device query，否则返回 ``status_code: 0`` 却静默 no-op——所以这里
+    写完一律回读对方主页按钮，``verified`` 才代表真取关成功。
+    """
+    if not (services.settings_config.get_cookies_value(_PLATFORM_KEY) or "").strip():
+        raise HTTPException(status_code=400, detail=errors.DOUYIN_COOKIE_MISSING)
+    try:
+        result = await asyncio.to_thread(
+            write_api.unfollow, body.sec_uid, body.nickname, body.avatar
+        )
+    except write_api.DouyinWriteError as exc:
+        status, code = _WRITE_ERROR_CODES.get(exc.code, (502, errors.DOUYIN_UNFOLLOW_FAILED))
+        detail = f"{code}|{exc.message}" if exc.message else code
+        logger.warning(f"Douyin unfollow failed ({exc.code}): {exc.message}")
+        raise HTTPException(status_code=status, detail=detail) from exc
+    # 关注关系变了：内存里那份列表/游标链已经不准，作废掉下次重取
+    following.get_store().reset()
+    return {"ok": True, **result}
 
 
 @router.get("/live/recommend")
@@ -240,6 +281,8 @@ async def _apply_login_cookie(services, cookie: str) -> None:
         manager.on_credentials_updated(_PLATFORM_KEY)
     # 换了 Cookie，关注列表的游标链/缓存的账号资料都作废（缓存本身按 Cookie 指纹隔离）
     following.get_store().reset()
+    # 取关用的常驻浏览器握着旧 profile 的会话，关掉让下次用它新登录的登录态
+    await asyncio.to_thread(write_api.reset_session)
     logger.info(f"Douyin login: 新 Cookie 已写入配置（{len(cookie)} 字符）")
 
 
