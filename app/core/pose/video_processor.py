@@ -207,8 +207,14 @@ class VideoProcessor:
         if self.move_output_to_input and clip_paths:
             moved_paths = self._move_output_to_input(video_path)
 
+        # 一个片段都没切出来时绝不能删原视频：常规分支删了还能靠产物补，这里删了就什么都不剩
+        # （2026-11 复盘：11 月里有 59 条录制被这么清零——全片无正例 / CLIP 整段拒绝 /
+        #   用户中途停止都会让 clip_paths 为空，原视频却照删，几百 MB 到 2GB 的录制人间蒸发）
         if self.delete_original_video:
-            safe_remove_file(video_path)
+            if clip_paths:
+                safe_remove_file(video_path)
+            else:
+                logger.warning(f"识别未产出任何片段，保留原视频不删: {video_path}")
 
         if self._report is not None:
             self._report.finish_video(
