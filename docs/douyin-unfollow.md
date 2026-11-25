@@ -147,3 +147,52 @@ URL    = host + path + "?" + query3 + "&x-secsdk-web-signature=" + sig
 - 关注卡片上的按钮是 `<a href="https://www.douyin.com/user/{sec_uid}">`，点击先弹确认框说明「抖音已不开放第三方直接取消关注」，确认后新标签页打开对方主页，用户自己点「已关注 → 取消关注」。
 - i18n：`following.unfollow`（去抖音取消关注）、`following.unfollowHint`（带主播名）。
 - 仓库里**没有**残留的半成品写接口代码（`commit_follow()`、`POST /api/douyin/following/unfollow`、6 个单测都已在当时移除）。
+
+## 8. 2026-11-24 实测：创作者后台（creator.douyin.com）这条路通了
+
+推翻 §4 那套「要拼 ticket-guard / dtrait / msToken / curl_cffi」的成本估算——**换个后端域名就够了**。下面是生产账号上真跑出来的结果（每次写操作都有回读校验）。
+
+### 8.1 接口（从官方前端 bundle `pages-following.*.js` 扒的原文）
+
+```js
+GET  /aweme/v1/creator/relation/following/list/         // ?cursor=<游标>&count=20
+POST /aweme/v1/creator/relation/following/cancel/       // body {"user_id": "@..."}   取关
+POST /aweme/v1/creator/relation/following/create/       // body {"user_id": "@..."}   关注
+POST /aweme/v1/creator/relation/following/create/v2/    // 申请关注
+POST /aweme/v1/creator/relation/following/multi/cancel/ // 批量取关（body 键名未知，见 8.5）
+GET  /aweme/v1/creator/relation/follower/list/          // 粉丝
+```
+
+宿主是 `https://creator.douyin.com`。`user_id` 不是 sec_uid，是列表里 `user_info_list[].user_id` 那种加密句柄（形如 `@j/dp7bJMT0//sshS8...`），**必须先拉列表拿句柄**。
+
+### 8.2 三条关键实测结论
+
+1. **登录态直接复用**：生产扫码登录用的持久 profile（`config/douyin_login_profile`）打开 `creator.douyin.com/creator-micro/data/following/following` 就是已登录状态，不需要单独登录创作者中心。
+2. **读接口完全不验签**：把模板 URL 里的 `a_bogus` 改垃圾 / 删 `a_bogus` / 删 `msToken` / 两个都删 / 删 `x-secsdk-csrf-token` 头，全部仍 `HTTP 200 status_code=0` 返回 10 条。翻页按游标：`cursor` 传上一页返回值（时间戳），`count` 上限 20；传 `cursor=10`（offset 语义）会返回空。
+3. **写接口必须真浏览器 + 必须带全套 device query**，两条都是硬要求：
+   - `httpx`/`requests` 直连 POST → **403 HTML（`TLB` 边缘）**，与参数无关，是 TLS/指纹层拦的（所以 `curl_cffi` 那条路的替代品就是「用我们自己的 Playwright」）。
+   - 页面内 `fetch()` 但**不带 query** → `HTTP 200 {"status_code":0}` 却**什么都不发生**（静默 no-op，最容易误判成成功）。带上跟 list 一致的全套 query（`aid/app_name/device_platform/.../msToken/a_bogus`）后立刻生效。
+
+### 8.3 真机结果（生产号，抖音号 `fengxuan1904` / 昵称 `Jasmine你少吃点`）
+
+| 步骤 | 请求 | 返回 | 回读校验 |
+| --- | --- | --- | --- |
+| 取关（无 query） | `POST cancel` body `{user_id}` | `200 status_code=0` | **仍在关注** ← 静默失败 |
+| 取关（带 query） | 同上 + 全套 query | `200 status_code=0` | **主页按钮「已关注」→「关注」**，全量扫关注列表 0 命中，总数 409→408 |
+| 关注 | `POST create` + 全套 query | `200 status_code=0` | 目标立刻回到关注列表第 1 页 |
+| 批量取关 | `multi/cancel` 试 `{user_id:[..]}` / `{user_id_list:[..]}` / `{user_ids:".."}` | `status_code=5 参数不合法`（`{user_ids:[..]}` 回 0 但无效） | 键名仍未确认，先别用 |
+
+探测全程**会话没被打死**（读接口一直 200），与 §3.5 在 `www-hj` 上「写失败连带作废登录态」完全不同——creator 后端失败只是失败。节奏上 3 次写操作分散在 2 分钟内没触发任何限流码（阈值未测）。
+
+### 8.4 落地要点（接进 StreamCap 的话）
+
+- 复用 `app/core/platforms/douyin_login.py` 的持久 profile 起 chromium（同一个 `_profile_dir()` + `LAUNCH_ARGS` + `REAL_UA`），**不需要** `curl_cffi`、`ecdsa`、msToken 铸造、secsdk 签名。
+- 每个写操作都要：①拉一次 list 拿句柄 ②`page.evaluate(fetch)` 打写接口（query 从同一次 list 请求里抓 `page.on("request")`）③**回读校验**（`www.douyin.com/user/<sec_uid>` 的 `[data-e2e="user-info-follow-btn"]` 文案，或重新扫 list）。
+- `status_code:0` 不代表成功——8.3 第一行就是反例；接口没有幂等/事务语义，必须回读。
+- 浏览器会话要复用（一次 profile 启动 + 一次页面加载，批量处理），否则每条都要重新付 ~12s 的页面加载成本。
+
+### 8.5 未解
+
+- `multi/cancel` 的 body 键名（批量取关能省请求数，值得再花 10 分钟试 `{user_list:[..]}`、`{user_ids:[], sec_user_ids:[]}` 之类）。
+- 频率阈值：连续取关会被 `15371 操作频率过快` / `444` 拦（GitHub 上同类的经验值是 1.1~1.5s/条，被拦后 30~45s 退避），未实测。
+- 取关后 `create` 立刻关注回来会触发对方「新粉丝」通知，做批量清理时别无谓地关注。
