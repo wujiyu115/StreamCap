@@ -360,7 +360,7 @@ class RecordingManager:
             await self._update_recording(
                 recording=recording,
                 monitor_status=False,
-                display_title=f"[{self._t("monitor_stopped")}] {recording.title}",
+                display_title=f'[{self._t("monitor_stopped")}] {recording.title}',
                 status_info=RecordingStatus.STOPPED_MONITORING,
                 selected=False,
             )
@@ -735,7 +735,7 @@ class RecordingManager:
             if now - recording.last_live_time > days * 86400:
                 recording.monitor_status = False
                 recording.status_info = RecordingStatus.STOPPED_MONITORING
-                recording.display_title = f"[{self._t("monitor_stopped")}] {recording.title}"
+                recording.display_title = f'[{self._t("monitor_stopped")}] {recording.title}'
                 recording.is_checking = False
                 recording.auto_stopped_at = now
                 recording.auto_stop_reason = "idle_days"
@@ -754,7 +754,7 @@ class RecordingManager:
             return False
         recording.monitor_status = False
         recording.status_info = RecordingStatus.STOPPED_MONITORING
-        recording.display_title = f"[{self._t("monitor_stopped")}] {recording.title}"
+        recording.display_title = f'[{self._t("monitor_stopped")}] {recording.title}'
         recording.is_checking = False
         recording.auto_stopped_at = time.time()
         recording.auto_stop_reason = "invalid"
@@ -828,7 +828,7 @@ class RecordingManager:
             return
 
         if not recording.monitor_status:
-            recording.display_title = f"[{self._t("monitor_stopped")}] {recording.title}"
+            recording.display_title = f'[{self._t("monitor_stopped")}] {recording.title}'
             recording.status_info = RecordingStatus.STOPPED_MONITORING
             recording.is_checking = False
             self.services.broadcast_card_update(recording)
@@ -847,11 +847,7 @@ class RecordingManager:
                 recording.scheduled_start_time, recording.monitor_hours
             )
             recording.scheduled_time_range = scheduled_time_range_list
-            in_scheduled = False
-            for scheduled_time_range in scheduled_time_range_list or []:
-                in_scheduled = utils.is_current_time_within_range(scheduled_time_range)
-                if in_scheduled:
-                    break
+            in_scheduled = self.is_in_scheduled_window(scheduled_time_range_list)
 
             if not in_scheduled:
                 recording.status_info = RecordingStatus.NOT_IN_SCHEDULED_CHECK
@@ -940,7 +936,7 @@ class RecordingManager:
                 recording.streamer_name = stream_info.anchor_name
                 self.services.run_coro(self.persist_recordings())
             recording.title = f"{recording.streamer_name} - {self._t(recording.quality)}"
-            recording.display_title = f"[{self._t("is_live")}] {recording.title}"
+            recording.display_title = f'[{self._t("is_live")}] {recording.title}'
 
             if not recording.is_live:
                 recording.is_live = stream_info.is_live
@@ -1000,7 +996,7 @@ class RecordingManager:
             if (
                 not recording.streamer_name.strip()
                 or recording.streamer_name == self._t("live_room")
-                or f"[{self._t("is_live")}]" in recording.display_title
+                or f'[{self._t("is_live")}]' in recording.display_title
             ):
                 recording.update(
                     {
@@ -1098,20 +1094,43 @@ class RecordingManager:
 
     @staticmethod
     async def get_scheduled_time_range(scheduled_start_time, monitor_hours) -> list | None:
+        """把「开始时间,开始时间…」+「小时数,小时数…」拼成 ``HH:MM:SS~HH:MM:SS`` 窗口列表。
+
+        开始时间一律归一化成带秒的 ``%H:%M:%S``：`is_current_time_within_range` 只认这个格式，
+        直接塞 ``18:30`` 会让它抛 ValueError，检测协程整个挂掉、任务永远停在「检测中」。
+        """
         if not scheduled_start_time:
             return None
         scheduled_time_range_list = []
         monitor_hours_list = str(monitor_hours).split(",") if monitor_hours else []
-        for index, start_time in enumerate(str(scheduled_start_time).split(",")):
+        for index, raw_start in enumerate(str(scheduled_start_time).split(",")):
             try:
                 hours = monitor_hours_list[index] if index < len(monitor_hours_list) else ""
+                start_time = utils.normalize_time_str(raw_start)
                 if start_time and hours:
-                    end_time = utils.add_hours_to_time(start_time, float(hours or 5))
-                    scheduled_time_range = f"{start_time}~{end_time}"
-                    scheduled_time_range_list.append(scheduled_time_range)
+                    end_time = utils.add_hours_to_time(start_time, float(hours))
+                    scheduled_time_range_list.append(f"{start_time}~{end_time}")
             except Exception:
-                pass
+                continue
         return scheduled_time_range_list
+
+    @staticmethod
+    def is_in_scheduled_window(scheduled_time_range_list: list | None) -> bool:
+        """当前是否落在任一窗口内。
+
+        **没配出任何有效窗口时按「一直在监控」处理（fail open）**：`定时监控` 打了勾却
+        没填开始时间 / 时间写坏了，最坏的后果应该是照常监控，而不是任务静默地再也不检测。
+        窗口字符串解析失败同理（记一条 warning 后跳过该窗口）。
+        """
+        if not scheduled_time_range_list:
+            return True
+        for time_range in scheduled_time_range_list:
+            try:
+                if utils.is_current_time_within_range(time_range):
+                    return True
+            except Exception as exc:
+                logger.warning(f"Ignore invalid scheduled range {time_range!r}: {exc}")
+        return False
 
     @staticmethod
     async def _reset_stopping_flag(recording: Recording):

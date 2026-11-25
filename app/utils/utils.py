@@ -230,6 +230,23 @@ def open_folder(directory_path: str) -> bool:
     return False
 
 
+def normalize_time_str(time_str: str) -> str | None:
+    """把 ``18:30`` / ``18:30:00`` 统一成 ``HH:MM:SS``；认不出来的返回 None。
+
+    ``is_current_time_within_range`` 只认 ``%H:%M:%S``，前端 ``<input type="time">`` 正常会
+    带秒，但手填 / API 直传常见 ``18:30``，不归一化就会在监控循环里抛 ValueError。
+    """
+    text = str(time_str or "").strip()
+    if not text:
+        return None
+    for time_format in ("%H:%M:%S", "%H:%M"):
+        try:
+            return datetime.strptime(text, time_format).strftime("%H:%M:%S")
+        except ValueError:
+            continue
+    return None
+
+
 def add_hours_to_time(time_str: str, hours_to_add: float) -> str:
     time_formats: list[str] = ["%H:%M:%S", "%H:%M"]
     for time_format in time_formats:
