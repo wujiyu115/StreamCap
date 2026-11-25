@@ -46,6 +46,7 @@ _WRITE_ERROR_CODES = {
     "verify_failed": (502, errors.DOUYIN_UNFOLLOW_UNVERIFIED),
     "upstream_error": (502, errors.DOUYIN_UNFOLLOW_FAILED),
     "browser_unavailable": (501, errors.DOUYIN_LOGIN_UNAVAILABLE),
+    "login_in_progress": (409, errors.DOUYIN_LOGIN_IN_PROGRESS),
     "failed": (502, errors.DOUYIN_UNFOLLOW_FAILED),
 }
 
@@ -150,6 +151,14 @@ async def unfollow_user(
     """
     if not (services.settings_config.get_cookies_value(_PLATFORM_KEY) or "").strip():
         raise HTTPException(status_code=400, detail=errors.DOUYIN_COOKIE_MISSING)
+    # 扫码登录那个浏览器独占同一份 profile（Chrome 会锁），这时候起取关浏览器必失败
+    active = _live_login()
+    if active is not None and active.snapshot()["state"] in (
+        login.STATE_STARTING,
+        login.STATE_WAITING,
+        login.STATE_CONFIRMING,
+    ):
+        raise HTTPException(status_code=409, detail=errors.DOUYIN_LOGIN_IN_PROGRESS)
     try:
         result = await asyncio.to_thread(
             write_api.unfollow, body.sec_uid, body.nickname, body.avatar
@@ -289,6 +298,9 @@ async def _apply_login_cookie(services, cookie: str) -> None:
 @router.post("/login")
 async def start_login(user: str = Depends(get_current_user), services=Depends(get_services)):
     """开始一次扫码登录（已在跑就直接返回当前状态，不会开第二个浏览器）。"""
+    if _live_login() is None:
+        # 取关用的常驻浏览器握着同一份 profile（Chrome 单例锁），先关掉再起登录浏览器
+        await asyncio.to_thread(write_api.reset_session)
     session = _live_login() or _start_login()
     deadline = asyncio.get_running_loop().time() + _LOGIN_START_GRACE
     # 等一小会儿：没装 playwright 之类会秒失败，直接报出来比让前端白轮询一轮强

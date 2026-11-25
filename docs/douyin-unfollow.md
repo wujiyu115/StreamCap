@@ -196,3 +196,37 @@ GET  /aweme/v1/creator/relation/follower/list/          // 粉丝
 - `multi/cancel` 的 body 键名（批量取关能省请求数，值得再花 10 分钟试 `{user_list:[..]}`、`{user_ids:[], sec_user_ids:[]}` 之类）。
 - 频率阈值：连续取关会被 `15371 操作频率过快` / `444` 拦（GitHub 上同类的经验值是 1.1~1.5s/条，被拦后 30~45s 退避），未实测。
 - 取关后 `create` 立刻关注回来会触发对方「新粉丝」通知，做批量清理时别无谓地关注。
+
+## 9. 落地（2026-11-25 已上线）
+
+`app/core/platforms/douyin_write.py` + `POST /api/douyin/following/unfollow` + 关注页「取消关注」按钮。
+
+### 9.1 结构
+
+| 部件 | 干什么 |
+| --- | --- |
+| `CreatorSession`（模块级单例） | 用 `douyin_login._profile_dir()` + `LAUNCH_ARGS` + `REAL_UA` 起 chromium，打开创作者关注页，`page.on("request")` 抓 list 请求的 device query，之后所有请求都在这个页面上下文里 `fetch` |
+| `resolve_user_id(nickname, avatar)` | 翻 creator 关注列表建映射（`aweme-avatar/<key>` → `user_id`，昵称兜底），缓存 300s；找不到就报 `target_not_found`，**绝不猜** |
+| `cancel_follow(user_id)` | 带全套 query POST `relation/following/cancel/`，写前至少间隔 1.5s；`status_code` 非 0 直接报错 |
+| `is_following(sec_uid)` | 开第二个 tab 去 `www.douyin.com/user/<sec_uid>`，读 `[data-e2e="user-info-follow-btn"]` 文案（15s 超时） |
+| `unfollow()` | 上面三步串起来，回读 `True` → `verify_failed`；读不到 → `verified:false`（前端提示去主页核实） |
+
+### 9.2 几个必须记住的坑
+
+- **`GOTO_TIMEOUT` 写成秒会变成 60 毫秒**：Playwright 的 `timeout` 是毫秒，第一次验证就是 `Page.goto: Timeout 60ms exceeded`。
+- **登录墙 URL 不变**：没登录时页面**停在** `/creator-micro/data/following/following`，只有正文里出现「扫码登录 / 密码登录」，所以每 1s 探一次正文，别等满 40s（实测 42s → 3.7s）。
+- **profile 单例锁**：取关的常驻浏览器和扫码登录浏览器用同一份 profile，`start_login` 前要 `reset_session()`，登录进行中取关直接回 409 `err.douyinLoginInProgress`；反过来 launch 也带一次 2s 重试。
+- **creator 列表没有 uid**：只有 `user_id`（加密句柄，形如 `@j/dp7bJMT0//sshS8r…`，跨会话稳定但对不上 sec_uid）和 `avatar`，所以匹配只能靠头像 ID；`total` 字段叫 **`total_num`**（写成 `total` 会恒为 None）。
+- **写操作必须丢线程**：整段 `await asyncio.to_thread(write_api.unfollow, ...)`，浏览器同步 API 不能进事件循环。
+
+### 9.3 生产验证（2026-11-25，抖音号 fengxuan1904 / Jasmine你少吃点）
+
+| 层 | 结果 |
+| --- | --- |
+| 单测 `tests/test_douyin_unfollow.py` | 10 passed（头像键/目标匹配/query 清洗/接口错误码 6 种/无 Cookie/成功后清缓存）；全量 412 passed |
+| 本机隔离实例（端口 6140，假 Cookie） | 4/4：无 Cookie 400、缺参 422、无登录态 400 `err.douyinLoginRequired`（3.9s，不 500 不挂死） |
+| 生产 HTTP（真号） | 关注回来（creator `create`，total 408→409）→ `POST /api/douyin/following/unfollow` **200 `verified:true` 29.6s**（冷启）→ 复核 www `total=408`、creator 扫描 0 命中；热会话下「查无此人」 404 `err.douyinUnfollowTargetMissing` 仅 6.9s |
+| 生产 UI（Playwright 打 6006） | 4/4：切到「全部关注」tab → 行出现 → 点击 → 确认框带昵称 → toast「已取消关注「Jasmine你少吃点」」→ 行消失，截图 `/tmp/ui_unfollow.png` |
+| 副作用检查 | 取关后监控 56 条原样、关注列表缓存按预期作废（`following.get_store().reset()`），容器日志无 Traceback |
+
+最终状态：`fengxuan1904` 未关注（两侧一致），关注总数 408。

@@ -579,7 +579,8 @@
         "douyinUnfollowTargetMissing": "在你关注的列表里没找到这个账号（可能已被取消关注，或列表还没刷新），刷一下列表再试",
         "douyinUnfollowFailed": "取消关注失败，抖音接口没有接受这次请求，稍后重试",
         "douyinUnfollowUnverified": "请求已发出，但抖音仍显示「已关注」——多半没生效，稍后重试或去抖音主页手动取消",
-        "douyinWriteRateLimited": "操作太快被抖音限流了，等几分钟再试"
+        "douyinWriteRateLimited": "操作太快被抖音限流了，等几分钟再试",
+        "douyinLoginInProgress": "正在扫码登录中，等登录完成再取关"
     },
     "following": {
         "title": "直播",

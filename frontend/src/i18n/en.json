@@ -579,7 +579,8 @@
         "douyinUnfollowTargetMissing": "This account is not in your following list (already unfollowed, or the list is stale). Refresh and try again",
         "douyinUnfollowFailed": "Unfollow failed — Douyin rejected the request. Try again later",
         "douyinUnfollowUnverified": "Request sent but Douyin still shows Following — it likely did not take effect. Retry or unfollow manually on Douyin",
-        "douyinWriteRateLimited": "Rate limited by Douyin — wait a few minutes and retry"
+        "douyinWriteRateLimited": "Rate limited by Douyin — wait a few minutes and retry",
+        "douyinLoginInProgress": "A QR sign-in is in progress — wait for it to finish, then unfollow"
     },
     "following": {
         "title": "Live",
