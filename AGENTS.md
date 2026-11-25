@@ -121,18 +121,23 @@ StreamCap 的生产部署目标是 Unraid 7.x 服务器 **tank**（`192.168.31.1
 关监控会**连带停掉正在录的**（`stop_monitor_recording` 内部就调 `stop_recording`），所以一条请求就够了：
 
 ```bash
-IDS=$(curl -s localhost:6006/api/recordings | jq -c '[.recordings[].rec_id]')
+# 0) 先存一份部署前快照（出事后能逐条核对），并且**只挑现在开着监控的** id
+curl -s localhost:6006/api/recordings > /tmp/rec_before.json
+jq -c '[.recordings[] | select(.monitor_status) | .rec_id]' /tmp/rec_before.json > /tmp/frozen_ids.json
+echo "要冻 $(jq length /tmp/frozen_ids.json) 条 / 共 $(jq '.recordings|length' /tmp/rec_before.json) 条"
 # 1) 关监控 = 停监控 + 停录制，monitor_status 会持久化进 recordings.json
 curl -s -X POST localhost:6006/api/recordings/batch-monitor \
-     -H 'Content-Type: application/json' -d "{\"ids\":$IDS,\"enabled\":false}"
-# 2) 确认停干净（应为 0），再等几秒让 ffmpeg 收尾
+     -H 'Content-Type: application/json' -d "{\"ids\":$(cat /tmp/frozen_ids.json),\"enabled\":false}"
+# 2) 确认停干净（应为 0），再等几秒让 ffmpeg 收尾（收尾过的分段 ffprobe 能读、atom 有 moov）
 curl -s localhost:6006/api/recordings | jq '[.recordings[] | select(.is_recording or .monitor_status)] | length'
 # 3) 走上面 5 步 rebuild_container + docker start
-# 4) 部署完把监控开回来 —— 漏了这步 = 全站静默不监控（徽章看着正常，但永不再检测）
+# 4) 部署完**只把 /tmp/frozen_ids.json 这份名单**开回来
+#    漏了这步 = 冻过的那批静默不监控；拿全部 id 开 = 把用户早先关掉的也一并打开（见下条坑）
 curl -s -X POST localhost:6006/api/recordings/batch-monitor \
-     -H 'Content-Type: application/json' -d "{\"ids\":$IDS,\"enabled\":true}"
+     -H 'Content-Type: application/json' -d "{\"ids\":$(cat /tmp/frozen_ids.json),\"enabled\":true}"
 ```
 
+- **别拿「全部任务 id」冻/恢复**（2026-11-24 生产事故）：生产 175 条里只有 59 条开着监控，剩下 116 条是早先关掉的（49 条 `auto_stop_reason=idle_days` 自动停，其余更早停、没记原因）。全量 `enabled:false` 看不出异常（它们本来就关着，`count` 照样报 175），但全量 `enabled:true` 会把这 116 条一起打开：白烧 116 个任务的抖音检测预算，里面房间正播的还会直接开录（当天 4 条不在监控列表里的任务就是被这么拉起来录的）。所以冻之前先按 `monitor_status=true` 过滤，恢复用同一份名单；事后要还原成「未监控」用 `PUT /api/recordings/{id}` 的 `{"monitor_status": false}`（只改字段、不加标题前缀、不触发检测，代价是 `status_info` 会留 `MONITORING` 的陈旧值——前端按 `state` 渲染，`compute_card_state` 里 `not monitor_status` 先判 stopped，显示无碍）
 - 隔离环境实测（2026-11-24，3 条任务）：关监控后 `status_info=STOPPED_MONITORING`、`monitor_status=false` 且落盘；之后 75s（跨过 30s 快检窗口）**新增检测 0 次**、`is_recording` 恒 false；`enabled:true` 后立刻恢复检测。机制上监控循环第一行就是 `if not recording.monitor_status or recording.is_recording: continue`
 - 最小动作版：只把 `is_recording=true` 的那几条 id 传给 `batch-monitor` 关监控（其余任务没在录，重建不影响它们的文件）——但重建那一瞬间若有房间刚开播被拉起录制，照样丢，170 条任务时每轮都在检测，概率不为零
 - 恢复监控时每条任务会立刻 `check_if_live(priority=True)`，170 条要按 `monitor_platform_min_interval_seconds` 匀速放行，前几分钟请求排队属正常，**别去关节奏门**
