@@ -8,7 +8,9 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from ...core.platforms import anchor_profile
 from ...core.platforms.platform_handlers import get_platform_info
+from ...core.platforms.room_validity import resolve_platform_proxy
 from ...models.recording.recording_model import Recording
 from ...models.recording.recording_status_model import RecordingStatus
 from ...utils.logger import logger
@@ -27,6 +29,8 @@ from ..schemas import (
 router = APIRouter(prefix="/api/recordings", tags=["recordings"])
 
 _ERROR_STATUSES = (RecordingStatus.RECORDING_ERROR, RecordingStatus.LIVE_STATUS_CHECK_ERROR)
+# 解析主播主页的超时：抖音 room enter 正常 1~2s，超了就降级成直播间地址
+PROFILE_URL_TIMEOUT = 20.0
 BATCH_QUALITY_MAP = {"0": "OD", "1": "UHD", "2": "HD", "3": "SD", "4": "LD"}
 
 
@@ -313,6 +317,55 @@ async def get_validity_snapshot(
     if fut is None:
         raise HTTPException(status_code=500, detail=errors.VALIDITY_CHECK_UNAVAILABLE)
     return await asyncio.wrap_future(fut)
+
+
+@router.get("/{rec_id}/profile-url")
+async def get_recording_profile_url(
+    rec_id: str,
+    user: str = Depends(get_current_user),
+    services=Depends(get_services),
+):
+    """主播主页地址（点主播名旁边的小图标时用）。
+
+    绝大多数平台直播间页就是主播主页，只有抖音 / B 站要查一次（抖音：room enter 的
+    `data.user.sec_uid` → `www.douyin.com/user/<sec_uid>`；B 站：`room/get_info` 的
+    `data.uid`）。查询走后台 loop 的平台节奏门（和周期监控共享风控预算），结果按 URL
+    缓存在内存里；查不到就降级成直播间地址，保证入口点得动。
+    """
+    rm = services.recording_manager
+    recording = _get_recording_or_404(rm, rec_id)
+    url = recording.url
+    platform_key = anchor_profile.platform_key_of(url)
+    if platform_key == "douyin":
+        cookie = services.settings_config.get_cookies_value("douyin") or ""
+    else:
+        cookie = None
+    proxy = resolve_platform_proxy(services.settings_config.user_config, platform_key)
+
+    async def _run():
+        return await anchor_profile.resolve_profile_url(
+            url,
+            proxy=proxy,
+            cookies=cookie,
+            slot=(lambda: rm.platform_slot(platform_key)) if platform_key else None,
+        )
+
+    coro = _run()
+    future = services.run_coro(coro)
+    link = None
+    if future is None:
+        coro.close()  # 后台 loop 不可用时别把协程漏成 RuntimeWarning
+    else:
+        try:
+            link = await asyncio.wait_for(asyncio.wrap_future(future), timeout=PROFILE_URL_TIMEOUT)
+        except asyncio.TimeoutError:
+            logger.warning(f"Profile url resolve timed out: {url}")
+        except Exception as exc:  # 解析失败只降级，不把跳转入口打成 500
+            logger.warning(f"Profile url resolve failed: {type(exc).__name__}: {exc}")
+
+    payload = link.to_dict() if link else {"url": url, "kind": "room", "cached": False, "reason": "unavailable"}
+    payload["platform_key"] = platform_key
+    return payload
 
 
 @router.post("/check-validity")

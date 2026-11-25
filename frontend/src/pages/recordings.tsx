@@ -42,6 +42,7 @@ import { displayDuration, formatDuration, formatTimestamp, StatusBadge, stateLab
 import { translateError, useI18n } from "@/i18n"
 import { toast } from "sonner"
 import { CopyIdButton } from "@/components/copy-id-button"
+import { StreamerProfileButton } from "@/components/streamer-profile-button"
 import { RecordingDialog } from "@/components/recording-dialog"
 import { ValidityCheckDialog } from "@/components/validity-check-dialog"
 import { useConfirm } from "@/components/confirm-dialog"
@@ -592,6 +593,11 @@ export default function RecordingsPage() {
                                         <div className="flex items-center gap-0.5">
                                             <span className="truncate font-medium">{r.streamer_name || "-"}</span>
                                             <CopyIdButton url={r.url} className="h-6 w-6 shrink-0 p-0" iconClassName="h-3 w-3" />
+                                            <StreamerProfileButton
+                                                recId={r.rec_id}
+                                                className="h-6 w-6 shrink-0 p-0"
+                                                iconClassName="h-3 w-3"
+                                            />
                                             <span className="sm:hidden">
                                                 <ActivityBadge rec={r} />
                                             </span>

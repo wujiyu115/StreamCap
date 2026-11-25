@@ -136,7 +136,10 @@
         "actNever": "未开播过",
         "actTip": "上次开播 {last} · 共 {n} 场 · 平均 {avg}/场",
         "actDay": "天",
-        "actHour": "小时"
+        "actHour": "小时",
+        "openProfile": "打开主播主页",
+        "openingProfile": "正在打开主播主页…",
+        "profileFallback": "该平台没有单独的主播主页，已打开直播间"
     },
     "recordingDialog": {
         "addTitle": "新增录制任务",
@@ -604,7 +607,7 @@
         "online": "{count} 在线",
         "monitor": "添加监控",
         "openRoom": "打开直播间",
-        "openProfile": "打开抖音主页",
+        "openProfile": "打开主播主页",
         "pageSize": "每页 {count} 条",
         "pageOf": "第 {page} 页 · 已取 {max} 页",
         "pageOfTotal": "第 {page} 页 / 共 {max} 页",

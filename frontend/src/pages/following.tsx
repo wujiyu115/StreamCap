@@ -130,7 +130,17 @@ function UserRow({
             : undefined)
     return (
         <div className="flex items-center gap-3 rounded-lg border p-3">
-            <Avatar src={user.avatar} className="h-10 w-10" />
+            {/* 点头像 → 主播主页（与直播卡一致，新标签页打开） */}
+            <a
+                href={`https://www.douyin.com/user/${user.sec_uid}`}
+                target="_blank"
+                rel="noreferrer"
+                title={t("following.openProfile")}
+                data-testid={`row-profile-${user.sec_uid}`}
+                className="shrink-0 rounded-full transition-opacity hover:opacity-80"
+            >
+                <Avatar src={user.avatar} className="h-10 w-10" />
+            </a>
             <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                     <span className="truncate text-sm font-medium">{user.nickname || user.sec_uid}</span>
@@ -183,6 +193,10 @@ function LiveRoomCard({
     onPlay: (room: DouyinLiveRoom) => void
 }) {
     const { t, tf } = useI18n()
+    // 主播主页：推荐流/关注流都带 sec_uid；没有就退回直播间页（这里的 a 必须永远有 href）
+    const profileUrl = room.anchor.sec_uid
+        ? `https://www.douyin.com/user/${room.anchor.sec_uid}`
+        : `https://live.douyin.com/${room.web_rid}`
     return (
         <Card>
             <CardContent className="flex gap-3 p-3">
@@ -215,8 +229,18 @@ function LiveRoomCard({
                         {room.title || room.anchor.nickname || room.web_rid}
                     </a>
                     <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-                        <Avatar src={room.anchor.avatar} className="h-5 w-5" />
-                        <span className="truncate">{room.anchor.nickname || room.web_rid}</span>
+                        {/* 点头像/昵称 → 主播主页（www 侧，新标签页打开） */}
+                        <a
+                            href={profileUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            title={t("following.openProfile")}
+                            data-testid={`profile-${room.web_rid}`}
+                            className="flex min-w-0 items-center gap-2 hover:text-foreground hover:underline"
+                        >
+                            <Avatar src={room.anchor.avatar} className="h-5 w-5 shrink-0" />
+                            <span className="truncate">{room.anchor.nickname || room.web_rid}</span>
+                        </a>
                         {room.tag && (
                             <Badge variant="secondary" className="shrink-0">
                                 {room.tag}

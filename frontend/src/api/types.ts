@@ -1,3 +1,12 @@
+/** 主播主页跳转地址：kind=profile 才是主页，room 表示该平台房间页即主页 / 解析失败兜底 */
+export interface StreamerProfileLink {
+    url: string
+    kind: "profile" | "room"
+    cached: boolean
+    reason: string | null
+    platform_key: string | null
+}
+
 export interface Recording {
     rec_id: string
     url: string

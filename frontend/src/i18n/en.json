@@ -136,7 +136,10 @@
         "actNever": "Never live",
         "actTip": "Last live {last} · {n} sessions · avg {avg}/session",
         "actDay": "d",
-        "actHour": "h"
+        "actHour": "h",
+        "openProfile": "Open streamer profile",
+        "openingProfile": "Opening streamer profile…",
+        "profileFallback": "This platform has no separate profile page — opened the live room instead"
     },
     "recordingDialog": {
         "addTitle": "Add recording task",
@@ -604,7 +607,7 @@
         "online": "{count} online",
         "monitor": "Monitor",
         "openRoom": "Open room",
-        "openProfile": "Open Douyin profile",
+        "openProfile": "Open streamer profile",
         "pageSize": "{count} / page",
         "pageOf": "Page {page} · fetched {max}",
         "pageOfTotal": "Page {page} of {max}",

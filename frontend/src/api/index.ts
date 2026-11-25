@@ -27,6 +27,9 @@ export const recordingsApi = {
             failed: { id: string; error: string }[]
         }>("/recordings/batch-monitor", { ids, enabled }),
     stop: (recId: string) => api.post<Recording>(`/recordings/${recId}/stop`),
+    /** 主播主页地址：抖音/B 站后端查一次并缓存，其它平台就是直播间地址（kind=room） */
+    profileUrl: (recId: string) =>
+        api.get<import("./types").StreamerProfileLink>(`/recordings/${recId}/profile-url`),
     validitySnapshot: () => api.get<ValidityCheckResponse>("/recordings/validity"),
     checkValidity: (
         body: { ids: string[]; force?: boolean; force_since?: number },
