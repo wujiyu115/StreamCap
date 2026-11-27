@@ -609,6 +609,28 @@ async def fetch_live_stream_url(
     return normalize_stream_info(web_rid, info)
 
 
+def _normalize_query(query: str | None) -> str:
+    """搜索词归一化：去空白、小写、限制长度（前端已 debounce，这里只是兜底）。"""
+    return (query or "").strip().lower()[:64]
+
+
+def _filter_users(users: list[dict], q: str) -> list[dict]:
+    """在关注列表里按昵称/抖音号/短号/sec_uid 做子串匹配（大小写不敏感）。"""
+    if not q:
+        return list(users)
+    hits = []
+    for user in users:
+        fields = (
+            user.get("nickname") or "",
+            user.get("unique_id") or "",
+            user.get("short_id") or "",
+            user.get("sec_uid") or "",
+        )
+        if any(q in str(field).lower() for field in fields):
+            hits.append(user)
+    return hits
+
+
 class FollowingStore:
     """关注列表 + 在播列表的内存缓存（按 Cookie 指纹隔离，内存里只留指纹）。
 
@@ -712,14 +734,45 @@ class FollowingStore:
         page: int = 1,
         page_size: int = 20,
         refresh: bool = False,
+        query: str | None = None,
     ) -> dict:
         page = max(1, int(page))
         page_size = max(1, min(int(page_size), FOLLOWING_PAGE_MAX))
+        q = _normalize_query(query)
         async with self._lock:
             self._bind(cookie)
             if refresh or page_size != self.page_size or (self.pages and time.time() - self.loaded_at > self.ttl):
                 self.reset()
             self.page_size = page_size
+
+            if q:
+                # 搜索：抖音没有「按昵称搜关注的人」的接口，只能在本地过滤。游标链只能顺序翻，
+                # 所以每次请求最多再翻 FOLLOWING_WALK_MAX 页（把平台节奏门的预算封顶），
+                # 没找够就告诉前端 has_more，让它继续点下一页接着找。
+                need = page * page_size
+                walked = 0
+                matched = _filter_users(self._loaded_users(), q)
+                while len(matched) < need and not self.exhausted and walked < FOLLOWING_WALK_MAX:
+                    await self._load_page(cookie, proxy, slot)
+                    walked += 1
+                    matched = _filter_users(self._loaded_users(), q)
+                # total 要等翻过页再取（第一次搜索时 self.pages 可能还是空的）
+                total = self.pages[0]["total"] if self.pages else None
+                max_page = max(1, math.ceil(len(matched) / page_size))
+                effective_page = min(page, max_page)
+                start = (effective_page - 1) * page_size
+                return {
+                    "users": matched[start : start + page_size],
+                    "page": effective_page,
+                    "page_size": page_size,
+                    "has_more": len(matched) > effective_page * page_size or not self.exhausted,
+                    "total": total,
+                    "matched_total": len(matched),
+                    "query": q,
+                    "max_page": max_page,
+                    "fetched_at": self.loaded_at,
+                }
+
             # 接口单次只给 ~20 条，凑够这个逻辑页要多少条就一直顺游标取
             need = page * page_size
             walked = 0
@@ -727,15 +780,23 @@ class FollowingStore:
                 await self._load_page(cookie, proxy, slot)
                 walked += 1
             users = self._loaded_users()
+            total = self.pages[0]["total"] if self.pages else None
             loaded_pages = max(1, math.ceil(len(users) / page_size))
             # 请求页超出已取范围（没走到底就撞上单次翻页上限）时返回最后一页，页码也回真实值
             effective_page = min(page, loaded_pages)
             has_more = loaded_pages > effective_page or not self.exhausted
             fetched_at = self.loaded_at
-            total = self.pages[0]["total"] if self.pages else None
 
         if not users:
-            return {"users": [], "page": effective_page, "page_size": page_size, "has_more": False, "total": total}
+            return {
+                "users": [],
+                "page": effective_page,
+                "page_size": page_size,
+                "has_more": False,
+                "total": total,
+                "matched_total": None,
+                "query": "",
+            }
         start = (effective_page - 1) * page_size
         return {
             "users": users[start : start + page_size],
@@ -743,6 +804,8 @@ class FollowingStore:
             "page_size": page_size,
             "has_more": has_more,
             "total": total,
+            "matched_total": None,
+            "query": "",
             "max_page": loaded_pages,
             "fetched_at": fetched_at,
         }

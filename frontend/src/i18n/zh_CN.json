@@ -592,7 +592,8 @@
         "douyinUnfollowFailed": "取消关注失败，抖音接口没有接受这次请求，稍后重试",
         "douyinUnfollowUnverified": "请求已发出，但抖音仍显示「已关注」——多半没生效，稍后重试或去抖音主页手动取消",
         "douyinWriteRateLimited": "操作太快被抖音限流了，等几分钟再试",
-        "douyinLoginInProgress": "正在扫码登录中，等登录完成再取关"
+        "douyinLoginInProgress": "正在扫码登录中，等登录完成再取关",
+        "douyinFollowFailed": "关注失败，抖音没有接受这次请求，稍后重试"
     },
     "following": {
         "title": "直播",
@@ -644,7 +645,18 @@
         "unfollowHint": "真的取消关注「{name}」？取消后会立即生效，之后想再关注只能去抖音手动操作。",
         "unfollowConfirm": "取消关注",
         "unfollowDone": "已取消关注「{name}」",
-        "unfollowUnverified": "已发出取关请求，但没读到「{name}」的最新关注状态，请去抖音主页确认一下"
+        "unfollowUnverified": "已发出取关请求，但没读到「{name}」的最新关注状态，请去抖音主页确认一下",
+        "searchPlaceholder": "搜索昵称 / 抖音号",
+        "searchClear": "清除搜索",
+        "searchResult": "搜索到 {count} 人",
+        "searchHint": "抖音没有搜索接口，这里是在已拉取到的关注里过滤；没找够会接着往下翻",
+        "searchEmpty": "没搜到匹配的人",
+        "follow": "关注",
+        "followDone": "已关注 {name}",
+        "followUnverified": "点了关注但没读到「已关注」，稍后自行核对一下",
+        "followNoLogin": "关注需要登录态（Cookie）",
+        "searchResultMore": "{count}+ 人",
+        "followed": "已关注"
     },
     "analytics": {
         "title": "录制分析",

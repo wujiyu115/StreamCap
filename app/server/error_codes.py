@@ -33,6 +33,7 @@ DOUYIN_LOGIN_FAILED = "err.douyinLoginFailed"
 DOUYIN_LOGIN_IN_PROGRESS = "err.douyinLoginInProgress"
 DOUYIN_UNFOLLOW_TARGET_MISSING = "err.douyinUnfollowTargetMissing"
 DOUYIN_UNFOLLOW_FAILED = "err.douyinUnfollowFailed"
+DOUYIN_FOLLOW_FAILED = "err.douyinFollowFailed"
 DOUYIN_UNFOLLOW_UNVERIFIED = "err.douyinUnfollowUnverified"
 DOUYIN_WRITE_RATE_LIMITED = "err.douyinWriteRateLimited"
 

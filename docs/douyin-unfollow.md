@@ -230,3 +230,36 @@ GET  /aweme/v1/creator/relation/follower/list/          // 粉丝
 | 副作用检查 | 取关后监控 56 条原样、关注列表缓存按预期作废（`following.get_store().reset()`），容器日志无 Traceback |
 
 最终状态：`fengxuan1904` 未关注（两侧一致），关注总数 408。
+
+## 10. 反向操作：真「关注」（2026-11-27）
+
+推荐直播列表里的人多数还没关注，卡片上加了「关注」按钮。**关注不走接口，走点页面按钮**：
+
+- www 侧的 `POST /aweme/v1/web/commit/follow/user/` 要 Argus 的 `x-secsdk-web-signature`（缺了就是 403 `Blocked by ArgusSecurityPlugin Uifid Not Found`），即便在页面里 `fetch` 也一样要过签名——所以 `CreatorSession.follow()` 是**新开一个 tab 打开 `https://www.douyin.com/user/<sec_uid>`，点页面自己的 `[data-e2e="user-info-follow-btn"]`**，前端自己带全套签名，最稳。
+- 和取关一样不信返回值：只认按钮文案变成「已关注 / 互相关注 / 相互关注」（`FOLLOWED_LABELS`）。已经是关注态直接 `True` 不点；点完 15s 内文案不变返回 `False`（前端提示"稍后自行核对"）；无按钮时按正文区分 `rate_limited`（滑块）与 `login_required`（扫码登录墙）。
+- 链路：`POST /api/douyin/following/follow {sec_uid, nickname}` → `_FOLLOW_ERROR_CODES`（`target_not_found` → 404，`upstream_error` → 502 `err.douyinFollowFailed`）→ 成功后 `following.get_store().reset()`（关注总数变了，游标链缓存作废）。
+- 验证：`/tmp/verify_follow_dom.py` 起本地假页面（复刻抖音的 DOM 契约）用真 Playwright 跑 5 例——点完变已关注 → True、已是关注态 → True 且不点、点完不变 → False、登录墙 → `login_required`、滑块 → `rate_limited`，全 PASS。真抖音主页没点（会真关注一个真人）。
+
+### 10.1 生产 500 的真凶：Playwright 同步对象跨线程（greenlet）
+
+2026-11-25 上线后，生产上点「取消关注」偶发 `500`：
+
+```
+File "/app/app/core/platforms/douyin_write.py", line 390, in unfollow
+  ... _greenlets.py line 117 in wait_for_future
+greenlet.error: Cannot switch to a different thread
+```
+
+原因是 `await asyncio.to_thread(write_api.unfollow, ...)` 落到的是**默认线程池里不确定的一条线程**，而 Playwright 的同步对象（`sync_playwright().start()` 起的 dispatcher greenlet）**绑死在创建它的那条线程**上：第一次调用在 A 线程创建会话，第二次落到 B 线程就会 `Cannot switch to a different thread`。`_SESSION_LOCK` 是 RLock，只护"谁来创建会话"，不护"在哪个线程用它"。
+
+修法：新增 `app/core/platforms/browser_thread.py`——`ThreadPoolExecutor(max_workers=1, thread_name_prefix="douyin-browser")`，提供 `run_sync()` / `run_async()`，所有同步浏览器调用（取关 / 关注 / `reset_session`）都排队到这一条独占线程；`CreatorSession._launch()` 记下 `threading.get_ident()`，`_ensure_page()` 开头校验，发现换了线程就 `close()` 重建（自愈，老路径也不会再炸）。
+
+验证：`/tmp/verify_browser_thread.py` 用真 Playwright 复现——两个独立线程池先后碰同一个 Playwright 对象 → `error: Cannot switch to a different thread`（复现成功）；改走 `browser_thread.run_async()` 两次 → 都成功且线程 id 相同。3/3 PASS。
+
+## 11. 「全部关注」搜索（2026-11-27）
+
+抖音**没有**"搜我关注的人"的接口，所以搜索是**本地过滤 + 继续翻游标链**：
+
+- `GET /api/douyin/following?q=xxx`（`q` 最长 64，服务端 `_normalize_query` 去空白 + 转小写）；匹配 `nickname` / `unique_id` / `short_id` / `sec_uid` 的子串。
+- 搜索模式下每次请求最多再翻 `FOLLOWING_WALK_MAX` 页（平台节奏预算有限），够填满本页就停；**`matched_total` 只统计"已翻过的页"里的命中数**，所以 `has_more=true` 时前端显示 `N+ 人`（`following.searchResultMore`），翻到底才是精确值。
+- 已加载过的页命中缓存，重复搜同一个词不再出网（`tests/test_douyin_follow_and_search.py::test_store_search_matches_loaded_pages_without_refetch` 守着）。

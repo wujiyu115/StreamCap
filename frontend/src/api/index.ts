@@ -100,9 +100,10 @@ export const systemApi = {
 export const douyinApi = {
     self: (refresh = false) =>
         api.get<import("./types").DouyinSelfProfile>(`/douyin/following/self${refresh ? "?refresh=true" : ""}`),
-    following: (page = 1, pageSize = 20, refresh = false) =>
+    following: (page = 1, pageSize = 20, refresh = false, query = "") =>
         api.get<import("./types").DouyinFollowingPage>(
-            `/douyin/following?page=${page}&page_size=${pageSize}${refresh ? "&refresh=true" : ""}`,
+            `/douyin/following?page=${page}&page_size=${pageSize}${refresh ? "&refresh=true" : ""}` +
+                (query ? `&q=${encodeURIComponent(query)}` : ""),
         ),
     followingLive: (refresh = false) =>
         api.get<import("./types").DouyinLiveResponse>(
@@ -124,6 +125,12 @@ export const douyinApi = {
             sec_uid: user.sec_uid,
             nickname: user.nickname ?? "",
             avatar: user.avatar ?? "",
+        }),
+    // 关注：走创作者后台那个常驻浏览器，打开对方主页点自己的关注按钮 + 回读校验
+    follow: (user: { sec_uid: string; nickname?: string }) =>
+        api.post<import("./types").DouyinFollowResult>("/douyin/following/follow", {
+            sec_uid: user.sec_uid,
+            nickname: user.nickname ?? "",
         }),
     // Cookie 寿命（本地解析 sid_guard）：设置页/关注页用来提前提醒续期
     cookieStatus: () => api.get<import("./types").DouyinCookieStatus>("/douyin/cookie"),

@@ -16,6 +16,7 @@ import threading
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from ...core.platforms import browser_thread
 from ...core.platforms import douyin_following as following
 from ...core.platforms import douyin_live_feed as live_feed
 from ...core.platforms import douyin_login as login
@@ -24,7 +25,7 @@ from ...core.platforms.room_validity import resolve_platform_proxy
 from ...utils.logger import logger
 from .. import error_codes as errors
 from ..deps import get_current_user, get_services
-from ..schemas import DouyinUnfollowRequest
+from ..schemas import DouyinFollowRequest, DouyinUnfollowRequest
 
 router = APIRouter(prefix="/api/douyin", tags=["douyin"])
 
@@ -48,6 +49,13 @@ _WRITE_ERROR_CODES = {
     "browser_unavailable": (501, errors.DOUYIN_LOGIN_UNAVAILABLE),
     "login_in_progress": (409, errors.DOUYIN_LOGIN_IN_PROGRESS),
     "failed": (502, errors.DOUYIN_UNFOLLOW_FAILED),
+}
+# 关注的失败码：与取关同构，只是没有「目标不在关注列表里」那种 404
+_FOLLOW_ERROR_CODES = {
+    **_WRITE_ERROR_CODES,
+    "target_not_found": (404, errors.DOUYIN_FOLLOW_FAILED),
+    "upstream_error": (502, errors.DOUYIN_FOLLOW_FAILED),
+    "failed": (502, errors.DOUYIN_FOLLOW_FAILED),
 }
 
 # 扫码登录：同一时刻只允许一个会话（内存里握着它在跑的浏览器线程）
@@ -113,15 +121,23 @@ async def list_following(
     page: int = Query(1, ge=1, le=2000),
     page_size: int = Query(20, ge=1, le=following.FOLLOWING_PAGE_MAX),
     refresh: bool = Query(False),
+    q: str = Query("", max_length=64, description="按昵称/抖音号/短号过滤（抖音没有搜索接口，本地过滤）"),
     user: str = Depends(get_current_user),
     services=Depends(get_services),
 ):
-    """关注的用户，一页一页取；已取过的页命中内存缓存，不再打接口。"""
+    """关注的用户，一页一页取；已取过的页命中内存缓存，不再打接口。
+
+    带 `q` 时是本地搜索：抖音没有「搜我关注的人」的接口，只能把游标链翻下来自己过滤。
+    每次请求最多再翻 ``FOLLOWING_WALK_MAX`` 页，没找够时响应里的 ``has_more`` 为真，
+    前端继续点下一页接着找（这样单个请求不会把平台节奏预算吃干）。
+    """
     cookie, proxy = _douyin_context(services)
     store = following.get_store()
     return await _dispatch(
         services,
-        store.following_page(cookie, proxy, _slot(services), page=page, page_size=page_size, refresh=refresh),
+        store.following_page(
+            cookie, proxy, _slot(services), page=page, page_size=page_size, refresh=refresh, query=q
+        ),
     )
 
 
@@ -160,13 +176,47 @@ async def unfollow_user(
     ):
         raise HTTPException(status_code=409, detail=errors.DOUYIN_LOGIN_IN_PROGRESS)
     try:
-        result = await asyncio.to_thread(
+        # 必须落在独占线程上：Playwright 同步对象绑线程，to_thread 的池线程每次可能不同，
+        # 第二次调用就 `greenlet.error: Cannot switch to a different thread`（2026-11-27 生产 500）
+        result = await browser_thread.run_async(
             write_api.unfollow, body.sec_uid, body.nickname, body.avatar
         )
     except write_api.DouyinWriteError as exc:
         status, code = _WRITE_ERROR_CODES.get(exc.code, (502, errors.DOUYIN_UNFOLLOW_FAILED))
         detail = f"{code}|{exc.message}" if exc.message else code
         logger.warning(f"Douyin unfollow failed ({exc.code}): {exc.message}")
+        raise HTTPException(status_code=status, detail=detail) from exc
+    # 关注关系变了：内存里那份列表/游标链已经不准，作废掉下次重取
+    following.get_store().reset()
+    return {"ok": True, **result}
+
+
+@router.post("/following/follow")
+async def follow_user(
+    body: DouyinFollowRequest,
+    user: str = Depends(get_current_user),
+    services=Depends(get_services),
+):
+    """关注一个账号（推荐直播卡片上的「关注」）。
+
+    www 的写接口要 Argus 签名（直连 403），所以在创作者后台那个常驻浏览器里打开对方
+    主页、点页面自己的关注按钮，再回读按钮文案确认；``verified`` 才代表真关注上了。
+    """
+    if not (services.settings_config.get_cookies_value(_PLATFORM_KEY) or "").strip():
+        raise HTTPException(status_code=400, detail=errors.DOUYIN_COOKIE_MISSING)
+    active = _live_login()
+    if active is not None and active.snapshot()["state"] in (
+        login.STATE_STARTING,
+        login.STATE_WAITING,
+        login.STATE_CONFIRMING,
+    ):
+        raise HTTPException(status_code=409, detail=errors.DOUYIN_LOGIN_IN_PROGRESS)
+    try:
+        result = await browser_thread.run_async(write_api.follow, body.sec_uid, body.nickname)
+    except write_api.DouyinWriteError as exc:
+        status, code = _FOLLOW_ERROR_CODES.get(exc.code, (502, errors.DOUYIN_FOLLOW_FAILED))
+        detail = f"{code}|{exc.message}" if exc.message else code
+        logger.warning(f"Douyin follow failed ({exc.code}): {exc.message}")
         raise HTTPException(status_code=status, detail=detail) from exc
     # 关注关系变了：内存里那份列表/游标链已经不准，作废掉下次重取
     following.get_store().reset()
@@ -291,7 +341,7 @@ async def _apply_login_cookie(services, cookie: str) -> None:
     # 换了 Cookie，关注列表的游标链/缓存的账号资料都作废（缓存本身按 Cookie 指纹隔离）
     following.get_store().reset()
     # 取关用的常驻浏览器握着旧 profile 的会话，关掉让下次用它新登录的登录态
-    await asyncio.to_thread(write_api.reset_session)
+    await browser_thread.run_async(write_api.reset_session)
     logger.info(f"Douyin login: 新 Cookie 已写入配置（{len(cookie)} 字符）")
 
 
@@ -300,7 +350,7 @@ async def start_login(user: str = Depends(get_current_user), services=Depends(ge
     """开始一次扫码登录（已在跑就直接返回当前状态，不会开第二个浏览器）。"""
     if _live_login() is None:
         # 取关用的常驻浏览器握着同一份 profile（Chrome 单例锁），先关掉再起登录浏览器
-        await asyncio.to_thread(write_api.reset_session)
+        await browser_thread.run_async(write_api.reset_session)
     session = _live_login() or _start_login()
     deadline = asyncio.get_running_loop().time() + _LOGIN_START_GRACE
     # 等一小会儿：没装 playwright 之类会秒失败，直接报出来比让前端白轮询一轮强

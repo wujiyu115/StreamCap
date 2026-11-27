@@ -372,6 +372,10 @@ export interface DouyinFollowingPage {
     has_more: boolean
     /** 抖音返回的关注总数（可能为 null） */
     total: number | null
+    /** 搜索模式下命中的条数（非搜索为 null）；抖音没有搜索接口，是本地过滤出来的 */
+    matched_total: number | null
+    /** 本次生效的搜索词（服务端归一化后） */
+    query: string
     /** 服务端已经取到的页数，用于「下一页」可用性判断 */
     max_page: number
     fetched_at: number
@@ -439,6 +443,13 @@ export interface DouyinLiveStream {
 
 /** 抖音 Cookie 登录态寿命（解析本地 sid_guard，不发出网请求） */
 /** 取消关注结果：verified 为 true 才代表回读确认已取关（status_code 0 不算数） */
+export interface DouyinFollowResult {
+    ok: boolean
+    nickname: string
+    /** 回读主页按钮确认已关注；false 说明没确认到 */
+    verified: boolean
+}
+
 export interface DouyinUnfollowResult {
     ok: boolean
     nickname: string

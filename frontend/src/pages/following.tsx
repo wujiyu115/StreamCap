@@ -7,11 +7,14 @@ import {
     QrCode,
     Radio,
     RefreshCw,
+    Search,
     Sparkles,
     UserMinus,
+    UserPlus,
     Users,
+    X,
 } from "lucide-react"
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Link } from "react-router-dom"
 import { douyinApi, settingsApi } from "@/api"
 import { ApiError } from "@/api/client"
@@ -21,6 +24,7 @@ import { DouyinLoginDialog } from "@/components/douyin-login-dialog"
 import { LivePlayerDialog } from "@/components/live-player-dialog"
 import { RecordingDialog } from "@/components/recording-dialog"
 import { Badge } from "@/components/ui/badge"
+import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import {
@@ -41,7 +45,8 @@ const queryKeys = {
     self: ["douyin-self"] as const,
     live: ["douyin-live"] as const,
     recommend: ["douyin-live-recommend"] as const,
-    following: (page: number, pageSize: number) => ["douyin-following", page, pageSize] as const,
+    following: (page: number, pageSize: number, query = "") =>
+        ["douyin-following", page, pageSize, query] as const,
 }
 
 function errorText(error: unknown): string | null {
@@ -187,10 +192,18 @@ function LiveRoomCard({
     room,
     onMonitor,
     onPlay,
+    onFollow,
+    followed,
+    following,
 }: {
     room: DouyinLiveRoom
     onMonitor: (room: DouyinLiveRoom) => void
     onPlay: (room: DouyinLiveRoom) => void
+    /** 传了才显示「关注」按钮（推荐 tab 才有意义；关注在播那批本来就已关注） */
+    onFollow?: (room: DouyinLiveRoom) => void
+    /** 本次会话里刚点过、且后端回读确认已关注 */
+    followed?: boolean
+    following?: boolean
 }) {
     const { t, tf } = useI18n()
     // 主播主页：推荐流/关注流都带 sec_uid；没有就退回直播间页（这里的 a 必须永远有 href）
@@ -256,6 +269,22 @@ function LiveRoomCard({
                             <Plus className="mr-1 h-3.5 w-3.5" />
                             {t("following.monitor")}
                         </Button>
+                        {onFollow && room.anchor.sec_uid && (
+                            <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => onFollow(room)}
+                                disabled={following || followed}
+                                data-testid={`follow-${room.web_rid}`}
+                            >
+                                {following ? (
+                                    <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                    <UserPlus className="mr-1 h-3.5 w-3.5" />
+                                )}
+                                {followed ? t("following.followed") : t("following.follow")}
+                            </Button>
+                        )}
                         <Button size="sm" variant="outline" asChild>
                             <a href={`https://live.douyin.com/${room.web_rid}`} target="_blank" rel="noreferrer">
                                 <ExternalLink className="mr-1 h-3.5 w-3.5" />
@@ -311,7 +340,22 @@ export default function FollowingPage() {
     const [refreshing, setRefreshing] = useState(false)
     // 正在取关的 sec_uid 集合：逐行转圈 + 防重复点击
     const [unfollowing, setUnfollowing] = useState<Set<string>>(() => new Set())
+    // 正在关注的 sec_uid 集合（推荐 tab 的「关注」按钮）
+    const [followingPending, setFollowingPending] = useState<Set<string>>(() => new Set())
+    // 本次会话里刚关注成功的人（不回读推荐流，靠本地记住）
+    const [followed, setFollowed] = useState<Set<string>>(() => new Set())
+    // 搜索：输入框即时回显，真正打到接口的是 debounce 后的 searchQuery
+    const [search, setSearch] = useState("")
+    const [searchQuery, setSearchQuery] = useState("")
     const confirmBox = useConfirm()
+
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            setSearchQuery(search.trim())
+            setPage(1)
+        }, 350)
+        return () => clearTimeout(timer)
+    }, [search])
 
     // Cookie 是否已配置（没配就不用打接口了，直接给提示）
     const cookies = useQuery({
@@ -350,8 +394,8 @@ export default function FollowingPage() {
         refetchIntervalInBackground: false,
     })
     const following = useQuery({
-        queryKey: queryKeys.following(page, pageSize),
-        queryFn: () => douyinApi.following(page, pageSize),
+        queryKey: queryKeys.following(page, pageSize, searchQuery),
+        queryFn: () => douyinApi.following(page, pageSize, false, searchQuery),
         enabled: hasCookie,
         retry: false,
     })
@@ -432,6 +476,35 @@ export default function FollowingPage() {
         }
     }
 
+    // 关注（推荐 tab）：后端在创作者后台的常驻浏览器里打开对方主页点「关注」并回读校验
+    const askFollow = async (room: DouyinLiveRoom) => {
+        const secUid = room.anchor.sec_uid
+        if (!secUid) return
+        const name = room.anchor.nickname || room.web_rid
+        setFollowingPending((prev) => new Set(prev).add(secUid))
+        try {
+            const res = await douyinApi.follow({ sec_uid: secUid, nickname: room.anchor.nickname })
+            if (res.verified) {
+                setFollowed((prev) => new Set(prev).add(secUid))
+                toast.success(tf("following.followDone", { name }))
+            } else {
+                toast.warning(tf("following.followUnverified", { name }))
+            }
+            // 关注关系变了：全部关注的分页缓存/游标链都不准了
+            queryClient.removeQueries({ queryKey: ["douyin-following"] })
+            void queryClient.invalidateQueries({ queryKey: queryKeys.self })
+            void queryClient.invalidateQueries({ queryKey: queryKeys.live })
+        } catch (e) {
+            toast.error(errorText(e) ?? t("common.failed"))
+        } finally {
+            setFollowingPending((prev) => {
+                const next = new Set(prev)
+                next.delete(secUid)
+                return next
+            })
+        }
+    }
+
     // Cookie 失效时的「扫码登录」入口：不用再手动去浏览器里导 Cookie
     const scanLoginButton = (
         <Button
@@ -489,9 +562,15 @@ export default function FollowingPage() {
     )
 
     const total = following.data?.total
+    const matchedTotal = following.data?.matched_total ?? null
     const maxPage = following.data?.max_page ?? page
     // 接口只报 total 与已取页数，真实总页数由前端算（total=429、每页 20 → 共 22 页）
-    const totalPages = total != null && total > 0 ? Math.max(1, Math.ceil(total / pageSize)) : undefined
+    const totalPages =
+        matchedTotal != null
+            ? Math.max(1, Math.ceil(matchedTotal / pageSize))
+            : total != null && total > 0
+              ? Math.max(1, Math.ceil(total / pageSize))
+              : undefined
 
     return (
         <div className="flex h-full flex-col gap-4">
@@ -560,6 +639,39 @@ export default function FollowingPage() {
                 </TabsList>
 
                 <TabsContent value="all" className="mt-3 flex min-h-0 flex-1 flex-col data-[state=inactive]:hidden">
+                    <div className="mb-3 flex flex-wrap items-center gap-2">
+                        <div className="relative min-w-0 flex-1 sm:max-w-xs">
+                            <Search className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                            <Input
+                                value={search}
+                                onChange={(e) => setSearch(e.target.value)}
+                                placeholder={t("following.searchPlaceholder")}
+                                aria-label={t("following.searchPlaceholder")}
+                                data-testid="following-search"
+                                className="pl-8 pr-8"
+                            />
+                            {search && (
+                                <button
+                                    type="button"
+                                    title={t("following.searchClear")}
+                                    aria-label={t("following.searchClear")}
+                                    onClick={() => setSearch("")}
+                                    className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground"
+                                >
+                                    <X className="h-3.5 w-3.5" />
+                                </button>
+                            )}
+                        </div>
+                        {searchQuery && (
+                            <span className="text-xs text-muted-foreground" data-testid="following-search-count">
+                                {following.isFetching
+                                    ? t("common.loading")
+                                    : following.data?.has_more
+                                      ? tf("following.searchResultMore", { count: compact(matchedTotal ?? 0) })
+                                      : tf("following.searchResult", { count: compact(matchedTotal ?? 0) })}
+                            </span>
+                        )}
+                    </div>
                     <div className="min-h-0 flex-1 space-y-2 overflow-auto">
                         {following.isLoading &&
                             Array.from({ length: 5 }).map((_, i) => (
@@ -567,8 +679,11 @@ export default function FollowingPage() {
                             ))}
                         {following.data?.users.map((user) => userRow(user))}
                         {!following.isLoading && (following.data?.users.length ?? 0) === 0 && (
-                            <div className="py-10 text-center text-sm text-muted-foreground">
-                                {t("following.emptyAll")}
+                            <div className="flex flex-col items-center gap-1 py-10 text-center text-sm text-muted-foreground">
+                                <span>{searchQuery ? t("following.searchEmpty") : t("following.emptyAll")}</span>
+                                {searchQuery && (
+                                    <span className="text-xs">{t("following.searchHint")}</span>
+                                )}
                             </div>
                         )}
                     </div>
@@ -700,6 +815,10 @@ export default function FollowingPage() {
                                     room={room}
                                     onMonitor={openMonitor}
                                     onPlay={setPlayerRoom}
+                                    // 关注要登录态；没 Cookie 时不显示按钮（点了也只能报错）
+                                    onFollow={hasCookie ? askFollow : undefined}
+                                    followed={followed.has(room.anchor.sec_uid)}
+                                    following={followingPending.has(room.anchor.sec_uid)}
                                 />
                             ))}
                         </div>

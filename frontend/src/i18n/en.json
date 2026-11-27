@@ -592,7 +592,8 @@
         "douyinUnfollowFailed": "Unfollow failed — Douyin rejected the request. Try again later",
         "douyinUnfollowUnverified": "Request sent but Douyin still shows Following — it likely did not take effect. Retry or unfollow manually on Douyin",
         "douyinWriteRateLimited": "Rate limited by Douyin — wait a few minutes and retry",
-        "douyinLoginInProgress": "A QR sign-in is in progress — wait for it to finish, then unfollow"
+        "douyinLoginInProgress": "A QR sign-in is in progress — wait for it to finish, then unfollow",
+        "douyinFollowFailed": "Follow failed — Douyin rejected the request. Try again later"
     },
     "following": {
         "title": "Live",
@@ -644,7 +645,18 @@
         "unfollowHint": "Really unfollow \"{name}\"? This takes effect immediately; you would have to follow again from Douyin.",
         "unfollowConfirm": "Unfollow",
         "unfollowDone": "Unfollowed \"{name}\"",
-        "unfollowUnverified": "Unfollow request sent, but the latest follow state of \"{name}\" could not be read — please confirm on Douyin"
+        "unfollowUnverified": "Unfollow request sent, but the latest follow state of \"{name}\" could not be read — please confirm on Douyin",
+        "searchPlaceholder": "Search nickname / Douyin ID",
+        "searchClear": "Clear search",
+        "searchResult": "{count} matched",
+        "searchHint": "Douyin has no search API — this filters what has been fetched so far; more is fetched as needed",
+        "searchEmpty": "No matching account",
+        "follow": "Follow",
+        "followDone": "Following {name}",
+        "followUnverified": "Clicked follow but could not confirm the state, please verify later",
+        "followNoLogin": "Following requires a signed-in cookie",
+        "searchResultMore": "{count}+ people",
+        "followed": "Following"
     },
     "analytics": {
         "title": "Analytics",

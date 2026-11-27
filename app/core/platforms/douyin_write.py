@@ -29,6 +29,11 @@ FOLLOWING_PAGE = f"{CREATOR_BASE}/creator-micro/data/following/following"
 LIST_PATH = "/aweme/v1/creator/relation/following/list/"
 CANCEL_PATH = "/aweme/v1/creator/relation/following/cancel/"
 PROFILE_URL = "https://www.douyin.com/user/{sec_uid}"
+FOLLOW_BTN_SELECTOR = '[data-e2e="user-info-follow-btn"]'
+# 按钮文案里出现这些就算「关注着」（抖音不同版本叫法不一）
+FOLLOWED_LABELS = ("已关注", "互相关注", "相互关注")
+# 命中这些说明被风控拦了，别再点
+CAPTCHA_MARKERS = ("请完成下列验证", "拖动滑块", "滑块验证", "安全验证", "验证码")
 
 LIST_PAGE_SIZE = 20  # creator 后端实测每页最多 20
 MAX_SCAN_PAGES = 30  # 关注 400+ 时够用（20×30=600）
@@ -90,6 +95,11 @@ def pick_target(rows: list[dict] | None, nickname: str = "", avatar: str = "") -
     return None
 
 
+def _is_followed(label: str) -> bool:
+    text = (label or "").strip()
+    return any(k in text for k in FOLLOWED_LABELS)
+
+
 def _list_query(raw_url: str) -> str:
     """从页面自己发的 list 请求上取 device query，去掉翻页参数。"""
     if "?" not in raw_url:
@@ -115,6 +125,8 @@ class CreatorSession:
         self._rows_ts = 0.0
         self._last_write = 0.0
         self._last_used = 0.0
+        # Playwright 同步对象绑线程，记下建浏览器的那个线程（见 browser_thread 模块）
+        self._thread_id: int | None = None
 
     # ------------------------------------------------------------ 生命周期
 
@@ -166,9 +178,19 @@ class CreatorSession:
             raise DouyinWriteError("browser_unavailable", f"launch failed: {last_exc}")
 
         self._page = self._context.pages[0] if self._context.pages else self._context.new_page()
+        self._thread_id = threading.get_ident()
 
     def _ensure_page(self) -> None:
         """确保已经打开创作者关注页，并且抓到了那条带 device query 的 list 请求。"""
+        me = threading.get_ident()
+        if self._thread_id is not None and self._thread_id != me:
+            # 老版本用 asyncio.to_thread 调用，两次可能落到线程池的不同线程上，
+            # 于是 playwright 抛 `greenlet.error: Cannot switch to a different thread`
+            # （2026-11-27 生产取关 500）。这里直接重建浏览器，自愈到当前线程。
+            logger.warning(
+                f"Douyin write session moved across threads ({self._thread_id} -> {me}), rebuilding browser"
+            )
+            self.close()
         now = time.time()
         if self._page is not None and self._query and now - self._last_used < IDLE_CLOSE_SECONDS:
             self._last_used = now
@@ -350,6 +372,69 @@ class CreatorSession:
             )
         return data
 
+    def follow(self, sec_uid: str) -> bool:
+        """关注一个人：在对方主页点页面自己的「关注」按钮，再回读按钮文案。
+
+        为什么不走接口：www 侧的 `/aweme/v1/web/commit/follow/user/` 要 Argus 的
+        `x-secsdk-web-signature`（缺了 403 ``Blocked by ArgusSecurityPlugin``），
+        在页面里 fetch 也一样要过；**点页面自己的按钮**由前端自己带全套签名，最稳。
+        与取关同样不信返回值：只看按钮是否变成「已关注/互相关注」。
+
+        返回 True = 已关注（含原本就关注着）；False = 点完回读不到。
+        """
+        page = None
+        try:
+            page = self._context.new_page()
+            page.goto(PROFILE_URL.format(sec_uid=sec_uid), wait_until="domcontentloaded", timeout=GOTO_TIMEOUT)
+
+            def read_state() -> tuple[str, str]:
+                return page.evaluate(
+                    """(sel) => {
+                        const b = document.querySelector(sel);
+                        const body = document.body ? document.body.innerText : '';
+                        return [b ? b.innerText.trim() : '', body.slice(0, 4000)];
+                    }""",
+                    FOLLOW_BTN_SELECTOR,
+                )
+
+            deadline = time.time() + VERIFY_TIMEOUT
+            label, body = "", ""
+            while time.time() < deadline:
+                label, body = read_state()
+                if label:
+                    break
+                page.wait_for_timeout(500)
+            if not label:
+                if any(k in body for k in CAPTCHA_MARKERS):
+                    raise DouyinWriteError("rate_limited", "captcha on profile page")
+                if "扫码登录" in body or "密码登录" in body:
+                    raise DouyinWriteError("login_required", "profile page shows login wall")
+                raise DouyinWriteError("upstream_error", "follow button not found")
+            if _is_followed(label):
+                return True
+
+            wait = WRITE_MIN_INTERVAL - (time.time() - self._last_write)
+            if wait > 0:
+                time.sleep(wait)
+            page.click(FOLLOW_BTN_SELECTOR, timeout=VERIFY_TIMEOUT * 1000)
+            self._last_write = time.time()
+
+            deadline = time.time() + VERIFY_TIMEOUT
+            while time.time() < deadline:
+                page.wait_for_timeout(400)
+                label, body = read_state()
+                if _is_followed(label):
+                    return True
+                if any(k in body for k in CAPTCHA_MARKERS):
+                    raise DouyinWriteError("rate_limited", "captcha after follow click")
+            return False
+        finally:
+            if page is not None:
+                try:
+                    page.close()
+                except Exception:
+                    pass
+
 
 _SESSION: CreatorSession | None = None
 _SESSION_LOCK = threading.RLock()
@@ -402,3 +487,25 @@ def unfollow(sec_uid: str, nickname: str = "", avatar: str = "") -> dict:
             if key:
                 session._handle_cache.pop(f"a:{key}", None)
         return {"user_id": user_id, "verified": following is False, "nickname": nickname}
+
+
+def follow(sec_uid: str, nickname: str = "") -> dict:
+    """关注一个账号（点主页按钮 + 回读校验）。返回 ``{"verified", "nickname"}``。
+
+    失败抛 :class:`DouyinWriteError`（`login_required` / `target_not_found` /
+    `rate_limited` / `upstream_error` / `verify_failed` / `browser_unavailable`）。
+    说明：抖音没有「关注列表里查重」的读接口能覆盖未关注的人，重复关注时按钮文案
+    本来就是「已关注」，这里按幂等成功返回。
+    """
+    sec_uid = (sec_uid or "").strip()
+    if not sec_uid:
+        raise DouyinWriteError("target_not_found", "empty sec_uid")
+
+    with _SESSION_LOCK:
+        session = get_session()
+        session._ensure_page()
+        if not session.follow(sec_uid):
+            raise DouyinWriteError("verify_failed", "follow state readback failed")
+        # 关注关系变了：句柄映射（关注列表 → user_id）与关注列表缓存都过期了
+        session._rows_ts = 0.0
+        return {"verified": True, "nickname": nickname}

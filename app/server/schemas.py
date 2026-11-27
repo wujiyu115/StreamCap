@@ -122,6 +122,13 @@ class PoseTaskSubmitRequest(BaseModel):
     overrides: dict | None = None
 
 
+class DouyinFollowRequest(BaseModel):
+    """关注（推荐直播卡片上的按钮）：``sec_uid`` 必填，昵称只用于提示文案。"""
+
+    sec_uid: str = Field(..., min_length=1, max_length=256)
+    nickname: str = Field("", max_length=128)
+
+
 class DouyinUnfollowRequest(BaseModel):
     """取消关注：``sec_uid`` 必填；``nickname``/``avatar`` 用来在创作者后台的关注列表里
     定位目标（头像 ID 优先，昵称兜底）。"""
